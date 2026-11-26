@@ -1,6 +1,10 @@
 # Internet pública — especificação UX/F2 (#366)
 
-**Status**: proposta para revisão — fase read-only/especificação da Release #364.
+**Status**: **UX aprovada pela revisão adversarial** (INTERMEDIÁRIO #366 —
+2 rodadas incorporadas) e alinhada ao threat model #367 e à proposta de
+domínio #365. **Segue Draft de produto**: PR #371 permanece draft até o
+contrato v2 do PAI e a deliberação do proprietário sobre D1–D13 (§6).
+**HEAD da spec**: `b1079aa`+ (branch `docs/366-ux-internet-publica`, PR #371).
 **Protótipo navegável**: [`index.html`](./index.html) (wireframe, dados ilustrativos, sem backend).
 **Bases analisadas**:
 - Visual/módulo: `feat/352-internet-f4` @ `6d2e565` (Internet diegética 1.1.1 — módulo "Rede", homologado 124/124 sobre backend `0607f40`)
@@ -103,7 +107,7 @@ pública via dispositivo. Escrita pública: J e M publicam; M adicionalmente
 | W4/W5 | vazia/erro | ✓ | ✓ | Vazio honesto / retry |
 | W6 Classificados | ok | ✓ | ✓ | Filtrar, abrir detalhe |
 | W6 | vazio por filtro | ✓ | ✓ | Limpar filtro |
-| W7 Anúncio | ativo | ✓ | ✓ | "Contatar" **somente** via fluxo de contato existente (aresta dirigida + aceite + bloqueio P3); se bloqueado, estado honesto sem vazar o bloqueio — ver D6 |
+| W7 Anúncio | ativo | ✓ | ✓ | "Contatar" **somente** via fluxo de contato existente (aresta dirigida + aceite + bloqueio P3); se bloqueado, estado honesto sem vazar o bloqueio — ver D9 |
 | W7 | expirado/removido — acesso legítimo prévio | ✓ | ✓ | Tela de estado com contexto (data/motivo quando público; motivo ao autor) |
 | W7 | expirado/removido — nunca visível ao requisitante | ✓ | ✓ | **404 diegético** idêntico a inexistente (anti-enumeração V-02) |
 | W8 Publicar | formulário | ✓* | ✓ | Preencher → prévia → confirmar |
@@ -111,7 +115,7 @@ pública via dispositivo. Escrita pública: J e M publicam; M adicionalmente
 | W9 Perfil | próprio | ✓ | ✓ | Editar campos permitidos, ver publicações |
 | W9 | de outro personagem | ✓ | ✓ | Somente leitura conforme escopo |
 
-\* `J` só publica se a regra da campanha permitir — ver dúvida D1. A UI mostra
+\* `J` só publica se a regra da campanha permitir — ver dúvidas D7/D8. A UI mostra
 a ação desabilitada com motivo quando não permitida.
 
 ## 5. Recomendações de experiência
@@ -138,51 +142,86 @@ a ação desabilitada com motivo quando não permitida.
 8. Reutilizar tokens/estados da F4 (`estilos-internet.css`, `abas.tsx`,
    `estados.tsx`) — zero linguagem visual nova.
 
-## 6. Dúvidas de produto (afetam UX, não são decisões tomadas)
+## 6. Matriz de decisões D1–D13
 
-| # | Dúvida | Impacto na UX |
-|---|--------|---------------|
-| D1 | Publicação é livre ou exige aprovação do mestre? Pré-moderação ou denúncia+pós? | Define se W8 mostra "enviado para análise" ou publica direto. **Qualquer que seja**: remoção pós-publicação tem efeito imediato em lista/busca/socket e audit de quem retirou (threat model V-03) |
-| D2 | Escopo de visibilidade: só dentro da campanha ou entre campanhas/servidor? **PAI propôs `campanha\|contatos` intra-campanha** (#365) — residual = cruzar campanhas? | Define o seletor de visibilidade do W8 e o escopo da pesquisa. Se cruzar campanhas, `campaignId` deixa de ser fronteira suficiente (threat model) — **default seguro: escopo = campanha** |
-| D3 | Quem cria sites/páginas — só mestre ou qualquer personagem? | Define se "Novo site" aparece para jogador |
-| D4 | Notícias: qualquer personagem publica ou só fontes oficiais? | Define W8 para notícias e o rótulo de fonte |
-| D5 | O que o perfil público exibe — nome do personagem, bio, publicações, nada? | Define W9 e o que a busca indexa de perfil. **Padrão P11**: handle sempre; `displayName` só com opt-in explícito do titular (V-08) — acopla com D12 |
-| D6 | Anúncio permite contato direto (link para conversa privada existente)? | Se sim, W7 ganha ação "Contatar" — **somente reutilizando o fluxo de contato existente** (aresta dirigida + aceite + bloqueio P3). Nunca canal direto: contornaria bloqueio, revelaria se o autor tem conta ativa e criaria canal não auditado. Se já bloqueado → estado honesto sem vazar o bloqueio |
-| D7 | Anúncio tem prazo padrão? Quem remove (autor, mestre, expiração automática)? | Define estados de W7 e o formulário de W8 |
-| D8 | Pesquisa indexa o quê — tudo que o personagem pode ver, ou só conteúdo "público"? | **V-02**: default = somente conteúdo com visibilidade que o personagem pode ver, **filtro no SQL, nunca pós-filtro** — a UI assume que o conjunto retornado já é o conjunto permitido |
-| D9 | Sites têm navegação própria (menu do site) ou são páginas soltas? | Define W3 |
-| D10 | Personagem sem conta Internet acessa a camada pública? (hoje conta é pré-requisito do módulo) | Define se Explorar fica atrás do mesmo gate de conta. **Acoplada a D-A/D-B**: se a camada pública ficar atrás do gate de conta, os vetores de revogação V-04 herdam de graça; se aberta a personagem sem conta, precisa de regra própria — "o que conta como identidade" (personagem sem conta diegética pode publicar? ter perfil?) |
-| D11 | Leitura pública **sem login** existe? (ator anônimo — threat model D-A) | Se sim, é superfície fora do módulo do personagem; esta spec assume sempre autenticado |
-| D12 | `displayName` livre pode conter dado pessoal real — indexar na busca global só com opt-in? (V-08) | Define o que W2 indexa de perfis e o aviso no formulário de perfil |
-| D13 | Autor vê o próprio conteúdo retirado com motivo? (V-07/D-E — recomendo sim; inclui "retirado pelo mestre" — moderação P10 não edita, só retira) | Define o estado "removido" do ponto de vista do autor em W7/W9 |
+Ordem do Dono Técnico (#366): tabela única com pergunta, opções reais,
+recomendação, impacto no wireframe e o que bloqueia. **D1–D6 são herdadas
+do contrato #365 (PAI)** — a UX registra apenas o impacto visível; **D7–D13
+são decisões de UX/produto**. Duplicidades eliminadas: "personagem sem
+conta acessa?" e "leitura anônima?" foram absorvidas por **D5** (gate em
+tudo ⇒ sem conta/anônimo não acessa); "o que o perfil exibe" + "displayName
+na busca" fundidas em **D10**; "moderação" + "motivo ao autor" fundidas em
+**D7**; "quem cria sites" + "quem publica notícias" fundidas em **D8**.
+
+| # | Origem | Pergunta | Opções reais | Recomendação | Impacto no wireframe | Bloqueia |
+|---|--------|----------|--------------|--------------|----------------------|----------|
+| D1 | PAI #365 | Escopo "público": só campanha ou entre campanhas/servidor? PAI propõe `campanha\|contatos` intra-campanha | a) só campanha b) +contatos c) global | a+b (recomendação PAI + INTERMEDIÁRIO); residual = global → **não** | W8 seletor de visibilidade; W2 escopo de resultados | Schema/índice se global |
+| D2 | PAI #365 | Sites visíveis a todos da campanha ou só a contatos? | a) todos b) contatos c) configurável por site | a) todos — descoberta é o propósito da camada | W1 atalhos; W3 acesso | Filtro de leitura se não-todos |
+| D3 | PAI #365 | Histórico de edições de página: `version`+audit ou tabela de revisões/rollback? | a) version+audit b) revisions | a) adiar revisions (fatía A) | W3/W8 "versões anteriores" só existe se b) | Tabela nova se b) |
+| D4 | PAI #365 | Bio de perfil: coluna `descricao` em `internet_accounts` ou publicação fixada? | a) coluna b) fixada | a) coluna (simples) | W9 campo bio; formulário de perfil | Schema (coluna vs. entidade) |
+| D5 | PAI #365 | Todo endpoint público exige gate do leitor (conta Internet + dispositivo)? | a) gate em tudo b) discovery aberto | a) gate em tudo — **absorve** "sem conta acessa?" e "anônimo?" (sem conta = sem gate = sem acesso) | Todo o Explorar atrás do gate; estado "sem conta" já especificado | Regra de autorização |
+| D6 | PAI #365 | Incluir tabelas públicas no export/backup P9? | a) sim b) não | a) sim (conteúdo diegético ≠ comunicação privada) | Nenhum impacto visual — registrado p/ completude | Contrato de export |
+| D7 | UX | Publicação livre ou com aprovação do mestre? E o que o autor vê quando retirado? | a) livre + mestre retira reativamente b) pré-moderação c) fila de denúncia | a) — alinhado à fatia A do PAI; autor vê "retirado" + motivo quando houver (V-07/D-E), inclusive "retirado pelo mestre" | W8 "enviado para análise" só existe se b); estado retirado em W7/W9 | Fluxo de W8; estado retirado |
+| D8 | UX | Quem publica o quê: sites/páginas por qualquer conta elegível? notícias restritas a fontes oficiais? | a) tudo livre p/ elegível b) notícias/fontes só mestre c) sites só mestre | a) qualquer elegível; notícias exibem selo de fonte — sem papel extra salvo deliberação contrária | "Novo site" visível p/ J; rótulo de fonte em W4/W5 | Permissões de escrita |
+| D9 | UX | Anúncio permite "Contatar"? | a) sim, via fluxo de contato existente b) não c) canal direto | a) — aresta dirigida + aceite + bloqueio P3; se bloqueado, estado honesto sem vazar o bloqueio | W7 ação Contatar | Ação de W7 |
+| D10 | UX | O que o perfil público exibe? | a) handle+displayName+bio+publicações b) só handle+publicações c) mais campos | a) handle sempre; `displayName` só com opt-in explícito (V-08); bio conforme D4; publicações do autor (`post_perfil`) | W9 campos; aviso no formulário de perfil; W2 índice de perfis | W9 + índice de busca |
+| D11 | UX | Anúncio tem prazo? Quem remove? | a) expiração opcional pelo autor + remoção por autor/mestre b) prazo fixo c) sem expiração | a) `expiresAt` opcional (já no modelo); `expirado` derivado, sem job | W6 chip "expirado"; W8 campo validade; W7 estado | `meta.expiresAt` (já previsto) |
+| D12 | UX | Pesquisa indexa o quê e com que escopo default? | a) título+páginas+notícias+anúncios+perfis(handle) b) +displayName c) só publicações | a) conforme contrato v1 (`titulo`+`handle`+`nome`), filtro por visibilidade do leitor no SQL; `displayName` fora do índice (depende de D10) | W2 escopos e agrupamento de resultados | Quase respondida pelo contrato — confirmar |
+| D13 | UX | Sites têm navegação própria (menu) ou são páginas soltas? | a) menu derivado das páginas publicadas b) editor de menu c) sem navegação | a) menu simples derivado; sem editor de menu na fatia | W3 menu do site | W3 |
 
 ## 6.1 Alinhamento com o threat model #367 (checkpoint INTERMEDIÁRIO)
 
 Restrições de segurança que a UX deve **refletir**, não contornar:
 
 - **Anti-enumeração (V-01/V-02)**: id/termo de conteúdo oculto responde igual a inexistente — a UI nunca mostra "existe mas você não pode ver". **Inclui a tela de estado**: o aviso honesto de "expirado/removido" só se aplica a quem tinha acesso legítimo prévio; para quem nunca teve acesso é 404 seco — o contrato carrega o flag "visível-antes" vs "nunca-visível" (requisito de API, não só de UX).
-- **Fronteira de escopo (D2)**: se a pesquisa/listagens cruzarem campanhas, o modelo de visibilidade muda de natureza — deliberar D2 **antes** do contrato do PAI; default seguro = escopo por campanha.
+- **Fronteira de escopo (D1)**: se a pesquisa/listagens cruzarem campanhas, o modelo de visibilidade muda de natureza — deliberar **D1** antes do fechamento do contrato; default seguro = escopo por campanha.
 - **Visibilidade atômica (V-03)**: retirado/expirado some de lista, busca e perfil no mesmo instante — estados "em atualização" transitórios não devem prometer conteúdo.
 - **Autoria server-side (V-05)**: o formulário de publicar **não** tem campo de "publicar como" — autoria é sempre a conta autenticada; se o contrato um dia permitir agirem por terceiros, a UX precisará de seletor explícito.
 - **Conteúdo público × gate (V-04/D-B)**: publicação já feita sobrevive à perda do dispositivo; edição/rascunho exige gate vigente — a UI separa "ler" de "editar" em affordances distintas.
-- **Perfil mínimo (V-08)**: W9 exibe handle + displayName + publicações — nunca userId, e-mail, dados OOC ou campos de ficha. `displayName` livre pode conter dado pessoal → aviso no formulário (depende de D12).
+- **Perfil mínimo (V-08)**: W9 exibe handle + displayName + publicações — nunca userId, e-mail, dados OOC ou campos de ficha. `displayName` livre pode conter dado pessoal → aviso no formulário (depende de D10).
 - **Links externos (V-07/D-D)**: se permitidos, sempre `noopener noreferrer` e nunca `javascript:`/`data:` — a prévia do W8 deve renderizar links como texto até a decisão.
 
 ## 6.2 Alinhamento com a proposta de domínio #365 (PAI, checkpoint 1)
 
 O modelo proposto (`internet_sites` + `internet_pages` + `internet_publicacoes` tipado) é compatível com W1–W9. Deltas que a UX reflete:
 
-- **`visibilidade = campanha | contatos`** (proposta): W8 ganha o seletor com esses dois escopos; "contatos" = aresta aceita vigente + sem bloqueio P3 na hora da leitura. Isso resolve a maior parte de D2 **dentro** da campanha — a deliberação D2 remanescente é apenas "entre campanhas/servidor?" (default seguro: não).
+- **`visibilidade = campanha | contatos`** (proposta): W8 ganha o seletor com esses dois escopos; "contatos" = aresta aceita vigente + sem bloqueio P3 na hora da leitura. Isso resolve a maior parte de **D1** dentro da campanha — a deliberação remanescente é apenas "entre campanhas/servidor?" (default seguro: não).
 - **`post_perfil`**: W9 passa a ter timeline de publicações do autor, não só identidade.
 - **Ciclo `rascunho|publicado|retirado|expirado|arquivado`**: `expirado` é derivado de `expiresAt` (sem job); `arquivado` é terminal de site/página — W3/W7 tratam como indisponível com a mesma fronteira de acesso legítimo. Rascunho responde 404 a não-autores (já coberto pela regra anti-enumeração).
-- **Moderação mestre**: mestre retira publicação/página alheia mas **não edita** — para o autor, "retirado" pode vir de moderação; D13 (motivo visível ao autor) ganha o caso "retirado pelo mestre".
+- **Moderação mestre**: mestre retira publicação/página alheia mas **não edita** — para o autor, "retirado" pode vir de moderação; **D7** (motivo visível ao autor) ganha o caso "retirado pelo mestre".
 - **HTTP-only**: a proposta não usa socket para a camada pública — leituras são request/response. O estado "reconectando" se aplica a escritas e à experiência geral do módulo; não há expectativa de tempo real em listas públicas.
-- **Pesquisa v1 = LIKE/prefixo** em `titulo`+`handle`+`nome` (FTS5 adiado): W2 assume busca simples; o escopo "Perfis" indexa handle (P11) — displayName só com opt-in (D12).
-- **Edição de página publicada → `version+1`**: W8/W3 assumem que editar conteúdo publicado cria nova versão; se o Dono exigir histórico/rollback (decisão D3 do PAI), a UX precisará de "versões anteriores" — sinalizado, não especificado.
+- **Pesquisa v1 = LIKE/prefixo** em `titulo`+`handle`+`nome` (FTS5 adiado): W2 assume busca simples; o escopo "Perfis" indexa handle (P11) — displayName só com opt-in (D10).
+- **Edição de página publicada → `version+1`**: W8/W3 assumem que editar conteúdo publicado cria nova versão; se o Dono exigir histórico/rollback (decisão **D3** do PAI — heredada), a UX precisará de "versões anteriores" — sinalizado, não especificado.
 - **Slug público** (`/sites/:slug/p/:pageSlug`): URLs são adivinháveis por natureza — reforça que a fronteira "visível-antes vs nunca-visível" do §3 é requisito de contrato, não detalhe.
 - **Transferência P7**: autoria via `characterId` é estável — sites/páginas/posts acompanham o personagem transferido sem migração; W9 não muda.
 
-## 7. O que NÃO está proposto
+## 7. Congelamento independente de decisões
+
+Partes da experiência que **não dependem** de nenhuma das 13 decisões e
+podem ser congeladas já (wireframe + contratos de leitura estáveis):
+
+- **Navegação "Explorar"**: sub-área dentro da aba Rede, sub-navegação APG
+  (`abas.tsx`), "voltar" preservando contexto — estrutura W1–W9.
+- **Barra de pesquisa sempre visível** no topo do Explorar e estados de
+  resultado (sem resultado, erro+retry).
+- **Casca de listas/detalhes**: W4/W5 (notícias), W6/W7 (classificados) —
+  layout, filtros de categoria, paginação por cursor, chips de estado.
+- **Estados honestos**: loading/aria-busy, vazio com CTA diegético, erro de
+  GET com retry, 404 diegético, banner de reconexão — e a **fronteira
+  visível-antes vs nunca-visível** (requisito de contrato já sinalizado).
+- **Gate e papéis**: Explorar atrás do gate de conta/dispositivo; leitura
+  por qualquer conta elegível; escrita separada de leitura.
+- **Tokens/estados visuais**: reuso integral de `estilos-internet.css`,
+  `abas.tsx`, `estados.tsx` — zero linguagem nova.
+- **Responsividade**: layouts mobile/desktop do wireframe.
+
+**NÃO congelável** (depende de deliberação): seletor de visibilidade do W8
+(D1), permissões de publicação por tipo (D7/D8), ação "Contatar" (D9),
+campos do perfil (D4/D10), campo de validade (D11), escopo/índice da
+pesquisa (D12), menu do site (D13), e qualquer texto de "enviado para
+análise" (D7).
+
+## 8. O que NÃO está proposto
 
 - Nenhuma tela de empresa/vaga/trabalho (1.1.3), NPC autônomo ou automação de IA.
 - Nenhuma mistura com chat OOC — todo conteúdo é diegético, dentro do módulo
