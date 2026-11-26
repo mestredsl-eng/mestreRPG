@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer, real, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 
 /**
  * Schema do Mestre RPG — fundação (Etapa 1).
@@ -887,4 +888,24 @@ export const internetMessages = sqliteTable("internet_messages", {
   uniqueIndex("internet_msg_idem_idx").on(t.conversaId, t.autorContaId, t.requestId),
   index("internet_msg_conv_ordem_idx").on(t.conversaId, t.createdAt, t.id),
   index("internet_msg_campaign_idx").on(t.campaignId, t.createdAt),
+]);
+
+// Transferência de personagem (P7, contrato #349): convite do titular
+// atual + aceite explícito do novo titular. No máximo 1 `pendente` por
+// personagem (índice parcial). Conta diegética e histórico acompanham
+// por characterId sem mudança; o aceite é atômico (UPDATE condicional
+// do titular + status do pedido na mesma tx).
+export const characterTransfers = sqliteTable("character_transfers", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  characterId: text("character_id").notNull().references(() => characters.id, { onDelete: "cascade" }),
+  fromMembershipId: text("from_membership_id").notNull().references(() => memberships.id),
+  toMembershipId: text("to_membership_id").notNull().references(() => memberships.id),
+  status: text("status").notNull().default("pendente"), // pendente|aceita|recusada|cancelada
+  createdAt: createdAt(),
+  decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
+}, (t) => [
+  uniqueIndex("char_transf_pendente_idx").on(t.characterId).where(sql`status = 'pendente'`),
+  index("char_transf_campaign_idx").on(t.campaignId),
+  index("char_transf_to_idx").on(t.toMembershipId, t.status),
 ]);
