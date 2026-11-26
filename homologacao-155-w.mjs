@@ -39,6 +39,46 @@ function envHome(home, extra = {}) {
   return { ...process.env, MESTRE_HOME: home, MESTRE_BANCO: join(home, "banco", "mestre-rpg.db"),
     MESTRE_ARQUIVOS: join(home, "arquivos", "campanhas"), MESTRE_BACKUPS: join(home, "backups"), ...extra };
 }
+
+// Issue #205 — ambiente do .bat filho (W9/W10): allowlist explícita.
+// O spawn herdava process.env inteiro: qualquer MESTRE_HOME/MESTRE_BANCO/
+// MESTRE_ARQUIVOS/MESTRE_BACKUPS (ou MESTRE_PORTA, MESTRE_AUTO_UPDATE,
+// MESTRE_STATE_DIR, MESTRE_TRAVA_GATE_DIR...) definido no terminal pai —
+// ou setado por cenário anterior do próprio harness (w16 grava
+// process.env.MESTRE_*) — vazava para o cmd.exe e redirecionava os dados
+// do filho para fora da fixture. Aqui o filho recebe SOMENTE variáveis
+// de SO/sessão da allowlist + as injeções explícitas da fixture; os
+// diretórios de dados apontam para tmp descartável, nunca para a
+// instalação real.
+const CHAVES_ENV_BAT = new Set([
+  "path", "pathext", "comspec", "systemroot", "windir", "os",
+  "temp", "tmp", "tmpdir",
+  "username", "userdomain", "userdomain_roamingprofile", "logonserver",
+  "sessionname", "clientname",
+  "userprofile", "homedrive", "homepath", "home",
+  "appdata", "localappdata", "programdata", "public", "allusersprofile",
+  "programfiles", "programfiles(x86)", "programw6432",
+  "commonprogramfiles", "commonprogramfiles(x86)", "commonprogramw6432",
+  "processor_architecture", "processor_identifier", "processor_level",
+  "processor_revision", "number_of_processors",
+  "psmodulepath", "driverdata",
+]);
+
+function envBatFilho(tmp, injetadas = {}) {
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v !== undefined && CHAVES_ENV_BAT.has(k.toLowerCase())) env[k] = v;
+  }
+  const dados = join(tmp, "dados-fixture");
+  return {
+    ...env,
+    MESTRE_HOME: dados,
+    MESTRE_BANCO: join(dados, "banco", "mestre-rpg.db"),
+    MESTRE_ARQUIVOS: join(dados, "arquivos", "campanhas"),
+    MESTRE_BACKUPS: join(dados, "backups"),
+    ...injetadas,
+  };
+}
 function rodarRestaurador(home, extraEnv = {}) {
   return spawnSync(NODE, [DIST_REST], { env: envHome(home, extraEnv), encoding: "utf8", timeout: 60000 });
 }
@@ -401,7 +441,7 @@ const barreira = process.env.HOMOLOG_BARRIER || "";
 const dirBar = process.env.HOMOLOG_BARRIER_DIR || "";
 const ponto = alvo.includes("db:migrate") ? "migrate" : alvo.includes("run start") ? "start" : null;
 // debug: dump sempre ao lado do stub (independe de dirBar)
-try { appendFileSync(new URL("./env-dump.log", import.meta.url), JSON.stringify({ alvo, barreira, dirBar, homologa: Object.keys(process.env).filter(k=>/HOMOLOG/i.test(k)) }) + "\\n"); } catch {}
+try { appendFileSync(new URL("./env-dump.log", import.meta.url), JSON.stringify({ alvo, barreira, dirBar, homologa: Object.keys(process.env).filter(k=>/HOMOLOG/i.test(k)), mestre: Object.fromEntries(Object.entries(process.env).filter(([k])=>/^MESTRE_/i.test(k))) }) + "\\n"); } catch {}
 if (dirBar) { try { appendFileSync(dirBar + "/chamadas.log", JSON.stringify({ alvo, barreira, ponto, dirBar }) + "\\n"); } catch {} }
 if (barreira === ponto && ponto) {
   writeFileSync(dirBar + "/" + ponto + ".chegou", String(Date.now()));
@@ -439,9 +479,11 @@ async function rodarBat(cloneDir, logFile, opts = {}) {
   let buf = "";
   const filho = spawn("cmd.exe", ["/c", "iniciar-mestre-rpg.bat"], {
     cwd: cloneDir, stdio: ["ignore", "pipe", "pipe"],
-    env: opts.env ? { ...process.env, ...opts.env } : process.env,
+    // opts.env já vem completo de envBatFilho() — sem herdar process.env
+    env: opts.env,
   });
   const estado = { morto: false, motivo: null, health: null };
+  const porta = opts.porta ?? 3001;
   const aoDados = (d) => {
     const s = d.toString();
     out.push(s); buf += s;
@@ -457,7 +499,7 @@ async function rodarBat(cloneDir, logFile, opts = {}) {
   // observador de saude: quando /api/health responde, marca e (se pedido) derruba a arvore
   const iv = setInterval(async () => {
     try {
-      const r = await fetch("http://127.0.0.1:3001/api/health", { signal: AbortSignal.timeout(1200) });
+      const r = await fetch(`http://127.0.0.1:${porta}/api/health`, { signal: AbortSignal.timeout(1200) });
       if (r.ok && !estado.health) {
         estado.health = r.status;
         log(`health 200 em ${cloneDir}`);
@@ -482,10 +524,14 @@ async function porta3001Ocupada() {
 
 async function executarBatE2E(w, cenario) {
   if (await porta3001Ocupada()) {
-    // o .bat real aborta quando 3001 responde — e o guarda-roupa contra
-    // tocar a instalacao do usuario. Reporta bloqueio em vez de excecao.
+    // Preditor, nao dependencia funcional: o .bat LEGADO da fixture
+    // (SHA_N1=7ce5b99) tem pre-voo com porta 3001 hardcoded — se algo
+    // responde la, ele aborta antes de qualquer fase testada. O harness
+    // em si ja nao depende da 3001 (W9/W10 usam porta efemera via
+    // MESTRE_PORTA + configuracao/servidor.json da copia descartavel).
+    // Reporta bloqueio em vez de excecao; nunca mata processo alheio.
     reg(`W${w}`, "bloqueado",
-      "porta 3001 ocupada (servidor real no ar — ex.: npm run start do worktree mestre-rpg). O .bat aborta por design; execute com a porta livre.");
+      "porta 3001 ocupada — o .bat legado da fixture (SHA_N1) aborta no pre-voo hardcoded 3001 antes das barreiras W9/W10. Harness/W9-W10 nao dependem mais da 3001 (porta efemera), mas o artefato sob teste sim. Execute com a porta livre.");
     return { bloqueado: true, execucoes: [], logsPreservados: [] };
   }
   const { tmp, cloneDir, shaN, branchFixture } = prepararFixtureBat(w);
@@ -516,19 +562,51 @@ async function executarBatE2E(w, cenario) {
       const stub = prepararStubNpm(tmp);
       const barDir = join(tmp, "barreira");
       mkdirSync(barDir, { recursive: true });
-      // Windows: a variavel pode ser "Path" (nao "PATH") — reutilizar a
-      // chave real existente, senao o filho recebe PATH duplicada e o
-      // stub nunca entra na resolucao do npm.
-      const chavePath = Object.keys(process.env).find((k) => k.toLowerCase() === "path") || "PATH";
-      const envBar = {
-        [chavePath]: stub.dir + ";" + process.env[chavePath],
-        HOMOLOG_BARRIER: ponto, HOMOLOG_BARRIER_DIR: barDir,
-      };
+      // #205/#376: porta efêmera dedicada — o harness não depende mais da
+      // 3001 do host. O .bat legado (SHA_N1) ainda sonda 3001 no pré-voo,
+      // mas servidor, health polls e kill passam a usar portaTeste.
+      let portaTeste = await portaLivre();
+      for (let tent = 0; tent < 5; tent++) {
+        try {
+          await fetch(`http://127.0.0.1:${portaTeste}/api/health`, { signal: AbortSignal.timeout(800) });
+          portaTeste = await portaLivre(); // resposta inesperada — sorteia outra
+        } catch { break; }
+      }
+      res.portaTeste = portaTeste;
+      try {
+        await fetch(`http://127.0.0.1:${portaTeste}/api/health`, { signal: AbortSignal.timeout(800) });
+        res.portaLivreAntes = false;
+      } catch { res.portaLivreAntes = true; }
+      // JSON da fixture descartável tem precedência sobre MESTRE_PORTA no
+      // boot-lock/estado-externo de código novo — alinhar a porta ali também.
+      const cfgFixture = join(cloneDir, "configuracao", "servidor.json");
+      if (existsSync(cfgFixture)) {
+        try {
+          const cfg = JSON.parse(readFileSync(cfgFixture, "utf8"));
+          cfg.porta = portaTeste;
+          writeFileSync(cfgFixture, JSON.stringify(cfg, null, 2) + "\n");
+          res.configFixtureAjustada = true;
+        } catch { res.configFixtureAjustada = false; }
+      }
+      // #205: env do filho = allowlist de SO/sessão + injeções da fixture.
+      // Nenhum MESTRE_*/HOMOLOG_* do processo pai atravessa; os dados do
+      // filho vivem em tmp/dados-fixture (descartável), nunca na instalação.
+      const envBar = envBatFilho(tmp, { HOMOLOG_BARRIER: ponto, HOMOLOG_BARRIER_DIR: barDir, MESTRE_PORTA: String(portaTeste) });
+      // Windows: a variável pode ser "Path" (não "PATH") — reutilizar a
+      // chave real presente no env filtrado, senão o filho recebe PATH
+      // duplicada e o stub nunca entra na resolução do npm.
+      const chavePath = Object.keys(envBar).find((k) => k.toLowerCase() === "path") || "PATH";
+      envBar[chavePath] = `${stub.dir};${envBar[chavePath] ?? ""}`;
       writeFileSync(join(tmp, "env-debug.txt"), JSON.stringify({
         chavePath, path: envBar[chavePath], barrier: envBar.HOMOLOG_BARRIER, dirBar: envBar.HOMOLOG_BARRIER_DIR,
+        mestre: Object.fromEntries(Object.entries(envBar).filter(([k]) => k.startsWith("MESTRE_"))),
       }, null, 2));
+      res.dirsFixture = {
+        MESTRE_HOME: envBar.MESTRE_HOME, MESTRE_BANCO: envBar.MESTRE_BANCO,
+        MESTRE_ARQUIVOS: envBar.MESTRE_ARQUIVOS, MESTRE_BACKUPS: envBar.MESTRE_BACKUPS,
+      };
       // run1: boot com stub — o processo PARA no ponto exato da barreira
-      const r1 = await rodarBatParado(cloneDir, join(tmp, `w${w}-run1-kill.log`), barDir, ponto, envBar);
+      const r1 = await rodarBatParado(cloneDir, join(tmp, `w${w}-run1-kill.log`), barDir, ponto, envBar, portaTeste);
       res.execucoes.push({ fase: "kill-na-barreira", ...r1.estado, exitCmd: r1.exitCmd });
       res.chegouPonto = existsSync(join(barDir, `${ponto}.chegou`));
       res.executouPonto = existsSync(join(barDir, `${ponto}.executou`));
@@ -536,13 +614,19 @@ async function executarBatE2E(w, cenario) {
       if (cenario === "w10") {
         // prova: servidor NAO subiu antes do kill (start nunca delegado)
         try {
-          const rr = await fetch("http://127.0.0.1:3001/api/health", { signal: AbortSignal.timeout(1200) });
+          const rr = await fetch(`http://127.0.0.1:${portaTeste}/api/health`, { signal: AbortSignal.timeout(1200) });
           res.servidorNoArAposKill = rr.ok;
         } catch { res.servidorNoArAposKill = false; }
       }
-      // run2: retomada com npm real — boot completo ate o servidor
-      const r2 = await rodarBat(cloneDir, join(tmp, `w${w}-run2-retomada.log`), { matarAposSaude: true });
+      // run2: retomada com npm real — boot completo ate o servidor.
+      // Mesma allowlist do run1, sem stub nem barreira (npm real decide).
+      const r2 = await rodarBat(cloneDir, join(tmp, `w${w}-run2-retomada.log`), { matarAposSaude: true, env: envBatFilho(tmp, { MESTRE_PORTA: String(portaTeste) }), porta: portaTeste });
       res.execucoes.push({ fase: "retomada", ...r2.estado, exitCmd: r2.exitCmd });
+      // prova de teardown: a porta de teste deve estar fechada apos o kill
+      try {
+        await fetch(`http://127.0.0.1:${portaTeste}/api/health`, { signal: AbortSignal.timeout(800) });
+        res.portaFechadaDepois = false;
+      } catch { res.portaFechadaDepois = true; }
     }
     res.headFinal = git(`rev-parse HEAD`, cloneDir);
     res.porcelain = git(`status --porcelain`, cloneDir);
@@ -557,10 +641,10 @@ async function executarBatE2E(w, cenario) {
 // Versao do rodarBat para a fase de kill: dispara o kill quando o
 // arquivo de barreira <ponto>.chegou aparece — deterministico, sem
 // depender de linha de stdout nem de corrida com taskkill.
-async function rodarBatParado(cloneDir, logFile, barDir, ponto, env) {
+async function rodarBatParado(cloneDir, logFile, barDir, ponto, env, porta = 3001) {
   const out = [];
   const filho = spawn("cmd.exe", ["/c", "iniciar-mestre-rpg.bat"], {
-    cwd: cloneDir, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...env },
+    cwd: cloneDir, stdio: ["ignore", "pipe", "pipe"], env,
   });
   const estado = { morto: false, motivo: null, health: null };
   const aoDados = (d) => { const s = d.toString(); out.push(s); process.stdout.write(s); };
@@ -574,7 +658,7 @@ async function rodarBatParado(cloneDir, logFile, barDir, ponto, env) {
       matarArvore(filho.pid);
     }
     try {
-      const r = await fetch("http://127.0.0.1:3001/api/health", { signal: AbortSignal.timeout(1200) });
+      const r = await fetch(`http://127.0.0.1:${porta}/api/health`, { signal: AbortSignal.timeout(1200) });
       if (r.ok && !estado.health) estado.health = r.status;
     } catch { /* ainda nao subiu */ }
   }, 250);
@@ -602,16 +686,18 @@ const casos = {
     if (r.bloqueado) return;
     const subiu = r.execucoes[1]?.health === 200;
     const barreiraOk = r.chegouPonto === true && r.executouPonto === false;
-    reg("W9", (subiu && barreiraOk) ? "aprovado" : "reprovado",
-      `kill deterministico na barreira pre-migrate (stub npm): ponto.migrate.chegou=${r.chegouPonto} executou=${r.executouPonto} (prova: migration NUNCA delegada); retomada: health=${r.execucoes[1]?.health} motivo=${r.execucoes[1]?.motivo}; remoto=bare local em %TEMP% (zero push ao origin); logs em ${r.logsPreservados.join(", ") || r.tmp}`,
+    const portasOk = r.portaLivreAntes === true && r.portaFechadaDepois === true;
+    reg("W9", (subiu && barreiraOk && portasOk) ? "aprovado" : "reprovado",
+      `kill deterministico na barreira pre-migrate (stub npm): ponto.migrate.chegou=${r.chegouPonto} executou=${r.executouPonto} (prova: migration NUNCA delegada); retomada: health=${r.execucoes[1]?.health} motivo=${r.execucoes[1]?.motivo}; portaTeste=${r.portaTeste} livreAntes=${r.portaLivreAntes} fechadaDepois=${r.portaFechadaDepois} cfgFixture=${r.configFixtureAjustada}; remoto=bare local em %TEMP% (zero push ao origin); logs em ${r.logsPreservados.join(", ") || r.tmp}`,
       r.logsPreservados);
   }),
   w10: () => executarBatE2E(10, "w10").then((r) => {
     if (r.bloqueado) return;
     const subiu = r.execucoes[1]?.health === 200;
     const barreiraOk = r.chegouPonto === true && r.executouPonto === false;
-    reg("W10", (subiu && barreiraOk && r.servidorNoArAposKill === false) ? "aprovado" : "reprovado",
-      `kill deterministico na barreira pre-start (stub npm): ponto.start.chegou=${r.chegouPonto} executou=${r.executouPonto}; servidorNoArAposKill=${r.servidorNoArAposKill}; proximo boot: health=${r.execucoes[1]?.health}; remoto=bare local; logs em ${r.logsPreservados.join(", ") || r.tmp}`,
+    const portasOk = r.portaLivreAntes === true && r.portaFechadaDepois === true;
+    reg("W10", (subiu && barreiraOk && r.servidorNoArAposKill === false && portasOk) ? "aprovado" : "reprovado",
+      `kill deterministico na barreira pre-start (stub npm): ponto.start.chegou=${r.chegouPonto} executou=${r.executouPonto}; servidorNoArAposKill=${r.servidorNoArAposKill}; proximo boot: health=${r.execucoes[1]?.health}; portaTeste=${r.portaTeste} livreAntes=${r.portaLivreAntes} fechadaDepois=${r.portaFechadaDepois} cfgFixture=${r.configFixtureAjustada}; remoto=bare local; logs em ${r.logsPreservados.join(", ") || r.tmp}`,
       r.logsPreservados);
   }),
 };
