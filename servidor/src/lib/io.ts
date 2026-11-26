@@ -6,6 +6,9 @@ import { agendarAutosave } from "./autosave.js";
 import { getDb } from "../db/index.js";
 import { sessions, memberships } from "../db/schema.js";
 import { personagemAutorizadoInternet } from "./gate-internet.js";
+import { contaAutorizadaPara } from "./conta-internet.js";
+import { internetParticipantes, internetAccounts, characters } from "../db/schema.js";
+import { internetConversations } from "../db/schema.js";
 
 /** Instância do Socket.IO para emissão de eventos fora do handshake. */
 let io: SocketIOServer | null = null;
@@ -532,5 +535,74 @@ export async function expulsarMembroDaCampanha(campaignId: string, userId: strin
     const u = socket.data.usuario as { id?: string } | undefined;
     if (u?.id !== userId) continue;
     for (const room of rooms) socket.leave(room);
+  }
+}
+
+/**
+ * Fan-out de conteúdo da Internet diegética (#351/#350 — contrato §6).
+ * ZERO rooms de conteúdo: a cada emissão, os participantes ATIVOS são
+ * relidos do banco, cada conta resolve personagem→membership→userId e
+ * `contaAutorizadaPara` é reexecutada POR DESTINATÁRIO na hora da entrega.
+ * Rebaixamento/remoção/bloqueio corta a próxima entrega por construção —
+ * nunca depende de `leave` best-effort de room.
+ *
+ * Payload SEMPRE carrega `conversaId` + `contaId` (a conta destinatária)
+ * para o cliente rotear quando o mesmo userId tem mais de uma conta na
+ * conversa. Dedup por (userId, contaId): a mesma pessoa com dois
+ * personagens participantes recebe um evento por conta — não é duplicata,
+ * é roteamento distinto.
+ */
+export async function emitirInternetConversa(
+  conversaId: string,
+  evento: string,
+  dados: Record<string, unknown>,
+): Promise<void> {
+  const instancia = io;
+  if (!instancia) return;
+  try {
+    const db = getDb();
+    const [conversa] = await db.select({ campaignId: internetConversations.campaignId })
+      .from(internetConversations)
+      .where(eq(internetConversations.id, conversaId))
+      .limit(1);
+    if (!conversa) return;
+    const campaignId = conversa.campaignId;
+    agendarAutosave(campaignId);
+    if (barreiraRestauracaoAtiva(campaignId)) return;
+
+    // resolve conta → personagem → membership → userId (dono atual do
+    // personagem). A revalidação completa acontece por destinatário.
+    const partes = await db.select({
+      contaId: internetParticipantes.contaId,
+      userId: memberships.userId,
+    })
+      .from(internetParticipantes)
+      .innerJoin(internetAccounts, eq(internetParticipantes.contaId, internetAccounts.id))
+      .innerJoin(characters, eq(internetAccounts.characterId, characters.id))
+      .innerJoin(memberships, eq(characters.membershipId, memberships.id))
+      .where(and(
+        eq(internetParticipantes.conversaId, conversaId),
+        eq(internetParticipantes.status, "ativo"),
+      ));
+    const vistos = new Set<string>();
+    for (const parte of partes) {
+      const chave = `${parte.userId}:${parte.contaId}`;
+      if (vistos.has(chave)) continue;
+      vistos.add(chave);
+      if (barreiraRestauracaoAtiva(campaignId)) return;
+      // revalidação completa por destinatário na hora da entrega —
+      // titularidade atual, membership ativa, conta ativa, personagem
+      // não arquivado e gate cumulativo. Sem bypass de mestre.
+      const auth = await contaAutorizadaPara(parte.contaId, parte.userId);
+      if (barreiraRestauracaoAtiva(campaignId)) return;
+      if (!auth) continue; // revogado/bloqueado/inelegível: não recebe
+      instancia.to(`usuario:${parte.userId}`).emit(evento, {
+        ...(typeof dados === "object" && dados !== null ? dados : {}),
+        conversaId,
+        contaId: parte.contaId,
+      });
+    }
+  } catch (e) {
+    console.error("[internet] falha no fan-out de conversa:", e);
   }
 }
