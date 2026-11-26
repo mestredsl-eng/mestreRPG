@@ -762,6 +762,227 @@ try {
       `cursor=${cursor} esperado=${nova.id}`);
   }
 
+  // ================= GRUPO/P6 + P8 + RESTART =================
+  sec("N. Corrida grupo/P6, P8 por conta, ACK+restart");
+
+  // Fixtures novas: j1 ganha DUAS contas (mesmo userId — prova de
+  // throttle por conta, não por usuário); j3 ganha uma.
+  const charJ1b = C.novoPersonagem(j1.membershipId, "Ada Dois", { comp: 1 });
+  const charJ1c = C.novoPersonagem(j1.membershipId, "Ada Três", { comp: 1 });
+  const charJ3b = C.novoPersonagem(j3.membershipId, "Cida Dois", { comp: 1 });
+  for (const ch of [charJ1b, charJ1c, charJ3b]) darDispositivo(BANCO, ch);
+  const contaJ1b = (await API("POST", "/account", j1.cookie, { characterId: charJ1b, handle: "ada2.io" })).json?.conta?.id;
+  const contaJ1c = (await API("POST", "/account", j1.cookie, { characterId: charJ1c, handle: "ada3.io" })).json?.conta?.id;
+  const contaJ3b = (await API("POST", "/account", j3.cookie, { characterId: charJ3b, handle: "cida2.io" })).json?.conta?.id;
+  t("contas extras criadas (j1×2, j3×1)", !!(contaJ1b && contaJ1c && contaJ3b));
+
+  // contatos: j1b↔j3b, j1c↔j3b, j1↔j3b — todos aceitos
+  for (const [origem, origemId, cookieO, cookieD, contaD] of [
+    ["j1b", contaJ1b, j1.cookie, j3.cookie, contaJ3b],
+    ["j1c", contaJ1c, j1.cookie, j3.cookie, contaJ3b],
+    ["j1", contaJ1, j1.cookie, j3.cookie, contaJ3b],
+  ]) {
+    const ped = await API("POST", "/contacts", cookieO, { contaId: contaD, origemContaId: origemId });
+    const cid_ = ped.json?.contato?.id;
+    await API("POST", `/contacts/${cid_}/aceitar`, cookieD);
+  }
+  // diretas: convB (j1b↔j3b) e convC (j1c↔j3b)
+  const convB = (await API("POST", "/conversations", j1.cookie, { tipo: "direta", contaDestinoId: contaJ3b, origemContaId: contaJ1b })).json?.conversa;
+  const convC = (await API("POST", "/conversations", j1.cookie, { tipo: "direta", contaDestinoId: contaJ3b, origemContaId: contaJ1c })).json?.conversa;
+  t("diretas convB/convC criadas", !!(convB && convC && convB !== convC));
+
+  // ---- Item 3: ACK + restart — replay sobrevive a restart de processo ----
+  {
+    const sR = conectar(j1.cookie);
+    await pronto(sR);
+    await emitirCb(sR, "internet:conversa-entrar", { conversaId: convC, contaId: contaJ1c });
+    const antes = await emitirCb(sR, "internet:mensagem:enviar", {
+      conversaId: convC, contaId: contaJ1c, requestId: "req-restart-1", conteudo: "sobrevive a restart",
+    });
+    t("msg pré-restart confirmada", antes?.ok === true, JSON.stringify(antes));
+    sR.disconnect();
+
+    await encerrarServidor(proc);
+    proc = subirServidor(PORTA, { banco: BANCO, arquivos: join(DIR, "arq"), backups: join(DIR, "bks") });
+    await esperarSaudavel(BASE, proc);
+
+    const sR2 = conectar(j1.cookie);
+    await pronto(sR2);
+    const depois = await emitirCb(sR2, "internet:mensagem:enviar", {
+      conversaId: convC, contaId: contaJ1c, requestId: "req-restart-1", conteudo: "sobrevive a restart",
+    });
+    t("retry pós-restart → replay:true mesmo requestId",
+      depois?.ok === true && depois?.replay === true && depois?.mensagemId === antes?.mensagemId,
+      JSON.stringify(depois));
+    const linhas = abrirDb(BANCO).prepare(
+      "select count(*) c from internet_messages where request_id='req-restart-1'").get().c;
+    t("restart não duplicou a mensagem", linhas === 1, `linhas=${linhas}`);
+    // e o retry divergente continua uso_conflito após restart
+    const conflito = await emitirCb(sR2, "internet:mensagem:enviar", {
+      conversaId: convC, contaId: contaJ1c, requestId: "req-restart-1", conteudo: "conteúdo divergente",
+    });
+    t("pós-restart: mesmo requestId hash divergente → uso_conflito",
+      conflito?.ok === false && conflito?.erro === "uso_conflito", JSON.stringify(conflito));
+    sR2.disconnect();
+  }
+
+  // ---- Item 2a: handshake conversa-entrar — 20 burst/5s POR USUÁRIO,
+  // duas abas (dois sockets, mesmo cookie) compartilham o bucket ----
+  {
+    const sA = conectar(j1.cookie), sB2 = conectar(j1.cookie);
+    await Promise.all([pronto(sA), pronto(sB2)]);
+    const disparos = [];
+    for (let i = 0; i < 30; i++) {
+      disparos.push(emitirCb(i % 2 ? sA : sB2, "internet:conversa-entrar",
+        { conversaId: convB, contaId: contaJ1b }));
+    }
+    const rs = await Promise.all(disparos);
+    const okN = rs.filter((r) => r?.ok === true).length;
+    const rlN = rs.filter((r) => r?.erro === "rate_limit").length;
+    t("handshake: burst compartilhado entre abas do mesmo usuário",
+      rlN >= 5 && okN <= 25, `ok=${okN} rl=${rlN}`);
+    sA.disconnect(); sB2.disconnect();
+  }
+
+  // ---- Item 2b: P8 20/min POR CONTA — contaJ1b esgota a cota,
+  // contaJ1c (MESMO userId) continua enviando: sem throttle cruzado ----
+  {
+    const sB = conectar(j1.cookie);
+    await pronto(sB);
+    await emitirCb(sB, "internet:conversa-entrar", { conversaId: convB, contaId: contaJ1b });
+    let okB = 0, rlB = 0;
+    for (let i = 0; i < 21; i++) {
+      const r = await emitirCb(sB, "internet:mensagem:enviar", {
+        conversaId: convB, contaId: contaJ1b, requestId: `req-p8-b-${i}`, conteudo: `m${i}`,
+      });
+      if (r?.ok) okB++; else if (r?.erro === "rate_limit") rlB++;
+    }
+    t("conta J1b: 20 ok + excedente rate_limit", okB === 20 && rlB === 1, `ok=${okB} rl=${rlB}`);
+    // mesma janela, conta irmã do MESMO usuário — cota independente
+    const rC = await emitirCb(sB, "internet:mensagem:enviar", {
+      conversaId: convC, contaId: contaJ1c, requestId: "req-p8-c-1", conteudo: "conta irmã livre",
+    });
+    t("conta J1c (mesmo userId) NÃO herda cota esgotada de J1b",
+      rC?.ok === true, JSON.stringify(rC));
+    sB.disconnect();
+  }
+
+  // ---- Item 1: corrida grupo/P6 ----
+  // helpers de invariantes
+  const partesDe = (convId) => abrirDb(BANCO).prepare(
+    "select conta_id contaId, papel, status from internet_participantes where conversa_id=?").all(convId);
+  const statusConv = (convId) => abrirDb(BANCO).prepare(
+    "select status from internet_conversations where id=?").get(convId).status;
+
+  // N1: convite duplo simultâneo à MESMA conta nova (contaJ3b no
+  // grupo2 — contato j1↔j3b já aceito) → uma única linha
+  {
+    const [i1, i2] = await Promise.all([
+      API("POST", `/conversations/${grupo2Id}/participants`, j1.cookie,
+        { contaId: contaJ3b, origemContaId: contaJ1 }),
+      API("POST", `/conversations/${grupo2Id}/participants`, j1.cookie,
+        { contaId: contaJ3b, origemContaId: contaJ1 }),
+    ]);
+    const n = abrirDb(BANCO).prepare(
+      "select count(*) c from internet_participantes where conversa_id=? and conta_id=?")
+      .get(grupo2Id, contaJ3b).c;
+    t("convite duplo simultâneo → 1 linha participante", n === 1, `n=${n} st=${i1.status},${i2.status}`);
+    const parte = abrirDb(BANCO).prepare(
+      "select id, status from internet_participantes where conversa_id=? and conta_id=?")
+      .get(grupo2Id, contaJ3b);
+    // N2: responder aceitar+recusar SIMULTÂNEOS no mesmo convite →
+    // linha única, status final ∈ {ativo,recusado}
+    const [a1, a2] = await Promise.all([
+      API("POST", `/conversations/${grupo2Id}/participants/${parte.id}/responder`, j3.cookie,
+        { aceitar: true }),
+      API("POST", `/conversations/${grupo2Id}/participants/${parte.id}/responder`, j3.cookie,
+        { aceitar: false }),
+    ]);
+    const dep = abrirDb(BANCO).prepare(
+      "select status from internet_participantes where id=?").get(parte.id).status;
+    t("aceite+recusa simultâneos → linha única, status decidido",
+      ["ativo", "recusado"].includes(dep), `dep=${dep} st=${a1.status},${a2.status}`);
+  }
+
+  // N3: trio de corrida — dono sai ENQUANTO dois convites pendentes
+  // são aceites. Invariante: arquivada OU exatamente 1 dono ativo;
+  // nunca duplicata de participante.
+  {
+    const g3 = await API("POST", "/conversations", j1.cookie, {
+      tipo: "grupo", nome: "Corrida P6", origemContaId: contaJ1, contaIds: [contaJ3, contaJ3b],
+    });
+    const g3id = g3.json?.conversa;
+    const det = await API("GET", `/conversations/${g3id}`, j1.cookie);
+    const pids = Object.fromEntries(
+      det.json?.conversa?.participantes
+        ?.filter((p) => p.status === "convidado")
+        .map((p) => [p.contaId, p.id]) ?? []);
+    await Promise.all([
+      API("POST", `/conversations/${g3id}/participants/${pids[contaJ3]}/responder`, j3.cookie, { aceitar: true }),
+      API("POST", `/conversations/${g3id}/participants/${pids[contaJ3b]}/responder`, j3.cookie, { aceitar: true }),
+      API("POST", `/conversations/${g3id}/leave`, j1.cookie, { contaId: contaJ1 }),
+    ]);
+    const st = statusConv(g3id);
+    const partes = partesDe(g3id);
+    const donosAtivos = partes.filter((p) => p.papel === "dono" && p.status === "ativo").length;
+    const contas = partes.map((p) => p.contaId);
+    const unicas = new Set(contas).size === contas.length;
+    t("corrida convite+leave: arquivada OU exatamente 1 dono ativo",
+      (st === "arquivada" || donosAtivos === 1) && unicas,
+      `st=${st} donos=${donosAtivos} partes=${JSON.stringify(partes)}`);
+  }
+
+  // N4: cascata P6 — dono e membro saem SIMULTÂNEOS; depois o novo
+  // dono sai até arquivar. Prova: nunca 2 donos, nunca grupo ativo
+  // sem dono, sucessor sempre elegível (ativo).
+  {
+    const g4 = await API("POST", "/conversations", j1.cookie, {
+      tipo: "grupo", nome: "Cascata P6", origemContaId: contaJ1, contaIds: [contaJ3, contaJ3b],
+    });
+    const g4id = g4.json?.conversa;
+    const det = await API("GET", `/conversations/${g4id}`, j1.cookie);
+    const pids = Object.fromEntries(
+      det.json?.conversa?.participantes
+        ?.filter((p) => p.status === "convidado")
+        .map((p) => [p.contaId, p.id]) ?? []);
+    await API("POST", `/conversations/${g4id}/participants/${pids[contaJ3]}/responder`, j3.cookie, { aceitar: true });
+    await API("POST", `/conversations/${g4id}/participants/${pids[contaJ3b]}/responder`, j3.cookie, { aceitar: true });
+
+    // corrida: dono (j1) + membro (j2) saem juntos
+    await Promise.all([
+      API("POST", `/conversations/${g4id}/leave`, j1.cookie, { contaId: contaJ1 }),
+      API("POST", `/conversations/${g4id}/leave`, j3.cookie, { contaId: contaJ3 }),
+    ]);
+    let st = statusConv(g4id);
+    let partes = partesDe(g4id);
+    let donos = partes.filter((p) => p.papel === "dono" && p.status === "ativo");
+    t("após corrida dono+membro: exatamente 1 dono ativo ou arquivada",
+      st === "arquivada" || donos.length === 1,
+      `st=${st} donos=${JSON.stringify(donos)}`);
+
+    // cascata: o dono vigente sai até o grupo arquivar (máx 4 passos)
+    const cookiePorConta = { [contaJ3]: j3.cookie, [contaJ3b]: j3.cookie };
+    let passos = 0;
+    while (st === "ativa" && passos < 4) {
+      partes = partesDe(g4id);
+      const d = partes.find((p) => p.papel === "dono" && p.status === "ativo");
+      if (!d) break;
+      const ck = cookiePorConta[d.contaId];
+      if (!ck) break;
+      await API("POST", `/conversations/${g4id}/leave`, ck, { contaId: d.contaId });
+      passos++;
+      st = statusConv(g4id);
+      partes = partesDe(g4id);
+      const dd = partes.filter((p) => p.papel === "dono" && p.status === "ativo");
+      if (dd.length > 1) { t("nunca dois donos ativos", false, JSON.stringify(dd)); break; }
+    }
+    st = statusConv(g4id);
+    partes = partesDe(g4id);
+    const donosFim = partes.filter((p) => p.papel === "dono" && p.status === "ativo").length;
+    t("cascata P6 converge: arquivada sem dono ativo remanescente",
+      st === "arquivada" && donosFim === 0, `st=${st} donos=${donosFim} passos=${passos}`);
+  }
+
   // ================= EXPORT P9 =================
   sec("K. Exportação — P9: nenhuma tabela internet_* sai no pacote");
   {
