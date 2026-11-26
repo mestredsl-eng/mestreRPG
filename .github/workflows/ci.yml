@@ -554,3 +554,7 @@ jobs:
         run: |
           echo "===== teste-convite-campanha-ui.mjs ====="
           node teste-convite-campanha-ui.mjs
+      - name: Suíte E2E UI da versão exibida (#373 — obrigatória, sem SKIP)
+        run: |
+          echo "===== teste-versao-ui.mjs ====="
+          node teste-versao-ui.mjs
