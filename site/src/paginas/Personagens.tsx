@@ -320,6 +320,22 @@ function extrairErrosValidacao(detalhes: unknown): ErroValidacao[] {
       }))
       .filter((e) => e.mensagem);
   }
+  // Shape {campoId, codigo} sem mensagem — ex.: PATCH 400
+  // campo_obrigatorio ("não pode ser esvaziado"). Sem este ramo o fallback
+  // abaixo exporia UUID/código interno como "mensagem" ao usuário.
+  const chaves = Object.keys(d);
+  if (chaves.every((k) => k === "campoId" || k === "codigo" || k === "mensagem")
+    && typeof d.campoId === "string" && typeof d.codigo === "string") {
+    return [{
+      campoId: d.campoId,
+      codigo: d.codigo,
+      mensagem: typeof d.mensagem === "string" && d.mensagem
+        ? d.mensagem
+        : d.codigo === "campo_obrigatorio"
+          ? "O campo obrigatório não pode ser esvaziado."
+          : "Valor inválido para este campo.",
+    }];
+  }
   // mapa campoId -> mensagem (validarFicha). Todas as chaves são preservadas:
   // "erros" e "pontos" podem ser IDs legítimos de campos do modelo.
   return Object.entries(d).map(([campoId, v]) => ({ campoId, mensagem: String(v) }));
