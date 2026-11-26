@@ -10,7 +10,7 @@ import { join, resolve } from "node:path";
 import {
   verificarAtualizacao, executarBoot, reverterAtualizacao,
   recuperarAtualizacaoPendente,
-  executarReal, normalizarUrlRepo, REPO_OFICIAL,
+  executarReal, normalizarUrlRepo, REPO_OFICIAL, avaliarStatusPorcelain,
 } from "./scripts/auto-update.mjs";
 import {
   gravarEstado as gravarEstadoExterno,
@@ -963,6 +963,105 @@ try {
       else process.env.MESTRE_AUTO_UPDATE = envAnterior;
     }
   }
+  sec("Issue #373 — allowlist exata da trava e journal do banco configurado");
+  {
+    // Fixture local para validar tipo, basename configurado e conteúdo preservado.
+    const statusRoot = join(RAIZ, "c21-runtime-allowlist");
+    const bancoDir = join(statusRoot, "banco");
+    mkdirSync(bancoDir, { recursive: true });
+    const travaPath = join(bancoDir, "mestre-rpg.db.trava");
+    const journalPath = travaPath + "-journal";
+    const travaBytes = "MESTRE-RPG-TRAVA-INSTANCE-LOCK\n";
+    const journalBytes = "MESTRE-RPG-TRAVA-SQLITE-JOURNAL\n";
+    writeFileSync(travaPath, travaBytes);
+    writeFileSync(journalPath, journalBytes);
+    const avaliar = (status, env) => avaliarStatusPorcelain(status, statusRoot, env);
+
+    t("status vazio → limpo", avaliar("").sujo === false);
+    t("trava exata do banco padrão tolerada", avaliar("?? banco/mestre-rpg.db.trava\0").sujo === false);
+    t("journal SQLite da trava exata tolerado", avaliar("?? banco/mestre-rpg.db.trava-journal\0").sujo === false);
+    t("trava + journal do mesmo banco tolerados", avaliar("?? banco/mestre-rpg.db.trava\0?? banco/mestre-rpg.db.trava-journal\0").sujo === false);
+    t("trava de outro banco não configurado bloqueia", avaliar("?? banco/outro.db.trava\0").sujo === true);
+    t("trava fora de banco/ bloqueia", avaliar("?? dados/mestre-rpg.db.trava\0").sujo === true);
+    t("trava-journal de outro banco bloqueia", avaliar("?? banco/outro.db.trava-journal\0").sujo === true);
+    t("wal/shm sem ignore bloqueiam", avaliar("?? banco/mestre-rpg.db.wal\0?? banco/mestre-rpg.db-shm\0").sujo === true);
+    t(".bak-* legado não comprovado bloqueia", avaliar("?? banco/copia.bak-2024\0").sujo === true);
+    t("outro untracked bloqueia", avaliar("?? notas.txt\0").sujo === true);
+    t("modificado rastreado bloqueia", avaliar(" M site/src/app.txt\0").sujo === true);
+    t("staged bloqueia", avaliar("M  package.json\0").sujo === true);
+    t("rename bloqueia", avaliar("R  banco/mestre-rpg.db.trava\0").sujo === true);
+
+    // A allowlist acompanha MESTRE_BANCO, mas somente para seu basename exato.
+    const customRoot = join(RAIZ, "c21-runtime-custom");
+    mkdirSync(join(customRoot, "banco"), { recursive: true });
+    writeFileSync(join(customRoot, "banco", "campanha.db.trava"), "x\n");
+    t(
+      "MESTRE_BANCO customizado permite somente seu próprio lock",
+      avaliarStatusPorcelain("?? banco/campanha.db.trava\0", customRoot, { MESTRE_BANCO: "banco/campanha.db" }).sujo === false,
+    );
+    t(
+      "lock customizado bloqueia sem MESTRE_BANCO correspondente",
+      avaliarStatusPorcelain("?? banco/campanha.db.trava\0", customRoot, {}).sujo === true,
+    );
+
+    // Um diretório com o mesmo nome não é um arquivo de trava regular.
+    const dirRoot = join(RAIZ, "c21-runtime-not-file");
+    mkdirSync(join(dirRoot, "banco", "mestre-rpg.db.trava"), { recursive: true });
+    t(
+      "diretório com nome de trava bloqueia",
+      avaliarStatusPorcelain("?? banco/mestre-rpg.db.trava\0", dirRoot).sujo === true,
+    );
+
+    // Clone com .gitignore legado exato, sem .git/info/exclude:
+    // trava + journal reais precisam sobreviver ao fast-forward.
+    const GITIGNORE_LEGADO = "banco/*.db\nbanco/*.db-journal\nbanco/*.db-wal\nbanco/*.db-shm\n";
+    const c = criarRepo("c22-trava-legado");
+    c.commit(c.local, "gitignore legado <=1.1.0", { ".gitignore": GITIGNORE_LEGADO });
+    gitSetup(["push", "origin", "HEAD:main"], c.local);
+    mkdirSync(join(c.local, "banco"), { recursive: true });
+    const travaBytesE2e = "MESTRE-RPG-TRAVA-INSTANCE-LOCK\n";
+    const journalBytesE2e = "MESTRE-RPG-TRAVA-SQLITE-JOURNAL\n";
+    writeFileSync(join(c.local, "banco", "mestre-rpg.db.trava"), travaBytesE2e);
+    writeFileSync(join(c.local, "banco", "mestre-rpg.db.trava-journal"), journalBytesE2e);
+    publicar(c, "release com .gitignore novo", {
+      ".gitignore": "/banco/\n",
+      "site/src/app.txt": "v1.1.1\n",
+    });
+    const reg = [];
+    const r = await verificarAtualizacao({ ...opcoesRepo(c), executar: executarHibrido({ registro: reg }), log: silencioso });
+    t("clone legado + trava+journal reais → ff p/ candidato", r.atualizou === true && r.motivo === "atualizado", JSON.stringify(r));
+    t("fetch executado apesar dos dois artefatos", reg.some((x) => x.includes(" fetch ")), reg.join(" | "));
+    t("trava byte-idêntica após ff", readFileSync(join(c.local, "banco", "mestre-rpg.db.trava"), "utf8") === travaBytesE2e);
+    t("journal byte-idêntico após ff", readFileSync(join(c.local, "banco", "mestre-rpg.db.trava-journal"), "utf8") === journalBytesE2e);
+    t("novo .gitignore /banco/ ignora a trava", git(["check-ignore", "-q", "banco/mestre-rpg.db.trava"], c.local).status === 0);
+    t("novo .gitignore /banco/ ignora o journal", git(["check-ignore", "-q", "banco/mestre-rpg.db.trava-journal"], c.local).status === 0);
+    t("nenhum dos artefatos aparece no status pós-update", !String(git(["status", "--porcelain"], c.local).stdout).includes("trava"));
+
+    // Resíduos antigos .bak-* não comprovados continuam bloqueando.
+    const c2 = criarRepo("c23-trava-mais-bak");
+    c2.commit(c2.local, "gitignore legado", { ".gitignore": GITIGNORE_LEGADO });
+    gitSetup(["push", "origin", "HEAD:main"], c2.local);
+    mkdirSync(join(c2.local, "banco"), { recursive: true });
+    writeFileSync(join(c2.local, "banco", "mestre-rpg.db.trava"), "x\n");
+    writeFileSync(join(c2.local, "banco", "copia.bak-2024"), "x\n");
+    publicar(c2);
+    const reg2 = [];
+    const r2 = await verificarAtualizacao({ ...opcoesRepo(c2), executar: executarHibrido({ registro: reg2 }), log: silencioso });
+    t(".bak-* não comprovado → arvore-suja", r2.motivo === "arvore-suja", r2.motivo);
+    t("sem fetch com .bak-* legado", !reg2.some((x) => x.includes(" fetch ")), reg2.join(" | "));
+
+    // Qualquer alteração rastreada também bloqueia, mesmo com lock runtime.
+    const c3 = criarRepo("c24-trava-mais-modificado");
+    c3.commit(c3.local, "gitignore legado", { ".gitignore": GITIGNORE_LEGADO });
+    gitSetup(["push", "origin", "HEAD:main"], c3.local);
+    mkdirSync(join(c3.local, "banco"), { recursive: true });
+    writeFileSync(join(c3.local, "banco", "mestre-rpg.db.trava"), "x\n");
+    writeFileSync(join(c3.local, "site/src/app.txt"), "editado localmente\n");
+    publicar(c3);
+    const r3 = await verificarAtualizacao({ ...opcoesRepo(c3), executar: execReal, log: silencioso });
+    t("rastreado modificado + lock → arvore-suja", r3.motivo === "arvore-suja", r3.motivo);
+  }
+
   sec("Hardening do spawnSync — saída npm acima de 1 MiB");
   {
     const bytes = 2 * 1024 * 1024;
