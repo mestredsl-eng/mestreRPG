@@ -814,6 +814,10 @@ export const internetContacts = sqliteTable("internet_contacts", {
   contaOrigemId: text("conta_origem_id").notNull().references(() => internetAccounts.id, { onDelete: "cascade" }),
   contaDestinoId: text("conta_destino_id").notNull().references(() => internetAccounts.id, { onDelete: "cascade" }),
   status: text("status").notNull().default("pendente"), // pendente|aceito|bloqueado
+  // P3 (deliberação do proprietário): qualquer ponta da aresta pode
+  // iniciar o bloqueio — este campo registra QUAL conta o iniciou
+  // (auditoria + autorização de remoção). NULL fora de `bloqueado`.
+  bloqueadoPorContaId: text("bloqueado_por_conta_id").references(() => internetAccounts.id, { onDelete: "set null" }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
   respondedAt: integer("responded_at", { mode: "timestamp_ms" }),
