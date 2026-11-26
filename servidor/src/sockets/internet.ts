@@ -139,6 +139,23 @@ export function registrarInternet(io: SocketIOServer) {
         // escritas via .run(). Tudo dentro da tx para não haver corrida
         // entre checagem de bloqueio/rate-limit e a gravação.
         const resultado = db.transaction((tx) => {
+          // idempotência PRIMEIRO: retry de mensagem já persistida deve
+          // retornar replay/uso_conflito mesmo se o autor ficou sem
+          // elegíveis ou estourou o rate limit depois do ACK original.
+          const existente = tx.select().from(internetMessages)
+            .where(and(
+              eq(internetMessages.conversaId, conversaId),
+              eq(internetMessages.autorContaId, contaId),
+              eq(internetMessages.requestId, requestId),
+            ))
+            .limit(1)
+            .get();
+          if (existente) {
+            if (existente.payloadHash === payloadHash) {
+              return { replay: true as const, mensagem: existente };
+            }
+            return { erro: "uso_conflito" as const };
+          }
           // P3 par-a-par (deliberação do proprietário): a mensagem é
           // persistida se o autor tem AO MENOS UM destinatário elegível
           // (participante ativo sem aresta `bloqueado` contra ele).
@@ -146,6 +163,9 @@ export function registrarInternet(io: SocketIOServer) {
           // ⇒ rejeição equivalente à anterior. Em grupo, o autor segue
           // falando com os não-bloqueados; o filtro de entrega/leitura
           // acontece no fan-out e no histórico.
+          // NOTA (comportamento aceito, parecer P3): grupo sem nenhum
+          // destinatário elegível — todos bloqueados ou todos saíram —
+          // retorna `contato_bloqueado` por vacuidade, não por bloqueio.
           const outros = tx.select({ contaId: internetParticipantes.contaId })
             .from(internetParticipantes)
             .where(and(eq(internetParticipantes.conversaId, conversaId), eq(internetParticipantes.status, "ativo")))
@@ -175,22 +195,6 @@ export function registrarInternet(io: SocketIOServer) {
             .get();
           if (Number(r?.c ?? 0) >= LIMITE_MSG_POR_MINUTO) {
             return { erro: "rate_limit" as const, retryAfterMs: JANELA_RATE_MS };
-          }
-          // idempotência: replay mesmo hash → mensagem existente;
-          // mesmo requestId hash divergente → uso_conflito
-          const existente = tx.select().from(internetMessages)
-            .where(and(
-              eq(internetMessages.conversaId, conversaId),
-              eq(internetMessages.autorContaId, contaId),
-              eq(internetMessages.requestId, requestId),
-            ))
-            .limit(1)
-            .get();
-          if (existente) {
-            if (existente.payloadHash === payloadHash) {
-              return { replay: true as const, mensagem: existente };
-            }
-            return { erro: "uso_conflito" as const };
           }
           const id = crypto.randomUUID();
           tx.insert(internetMessages).values({
