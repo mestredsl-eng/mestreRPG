@@ -3,7 +3,8 @@
 **Status**: **UX aprovada pela revisão adversarial** (INTERMEDIÁRIO #366 —
 2 rodadas incorporadas) e alinhada ao threat model #367 e à proposta de
 domínio #365. **Segue Draft de produto**: PR #371 permanece draft até o
-contrato v2 do PAI e a deliberação do proprietário sobre D1–D13 (§6).
+contrato v2 do PAI e a deliberação do proprietário sobre as decisões
+restantes (§6 — **D1 e D2 já decididas em 26/11**, Quizzes 1 e 2).
 **HEAD da spec**: `b1079aa`+ (branch `docs/366-ux-internet-publica`, PR #371).
 **Protótipo navegável**: [`index.html`](./index.html) (wireframe, dados ilustrativos, sem backend).
 **Bases analisadas**:
@@ -52,15 +53,15 @@ raiz), preservando contexto de pesquisa/filtro via estado local.
 
 | # | Tela | Entrada | Conteúdo | Dependência |
 |---|------|---------|----------|-------------|
-| W1 | Explorar — Início | Rede → Explorar | Barra de pesquisa global, sites/atalhos da campanha, notícias em destaque, anúncios recentes | `[contrato]` índice de sites/notícias/anúncios |
+| W1 | Explorar — Início | Rede → Explorar | Barra de pesquisa global, **diretório de sites da campanha** (D2 decidido), notícias em destaque, anúncios recentes — **prévia/contagem só do que o leitor pode ver** | `[contrato]` índice de sites/notícias/anúncios |
 | W2 | Pesquisa | W1 (campo) ou sub-aba Pesquisa | Escopo: Tudo · Páginas · Notícias · Classificados · Perfis; resultados agrupados; estado sem resultado | `[contrato]` endpoint de busca + escopo |
 | W3 | Página/Site | W1 atalhos, W2 resultado, link interno | Menu do site, conteúdo, "voltar" para origem | `[contrato]` estrutura site/página |
 | W4 | Notícias — lista | Explorar → Notícias | Matérias com fonte, autor, data, escopo | `[contrato]` |
 | W5 | Matéria | W4 | Corpo, fonte, autoria, data, escopo de visibilidade | `[contrato]` |
 | W6 | Classificados — lista | Explorar → Classificados | Filtro por categoria, validade/estado, autoria | `[contrato]` |
 | W7 | Anúncio — detalhe | W6 | Conteúdo, autor, validade, estado (ativo/expirado/removido), ações permitidas | `[contrato]` |
-| W8 | Publicar (anúncio/notícia/post) | W6/W4/W9 ("Publicar") | Formulário + **prévia** + seletor de visibilidade (`campanha`/`contatos` — proposta #365); marca o que exige autorização do mestre | `[contrato]` + regra de moderação |
-| W9 | Perfil público | Explorar → Perfil (o próprio) ou resultado de busca | Identidade do personagem, sites possuídos, timeline de publicações (`post_perfil`), escopo do perfil | `[contrato]` |
+| W8 | Publicar (anúncio/notícia/post) | W6/W4/W9 ("Publicar") | Formulário + **prévia** + **declaração de público por publicação** (`campanha`\|`contatos` — D1/D2 decididos) visível na criação **e** na edição; marca o que exige autorização do mestre | `[contrato]` + regra de moderação |
+| W9 | Perfil público | Explorar → Perfil (o próprio) ou resultado de busca | Identidade do personagem, sites possuídos, timeline de **publicações visíveis ao leitor** (`post_perfil` — restritas somem por completo, sem contagem nem placeholder), escopo do perfil | `[contrato]` |
 
 **Favoritos/histórico**: incluídos como *opcionais* na spec — só se o contrato
 justificar persistência por conta. Recomendação: **adiar** (ver §5).
@@ -81,6 +82,7 @@ Todos reutilizam `EstadoCarregando` (aria-busy), `EstadoVazio` (CTA diegético),
 | Conteúdo removido/expirado | **Distinção de acesso legítimo (anti-enumeração, revisão INTERMEDIÁRIO)**: quem tinha acesso prévio (autor, mestre da campanha, ou conteúdo já público para ele) vê tela honesta de estado — "expirado em…" / "retirado" — com contexto. Quem **nunca** teve acesso (link adivinhado, conteúdo privado alheio) recebe **404 diegético seco**, idêntico a inexistente — a tela de estado jamais vaza existência+estado de moderação. O contrato precisa carregar o flag "visível-antes" vs "nunca-visível" |
 | Sem permissão para publicar | Ação visível mas desabilitada **com motivo** ("publicar exige autorização do mestre" — se a regra exigir) |
 | Pesquisa sem resultado | Estado vazio específico + sugestão de ampliar escopo. Resultado nunca vaza existência de conteúdo oculto (anti-enumeração V-02: "não existe" e "existe mas oculto" respondem igual) |
+| Conteúdo restrito (`contatos`) para não-contato | **Invisível por completo**: não aparece em busca, prévias, contagens, timelines nem no agregado do perfil — sem placeholder, sem "conteúdo restrito aqui". Site/perfil do autor **existem e são descobríveis** normalmente; só o conteúdo restrito some (decisão Quiz 2) |
 | Perdeu o dispositivo (gate revogado) | **Ler** conteúdo já publicado segue permitido (publicação é fato consumado — D-B do threat model); **editar/publicar** fica bloqueado pelo gate vigente, com motivo |
 
 ## 4. Matriz tela × estado × papel × ação
@@ -155,8 +157,8 @@ na busca" fundidas em **D10**; "moderação" + "motivo ao autor" fundidas em
 
 | # | Origem | Pergunta | Opções reais | Recomendação | Impacto no wireframe | Bloqueia |
 |---|--------|----------|--------------|--------------|----------------------|----------|
-| D1 | PAI #365 | Escopo "público": só campanha ou entre campanhas/servidor? PAI propõe `campanha\|contatos` intra-campanha | a) só campanha b) +contatos c) global | a+b (recomendação PAI + INTERMEDIÁRIO); residual = global → **não** | W8 seletor de visibilidade; W2 escopo de resultados | Schema/índice se global |
-| D2 | PAI #365 | Sites visíveis a todos da campanha ou só a contatos? | a) todos b) contatos c) configurável por site | a) todos — descoberta é o propósito da camada | W1 atalhos; W3 acesso | Filtro de leitura se não-todos |
+| D1 | PAI #365 | ~~Escopo "público": só campanha ou entre campanhas/servidor?~~ **DECIDIDO 26/11 (Quiz 1): fronteira entre campanhas ABSOLUTA — escopo = campanha** | — | campanha-only, definitivo | W8 seletor fixo `campanha\|contatos`; W2 sem escopo cross-campaign | — (decidido) |
+| D2 | PAI #365 | ~~Sites visíveis a todos da campanha ou só a contatos?~~ **DECIDIDO 26/11 (Quiz 2, escolha A): sites descobríveis por TODOS os elegíveis da campanha; `contatos` restringe publicações individuais** | — | todos — diretório lista sites; perfil/site existe sem expor publicações restritas | W1 diretório de sites; W3/W9 existem mesmo sem publicações visíveis ao leitor | — (decidido) |
 | D3 | PAI #365 | Histórico de edições de página: `version`+audit ou tabela de revisões/rollback? | a) version+audit b) revisions | a) adiar revisions (fatía A) | W3/W8 "versões anteriores" só existe se b) | Tabela nova se b) |
 | D4 | PAI #365 | Bio de perfil: coluna `descricao` em `internet_accounts` ou publicação fixada? | a) coluna b) fixada | a) coluna (simples) | W9 campo bio; formulário de perfil | Schema (coluna vs. entidade) |
 | D5 | PAI #365 | Todo endpoint público exige gate do leitor (conta Internet + dispositivo)? | a) gate em tudo b) discovery aberto | a) gate em tudo — **absorve** "sem conta acessa?" e "anônimo?" (sem conta = sem gate = sem acesso) | Todo o Explorar atrás do gate; estado "sem conta" já especificado | Regra de autorização |
@@ -215,11 +217,13 @@ podem ser congeladas já (wireframe + contratos de leitura estáveis):
   `abas.tsx`, `estados.tsx` — zero linguagem nova.
 - **Responsividade**: layouts mobile/desktop do wireframe.
 
-**NÃO congelável** (depende de deliberação): seletor de visibilidade do W8
-(D1), permissões de publicação por tipo (D7/D8), ação "Contatar" (D9),
-campos do perfil (D4/D10), campo de validade (D11), escopo/índice da
-pesquisa (D12), menu do site (D13), e qualquer texto de "enviado para
-análise" (D7).
+**NÃO congelável** (depende de deliberação): permissões de publicação por
+tipo (D7/D8), ação "Contatar" (D9), campos do perfil (D4/D10), campo de
+validade (D11), escopo/índice da pesquisa (D12), menu do site (D13), e
+qualquer texto de "enviado para análise" (D7). **Já decidido**: escopo =
+campanha absoluto (D1) e sites descobríveis por todos os elegíveis (D2) —
+o seletor `campanha|contatos` por publicação e a invisibilidade total de
+conteúdo restrito já podem ser congelados junto com W8/W9.
 
 ## 8. O que NÃO está proposto
 
