@@ -293,11 +293,18 @@ internetRouter.delete("/contacts/:id", requirePapel("mestre", "jogador"), async 
   const [contato] = await db.select().from(internetContacts)
     .where(and(eq(internetContacts.id, req.params.id), eq(internetContacts.campaignId, cid))).limit(1);
   if (!contato) { erroHttp(res, 404, "Contato não encontrado"); return; }
-  // qualquer ponta da aresta pode removê-la — mas só se for dona de uma
-  // das contas (gate completo em cada candidata)
-  const ok1 = await contaAutorizadaPara(contato.contaOrigemId, req.usuario!.id);
-  const ok2 = ok1 ? null : await contaAutorizadaPara(contato.contaDestinoId, req.usuario!.id);
-  if (!ok1 && !ok2) { erroHttp(res, 403, "Conta não autorizada"); return; }
+  // P3: aresta `bloqueado` só pode ser removida por quem a bloqueou —
+  // o bloqueio é unilateral do DESTINO da aresta (rota /bloquear exige
+  // contaDestinoId). Se a origem pudesse deletar, desfaria o bloqueio
+  // do outro sem consentimento. Demais status: qualquer ponta remove.
+  if (contato.status === "bloqueado") {
+    const okBloqueador = await contaAutorizadaPara(contato.contaDestinoId, req.usuario!.id);
+    if (!okBloqueador) { erroHttp(res, 403, "Conta não autorizada"); return; }
+  } else {
+    const ok1 = await contaAutorizadaPara(contato.contaOrigemId, req.usuario!.id);
+    const ok2 = ok1 ? null : await contaAutorizadaPara(contato.contaDestinoId, req.usuario!.id);
+    if (!ok1 && !ok2) { erroHttp(res, 403, "Conta não autorizada"); return; }
+  }
   await db.delete(internetContacts).where(eq(internetContacts.id, contato.id));
   await audit(req, "internet.contato_removido", { contatoId: contato.id });
   res.json({ ok: true });
@@ -482,6 +489,27 @@ internetRouter.get("/conversations/:id", requirePapel("mestre", "jogador"), asyn
   const [conversa] = await db.select().from(internetConversations)
     .where(and(eq(internetConversations.id, req.params.id), eq(internetConversations.campaignId, cid))).limit(1);
   if (!conversa) { erroHttp(res, 404, "Conversa não encontrada"); return; }
+  // mesmo gate do histórico: participante ativo da conta autorizada,
+  // ou mestre da campanha (P10 — leitura auditada). `convidado` também
+  // lê o detalhe — precisa ver o convite para aceitar/recusar; o
+  // histórico de mensagens segue restrito a `ativo`. Sem gate, o
+  // endpoint vazaria composição e cursores de leitura de terceiros.
+  const minhas = await contasDoUsuario(cid, req.usuario!.id);
+  let autorizado = false;
+  for (const conta of minhas) {
+    const parte = await participanteDaConta(conversa.id, conta.id);
+    if (parte && (parte.status === "ativo" || parte.status === "convidado")
+      && await contaAutorizadaPara(conta.id, req.usuario!.id)) {
+      autorizado = true; break;
+    }
+  }
+  const leituraMestre = !autorizado && await mestreLeitorDaCampanha(cid, req.usuario!.id);
+  if (!autorizado && !leituraMestre) { erroHttp(res, 403, "Sem acesso à conversa"); return; }
+  if (leituraMestre) {
+    await audit(req, "internet.leitura_mestre", {
+      conversaId: conversa.id, operacao: "detalhe",
+    });
+  }
   const partes = await db.select().from(internetParticipantes).where(eq(internetParticipantes.conversaId, conversa.id));
   const contaIds = [...new Set(partes.map((p) => p.contaId))];
   const contasRows = contaIds.length ? await db.select().from(internetAccounts).where(inArray(internetAccounts.id, contaIds)) : [];

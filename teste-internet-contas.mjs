@@ -366,6 +366,22 @@ try {
   const histJ3 = await API("GET", `/conversations/${conversaId}/messages`, j3.cookie);
   t("não-participante não-mestre → 403", histJ3.status === 403, `status=${histJ3.status}`);
 
+  // GET /conversations/:id — mesmo gate do histórico (P2 revisão):
+  // não-vaza composição/cursor para não-participante; mestre lê auditado.
+  const detJ1 = await API("GET", `/conversations/${conversaId}`, j1.cookie);
+  t("participante lê detalhe da conversa", detJ1.status === 200
+    && detJ1.json?.conversa?.participantes?.length === 2, `status=${detJ1.status}`);
+  const detJ3 = await API("GET", `/conversations/${conversaId}`, j3.cookie);
+  t("não-participante não-mestre → 403 no detalhe", detJ3.status === 403, `status=${detJ3.status}`);
+  const auditsAntes = abrirDb(BANCO)
+    .prepare("select count(*) c from audit_logs where action='internet.leitura_mestre' and campaign_id=?").get(campId).c;
+  const detMestre = await API("GET", `/conversations/${conversaId}`, C.cookieMestre);
+  const auditsDepois = abrirDb(BANCO)
+    .prepare("select count(*) c from audit_logs where action='internet.leitura_mestre' and campaign_id=?").get(campId).c;
+  t("mestre lê detalhe alheio (P10) com auditoria",
+    detMestre.status === 200 && auditsDepois === auditsAntes + 1,
+    `status=${detMestre.status} audits=${auditsAntes}→${auditsDepois}`);
+
   // cursor de leitura monotônico
   const ultima = histJ1.json?.mensagens?.at(-1);
   const read1 = await API("POST", `/conversations/${conversaId}/read`, j1.cookie, {
@@ -403,9 +419,12 @@ try {
   t("envio bloqueado nos DOIS sentidos (destino→origem)",
     msgBloq2?.ok === false && msgBloq2?.erro === "contato_bloqueado", JSON.stringify(msgBloq2));
 
-  // remover a aresta desbloqueia o envio (histórico preservado — P12)
-  const del = await API("DELETE", `/contacts/${contatoId}`, j1.cookie);
-  t("remover aresta bloqueada", del.status === 200, `status=${del.status}`);
+  // P3: aresta bloqueada só pode ser removida por quem bloqueou (dono
+  // da conta DESTINO). A origem tentando remover → 403.
+  const delOrigem = await API("DELETE", `/contacts/${contatoId}`, j1.cookie);
+  t("origem NÃO remove aresta bloqueada (P3)", delOrigem.status === 403, `status=${delOrigem.status}`);
+  const del = await API("DELETE", `/contacts/${contatoId}`, j2.cookie);
+  t("bloqueador remove a aresta bloqueada", del.status === 200, `status=${del.status}`);
   const histAposRemocao = await API("GET", `/conversations/${conversaId}/messages`, j1.cookie);
   t("histórico preservado após remoção do contato (P12)", histAposRemocao.json?.mensagens?.length > 0);
   // j1 está no limite P8 (rajada da seção E) — quem prova o envio é j2,
