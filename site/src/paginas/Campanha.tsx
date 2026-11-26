@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type CampanhaResumo, type Convite, type Membro, type PermissoesMembro } from "../api";
 import { getSocket } from "../socket";
+import { IndicadorConexao } from "../ConexaoSocket";
+import { registrarSyncOk } from "../useSincronizacao";
 import { statusLabel } from "./Campanhas";
 import { ModalConfirmar } from "../Modal";
 import ModelosFicha from "./ModelosFicha";
@@ -61,6 +63,9 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
         setMembros(membros);
       }
       setErro(null);
+      // Issue #285: a marca de sincronização só avança após o GET
+      // autoritativo da campanha terminar com sucesso.
+      registrarSyncOk(id);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao carregar campanha");
     }
@@ -172,6 +177,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
             <p className="meta">
               {campanha.system ? `Sistema: ${campanha.system} · ` : ""}
               {statusLabel(campanha.status)} · Você é {PAPEL_LABEL[campanha.meuPapel] ?? campanha.meuPapel}
+              {" · "}<IndicadorConexao campaignId={id} />
             </p>
           </div>
           <button className="secundario" onClick={aoVoltar}>Voltar</button>

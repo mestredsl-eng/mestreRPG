@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { getSocket } from "./socket";
 
 /**
@@ -66,4 +66,31 @@ export function useSincronizacaoCampanha(eventos: readonly string[], aoInvalidar
     // a chave serializada cobre o caso de literal inline.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chave]);
+}
+
+/**
+ * Issue #285 — marca da última sincronização concluída por campanha.
+ *
+ * As páginas chamam `registrarSyncOk(campaignId)` somente depois que a
+ * busca autoritativa (GET) termina com sucesso — nunca no recebimento
+ * do evento nem no `socket.connected`. O store é por campanha: uma
+ * resposta tardia da campanha A não altera o indicador da campanha B.
+ */
+const marcasSync = new Map<string, number>();
+const ouvintesSync = new Set<() => void>();
+
+export function registrarSyncOk(campaignId: string) {
+  marcasSync.set(campaignId, Date.now());
+  ouvintesSync.forEach((o) => o());
+}
+
+export function useUltimaSync(campaignId: string): number | null {
+  return useSyncExternalStore(
+    (cb) => {
+      ouvintesSync.add(cb);
+      return () => ouvintesSync.delete(cb);
+    },
+    () => marcasSync.get(campaignId) ?? null,
+    () => null
+  );
 }

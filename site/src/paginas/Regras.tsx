@@ -16,7 +16,7 @@ import {
 } from "../api";
 import { ModalConfirmar } from "../Modal";
 import RegrasSangue from "./RegrasSangue";
-import { useSincronizacaoCampanha } from "../useSincronizacao";
+import { useSincronizacaoCampanha, registrarSyncOk } from "../useSincronizacao";
 
 const ROTULO_KIND: Record<TipoRegra, string> = {
   atributo: "Atributo",
@@ -88,6 +88,7 @@ export default function Regras({ campaignId }: { campaignId: string }) {
       if (g !== geracao.current) return;
       setRegras(r);
       setErro(null);
+      registrarSyncOk(campaignId);
     } catch (e) {
       if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar regras");
     }
