@@ -143,7 +143,7 @@ O `iniciar-mestre-rpg.bat` executa `node scripts/auto-update.mjs` **depois** de 
 - `git` está instalado e a pasta contém um repositório (`.git`); instalações ZIP sem `.git` pulam silenciosamente.
 - A URL **efetiva** de `origin` (consultada com `git remote get-url --all origin`, que expande regras `url.*.insteadOf`) precisa ser exatamente uma única URL do repositório oficial `github.com/mestredsl-eng/mestreRPG`; origem múltipla ou reescrita para outro destino é rejeitada.
 - A branch atual tem upstream configurado **e exatamente `origin/<branch-da-branch-atual>`** — upstream de outro remoto ou de fork cancela a atualização, mesmo com `origin` oficial (sem upstream, nada é adivinhado).
-- `git status --porcelain` está limpo — qualquer alteração local, rastreada ou não, adia a atualização. Nada é descartado, escondido (stash) ou limpo automaticamente.
+- `git status --porcelain` está limpo — qualquer alteração local, rastreada ou não, adia a atualização. Nada é descartado, escondido (stash) ou limpo automaticamente. **Exceção estrita (Issue #373):** os dois arquivos de trava SQLite do banco configurado — `<banco>.trava` e `<banco>.trava-journal` (por padrão `banco/mestre-rpg.db.trava` e `banco/mestre-rpg.db.trava-journal`, derivados de `MESTRE_BANCO`) — são tolerados quando existem como arquivos regulares dentro do clone; cada tolerância é registrada no log (`Artefatos runtime tolerados…`). Qualquer outro arquivo — inclusive `.bak-*`, travas de outros bancos ou artefatos parecidos — continua bloqueando.
 - O `fetch` (não interativo, `GIT_TERMINAL_PROMPT=0`, timeout de 30 s) funciona — sem rede, autenticação ou dentro do timeout, o boot segue com a versão local.
 - HEAD está apenas atrás do upstream — divergência cancela a atualização.
 
@@ -158,6 +158,26 @@ O `iniciar-mestre-rpg.bat` executa `node scripts/auto-update.mjs` **depois** de 
 **Como identificar falhas de atualização:** procure linhas `[auto-update]` no console do `.bat`. Mensagens como "alterações locais detectadas", "falha ao buscar atualizações" ou "divergiu do remoto" indicam que a versão local foi mantida de propósito — revise com `git status`/`git pull` manual se quiser atualizar.
 
 **Recuperação após falha de build/rollback:** com o servidor parado, rode `git status` para confirmar que não há alterações inesperadas, `git log --oneline -3` para ver o HEAD, e `npm ci && npm run build` para reconstruir. Se o HEAD ficou no commit novo com build quebrado e a árvore limpa, `git reset --hard <SHA-anterior>` (mostrado no log `[auto-update]`) retorna ao estado anterior — o SHA anterior também fica registrado temporariamente fora do repositório pelo próprio script.
+
+### 10.2 Instalações 1.1.0 ou anteriores — bootstrap assistido de um passo
+
+Instalações criadas antes da correção da Issue #373 executam o updater **antigo**, que não conhece a exceção acima: os arquivos de trava aparecem como "não rastreados" e o updater pula a atualização **para sempre** — o novo `.gitignore` que viria no update nunca é alcançado.
+
+**Procedimento único** (homologado pelo Técnico Geral no Cenário A — Node 22.23.5, remoto oficial real, updater e `.bat` legados da tag `v1.1.0`):
+
+1. Com o servidor **parado**, confira em `banco/` se existem `mestre-rpg.db.trava` e/ou `mestre-rpg.db.trava-journal` (ou os equivalentes do `MESTRE_BANCO` configurado).
+2. Adicione **exatamente** esses caminhos em `.git/info/exclude` — arquivo local do clone, nunca commitado:
+
+   ```
+   banco/mestre-rpg.db.trava
+   banco/mestre-rpg.db.trava-journal
+   ```
+
+   Se `MESTRE_BANCO` aponta para outro arquivo, use o caminho relativo correspondente (ex.: `dados/campanha.db.trava`).
+3. Execute `iniciar-mestre-rpg.bat` normalmente. O updater antigo passa a ver a árvore limpa e faz fetch, fast-forward, `npm ci`, builds e migrations **sozinho** — nada mais é necessário.
+4. Após chegar à versão corrigida, o updater novo tolera os artefatos por conta própria e o `.gitignore` `/banco/` os cobre definitivamente; as linhas em `.git/info/exclude` podem permanecer (inofensivas) ou ser removidas.
+
+**Não** use `git clean`, `git stash` ou exclusão manual dos arquivos de trava — são locks SQLite vivos; a exceção existe justamente para não tocá-los. Qualquer outra sujeira na árvore continua bloqueando a atualização normalmente.
 
 ## 11. Migrations
 
