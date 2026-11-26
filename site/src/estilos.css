@@ -190,7 +190,7 @@ label {
 
 input {
   background: #14161a;
-  border: 1px solid #2c3038;
+  border: 1px solid var(--horror-vinho-claro, #b85c69);
   color: #e8e6e3;
   padding: 0.55rem 0.7rem;
   border-radius: 6px;
@@ -229,6 +229,14 @@ label.checkbox {
 
 label.checkbox input {
   width: auto;
+}
+
+/* #322 — estado marcado de checkbox/radio segue o acento do tema;
+   a caixa desmarcada é desenho nativo do UA (fronteira residual
+   registrada na matriz WCAG para disposição humana). */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--horror-vinho-claro, #b85c69);
 }
 
 .grade-2 {
@@ -317,7 +325,7 @@ tr.arquivado td {
 select,
 textarea {
   background: #14161a;
-  border: 1px solid #2c3038;
+  border: 1px solid var(--horror-vinho-claro, #b85c69);
   color: #e8e6e3;
   padding: 0.55rem 0.7rem;
   border-radius: 6px;
@@ -1474,7 +1482,7 @@ code {
 .acoes-modal { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 .grade-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
 .grade-form label, .formulario label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
-.formulario input, .formulario select, .formulario textarea { padding: 7px 9px; border-radius: 6px; border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); color: inherit; }
+.formulario input, .formulario select, .formulario textarea { padding: 7px 9px; border-radius: 6px; border: 1px solid var(--horror-vinho-claro, #b85c69); background: var(--fundo-input, #0f1219); color: inherit; }
 .checkbox { display: flex; flex-direction: row !important; align-items: center; gap: 8px; }
 
 /* ---- Etapa 7: mesa em tempo real ---- */
@@ -1494,7 +1502,7 @@ code {
 .chat-hora { font-size: 11px; color: var(--texto-fraco, #8b93a7); margin-left: 8px; }
 .chat-conteudo { white-space: pre-wrap; word-break: break-word; margin-top: 2px; }
 .chat-form { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
-.chat-form input { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); color: inherit; }
+.chat-form input { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--horror-vinho-claro, #b85c69); background: var(--fundo-input, #0f1219); color: inherit; }
 .check { display: flex; flex-direction: row; align-items: center; gap: 5px; font-size: 13px; min-height: 28px; cursor: pointer; }
 .tag-atual { background: #2e5c3a; color: #aef0c0; }
 .timer-display { font-size: 2rem; font-variant-numeric: tabular-nums; text-align: center; padding: 8px; border-radius: 8px; background: var(--fundo-input, #0f1219); }
@@ -1521,7 +1529,7 @@ code {
 .d10-form { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .d10-controles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .d10-controles label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--texto-fraco, #8b93a7); }
-.d10-controles input { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); color: inherit; }
+.d10-controles input { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--horror-vinho-claro, #b85c69); background: var(--fundo-input, #0f1219); color: inherit; }
 .d10-dados { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 6px; }
 /* Dados com forma geométrica própria (SVG) — cores via preferências do usuário */
 .dado-shape {
@@ -1575,7 +1583,7 @@ code {
 .abas-dados button.ativo { background: #2b3350; border-color: #46538a; color: #e8ecf7; }
 .rolagem-controles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 8px; }
 .rolagem-controles label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--texto-fraco, #8b93a7); }
-.rolagem-controles input, .rolagem-controles select { padding: 7px 9px; border-radius: 6px; border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); color: inherit; }
+.rolagem-controles input, .rolagem-controles select { padding: 7px 9px; border-radius: 6px; border: 1px solid var(--horror-vinho-claro, #b85c69); background: var(--fundo-input, #0f1219); color: inherit; }
 .rolagem-form .linha input { flex: 1; min-width: 0; }
 .rolagem-resultado { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 
@@ -1586,7 +1594,7 @@ code {
 .cores-dados-controles label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--texto-fraco, #8b93a7); }
 .cores-dados-controles input[type="color"] {
   width: 52px; height: 34px; padding: 2px; border-radius: 6px;
-  border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); cursor: pointer;
+  border: 1px solid var(--horror-vinho-claro, #b85c69); background: var(--fundo-input, #0f1219); cursor: pointer;
 }
 .cores-contraste-aviso { color: #e8c96a; }
 @media (max-width: 600px) {
@@ -2440,7 +2448,7 @@ textarea:focus-visible,
 .chat-voz-identidade { display: inline-block; margin-left: 7px; color: var(--texto-fraco, #8b93a7); font-size: 11px; }
 .chat-ler { padding: 3px 8px; font-size: 11px; flex: 0 0 auto; }
 .chat-falar-como { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
-.chat-falar-como select { min-width: 180px; max-width: 100%; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); color: inherit; }
+.chat-falar-como select { min-width: 180px; max-width: 100%; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--horror-vinho-claro, #b85c69); background: var(--fundo-input, #0f1219); color: inherit; }
 @media (max-width: 640px) {
   .chat-cabecalho { align-items: flex-start; }
   .chat-voz-controles { width: 100%; }
