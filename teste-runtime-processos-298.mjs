@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { io as ioClient } from "socket.io-client";
+import { resolverPortaServidor } from "./scripts/boot-lock.mjs";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
   encerrarServidor, limparDir, comDb, criarCenario, req, sessao,
@@ -522,37 +523,40 @@ async function main() {
     ok("C8 marcadores de todos os ciclos persistiram", restante >= 3, `encontrados=${restante}`);
   }
 
-  // ---------- C9: RAIZ do módulo compilado carrega configuracao/servidor.json (#377) ----------
+  // ---------- C9/C10: config do servidor compilado + contrato boot-lock (#377) ----------
+  const ARQ_CFG = "configuracao/servidor.json";
+  const cfgOriginal = existsSync(ARQ_CFG) ? readFileSync(ARQ_CFG, "utf-8") : null;
+  const envPortaOriginal = process.env.MESTRE_PORTA;
+  const definirEnvPorta = (v) => { if (v === undefined) delete process.env.MESTRE_PORTA; else process.env.MESTRE_PORTA = String(v); };
+  const restaurarCfg = () => {
+    try {
+      definirEnvPorta(envPortaOriginal);
+      if (cfgOriginal === null) { if (existsSync(ARQ_CFG)) rmSync(ARQ_CFG); }
+      else writeFileSync(ARQ_CFG, cfgOriginal);
+    } catch { }
+  };
+  // spawn direto sem MESTRE_PORTA — prova que o JSON sozinho define a porta
+  const spawnSemEnvPorta = () => {
+    const p = spawn("node", ["servidor/dist/index.js"], {
+      env: {
+        ...process.env,
+        NODE_ENV: "test",
+        MESTRE_BANCO: BANCO,
+        MESTRE_ARQUIVOS: ARQUIVOS,
+        MESTRE_BACKUPS: BACKUPS,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    p.__log = "";
+    const acumular = (d) => { p.__log += String(d); if (p.__log.length > 200_000) p.__log = p.__log.slice(-100_000); };
+    p.stdout?.on("data", acumular);
+    p.stderr?.on("data", acumular);
+    p.__closed = false;
+    p.once("close", () => { p.__closed = true; });
+    ativos.push(p);
+    return p;
+  };
   {
-    const ARQ_CFG = "configuracao/servidor.json";
-    const cfgOriginal = existsSync(ARQ_CFG) ? readFileSync(ARQ_CFG, "utf-8") : null;
-    const restaurarCfg = () => {
-      try {
-        if (cfgOriginal === null) { if (existsSync(ARQ_CFG)) rmSync(ARQ_CFG); }
-        else writeFileSync(ARQ_CFG, cfgOriginal);
-      } catch { }
-    };
-    // spawn direto sem MESTRE_PORTA — prova que o JSON sozinho define a porta
-    const spawnSemEnvPorta = () => {
-      const p = spawn("node", ["servidor/dist/index.js"], {
-        env: {
-          ...process.env,
-          NODE_ENV: "test",
-          MESTRE_BANCO: BANCO,
-          MESTRE_ARQUIVOS: ARQUIVOS,
-          MESTRE_BACKUPS: BACKUPS,
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      p.__log = "";
-      const acumular = (d) => { p.__log += String(d); if (p.__log.length > 200_000) p.__log = p.__log.slice(-100_000); };
-      p.stdout?.on("data", acumular);
-      p.stderr?.on("data", acumular);
-      p.__closed = false;
-      p.once("close", () => { p.__closed = true; });
-      ativos.push(p);
-      return p;
-    };
     try {
       // C9a: JSON presente, SEM MESTRE_PORTA → o build compilado deve
       // carregar configuracao/servidor.json e escutar a porta do JSON.
@@ -596,6 +600,67 @@ async function main() {
           ok("C9c sem servidor.json, MESTRE_PORTA é o fallback", false,
             String(e?.message ?? e).slice(0, 200));
         } finally { await limparProcesso(proc); }
+      }
+    } finally { restaurarCfg(); }
+  }
+
+  // ---------- C10: contrato boot-lock × config.ts — porta sondada = porta ouvida (#377) ----------
+  {
+    // Para cada cenário, resolverPortaServidor (mesma função que o
+    // boot-lock usa antes de adquirir o lock) deve apontar exatamente a
+    // porta em que o servidor compilado escuta — ou recusar quando o
+    // servidor também não sobe.
+    const contrato = async (nome, { jsonPorta, envPorta, esperado }) => {
+      definirEnvPorta(envPorta);
+      if (jsonPorta === null) { if (existsSync(ARQ_CFG)) rmSync(ARQ_CFG); }
+      else writeFileSync(ARQ_CFG, JSON.stringify({ ...(cfgOriginal ? JSON.parse(cfgOriginal) : {}), porta: jsonPorta }));
+      const rLock = resolverPortaServidor(process.cwd());
+      ok(`${nome}: lock resolve porta ${esperado}`, rLock.ok === true && rLock.porta === esperado,
+        JSON.stringify(rLock));
+      // env numérica → subir (MESTRE_PORTA=esperado); env ausente/inválida
+      // → spawnSemEnvPorta herda process.env já manipulado por definirEnvPorta
+      const proc = typeof envPorta === "number"
+        ? subir(esperado, { banco: BANCO, arquivos: ARQUIVOS, backups: BACKUPS })
+        : spawnSemEnvPorta();
+      try {
+        await esperarSaudavel(`http://127.0.0.1:${esperado}`, proc, 30000);
+        ok(`${nome}: servidor compilado escuta a porta resolvida pelo lock`, true);
+      } catch (e) {
+        ok(`${nome}: servidor compilado escuta a porta resolvida pelo lock`, false,
+          String(e?.message ?? e).slice(0, 200));
+      } finally { await limparProcesso(proc); }
+    };
+    try {
+      const pJ = await portaLivre();
+      const pE = await portaLivre();
+      // C10a: somente JSON (sem env) → lock e servidor na porta do JSON
+      await contrato("C10a somente servidor.json", { jsonPorta: pJ, envPorta: undefined, esperado: pJ });
+      // C10b: somente env (JSON ausente) → lock e servidor na porta do env
+      await contrato("C10b somente MESTRE_PORTA", { jsonPorta: null, envPorta: pE, esperado: pE });
+      // C10c: ambos divergentes → env vence nos DOIS lados
+      await contrato("C10c env × json divergentes", { jsonPorta: pJ, envPorta: pE, esperado: pE });
+      // C10d: env inválida ("abc") + JSON → JSON vence nos DOIS lados
+      await contrato("C10d env inválida × json", { jsonPorta: pJ, envPorta: "abc", esperado: pJ });
+      // C10e: porta inválida no JSON sem env → lock recusa E servidor não sobe
+      definirEnvPorta(undefined);
+      writeFileSync(ARQ_CFG, JSON.stringify({ ...(cfgOriginal ? JSON.parse(cfgOriginal) : {}), porta: "abc" }));
+      {
+        const rLock = resolverPortaServidor(process.cwd());
+        ok("C10e json.porta inválida: lock recusa (fail-closed)", rLock.ok === false, JSON.stringify(rLock));
+        const proc = spawnSemEnvPorta();
+        const saidaInv = await esperarSaida(proc, 30000);
+        ok("C10e json.porta inválida: servidor compilado não sobe (sem porta ouvida)",
+          saidaInv !== null && saidaInv.exitCode !== 0, `saida=${JSON.stringify(saidaInv)}`);
+        await limparProcesso(proc);
+      }
+      // C10f: JSON ausente + env → contrato env puro (C10b já cobre; aqui o
+      // fallback 3001 é assertado só no lock — bind real na 3001 é inseguro
+      // pois pode haver instância do operador)
+      definirEnvPorta(undefined);
+      if (existsSync(ARQ_CFG)) rmSync(ARQ_CFG);
+      {
+        const rLock = resolverPortaServidor(process.cwd());
+        ok("C10f sem json e sem env: lock resolve 3001 (fallback)", rLock.ok === true && rLock.porta === 3001, JSON.stringify(rLock));
       }
     } finally { restaurarCfg(); }
   }
