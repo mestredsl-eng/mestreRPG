@@ -1,10 +1,10 @@
 import express, { Router, type Request } from "express";
-import { and, eq, desc, ne, inArray } from "drizzle-orm";
+import { and, eq, desc, ne, inArray, sql } from "drizzle-orm";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
-import { characters, sheetTemplates, sheetVersions, memberships, users, tests, moneyTransactions, financialAccounts, files } from "../db/schema.js";
+import { characters, sheetTemplates, sheetVersions, memberships, users, tests, moneyTransactions, financialAccounts, files, characterTransfers } from "../db/schema.js";
 import { CHAVE_NPC_VISIVEL, npcFichaVisivel } from "../lib/npc-visibility.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, requireLeasePersonagem, getMembership, permissoesDe } from "../lib/permissoes.js";
@@ -1778,4 +1778,220 @@ personagensRouter.get("/:characterId/retrato/imagem", async (req, res) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Cache-Control", "private, max-age=300");
   res.send(buf);
+});
+
+
+// ---------- P7: transferência de personagem (contrato #349) ----------
+// Convite do titular atual + aceite explícito do novo titular. A conta
+// diegética e o histórico acompanham por characterId sem mudança; o
+// aceite é atômico (CAS do titular + revalidações TOCTOU na mesma
+// escrita + status do pedido), com auditoria só de ids.
+
+const transferenciaCriarSchema = z.object({ membershipId: z.string().min(1) }).strict();
+const transferenciaResponderSchema = z.object({ aceitar: z.boolean() }).strict();
+
+function transferenciaPublica(
+  t: typeof characterTransfers.$inferSelect,
+  nomes: Map<string, string>,
+) {
+  return {
+    id: t.id, status: t.status,
+    fromMembershipId: t.fromMembershipId, toMembershipId: t.toMembershipId,
+    fromNome: nomes.get(t.fromMembershipId) ?? null,
+    toNome: nomes.get(t.toMembershipId) ?? null,
+    createdAt: t.createdAt, decidedAt: t.decidedAt,
+  };
+}
+
+async function nomesDasMemberships(ids: string[]): Promise<Map<string, string>> {
+  const unicos = [...new Set(ids)];
+  const mapa = new Map<string, string>();
+  if (!unicos.length) return mapa;
+  const rows = await db.select({
+    membershipId: memberships.id,
+    displayName: users.displayName, username: users.username,
+  }).from(memberships).innerJoin(users, eq(memberships.userId, users.id))
+    .where(inArray(memberships.id, unicos));
+  for (const r of rows) mapa.set(r.membershipId, r.displayName || r.username || "?");
+  return mapa;
+}
+
+/** POST /:characterId/transferencias — titular atual oferece a
+ *  transferência para outra membership ATIVA da mesma campanha
+ *  (jogador|mestre). No máximo 1 pendente por personagem. */
+personagensRouter.post("/:characterId/transferencias", requireLeasePersonagem(), async (req, res) => {
+  const [p] = await db.select().from(characters).where(eq(characters.id, req.params.characterId)).limit(1);
+  if (!p) { res.status(404).json({ erro: "Personagem não encontrado" }); return; }
+  const membership = await getMembership(p.campaignId, req.usuario!.id);
+  if (!membership || membership.status !== "ativo") {
+    res.status(403).json({ erro: "Sem participação ativa na campanha" }); return;
+  }
+  if (p.membershipId !== membership.id) {
+    res.status(403).json({ erro: "Somente o titular atual pode oferecer transferência" }); return;
+  }
+  if (p.isNpc) { res.status(403).json({ erro: "NPC não pode ser transferido" }); return; }
+  if (p.status === "arquivado") {
+    res.status(409).json({ erro: "Personagem arquivado não pode ser transferido" }); return;
+  }
+  const body = transferenciaCriarSchema.safeParse(req.body);
+  if (!body.success) { res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues }); return; }
+  if (body.data.membershipId === p.membershipId) {
+    res.status(400).json({ erro: "O personagem já pertence a essa membership" }); return;
+  }
+  const [destino] = await db.select().from(memberships)
+    .where(and(eq(memberships.id, body.data.membershipId), eq(memberships.campaignId, p.campaignId))).limit(1);
+  if (!destino || destino.status !== "ativo" || (destino.role !== "jogador" && destino.role !== "mestre")) {
+    res.status(400).json({ erro: "O novo titular precisa ser jogador ou mestre ativo desta campanha" }); return;
+  }
+  const [pendente] = await db.select({ id: characterTransfers.id }).from(characterTransfers)
+    .where(and(eq(characterTransfers.characterId, p.id), eq(characterTransfers.status, "pendente"))).limit(1);
+  if (pendente) { res.status(409).json({ erro: "Já existe transferência pendente para este personagem" }); return; }
+  const id = crypto.randomUUID();
+  const agora = new Date();
+  try {
+    await db.insert(characterTransfers).values({
+      id, campaignId: p.campaignId, characterId: p.id,
+      fromMembershipId: p.membershipId, toMembershipId: destino.id,
+      status: "pendente", createdAt: agora,
+    });
+  } catch (e) {
+    // índice parcial UNIQUE(character_id) WHERE pendente — corrida de
+    // dois convites simultâneos resolve aqui em vez de duplicar
+    if (String(e).includes("UNIQUE")) {
+      res.status(409).json({ erro: "Já existe transferência pendente para este personagem" }); return;
+    }
+    throw e;
+  }
+  await audit(req, "personagem.transferencia_iniciada",
+    { characterId: p.id, de: p.membershipId, para: destino.id });
+  res.status(201).json({ ok: true, transferencia: { id, status: "pendente" } });
+});
+
+/** GET /:characterId/transferencias — titular atual, candidato ou
+ *  mestre leem a trilha do personagem. */
+personagensRouter.get("/:characterId/transferencias", async (req, res) => {
+  const [p] = await db.select().from(characters).where(eq(characters.id, req.params.characterId)).limit(1);
+  if (!p) { res.status(404).json({ erro: "Personagem não encontrado" }); return; }
+  const membership = await getMembership(p.campaignId, req.usuario!.id);
+  const rows = await db.select().from(characterTransfers)
+    .where(eq(characterTransfers.characterId, p.id))
+    .orderBy(desc(characterTransfers.createdAt));
+  const nomes = await nomesDasMemberships(rows.flatMap((r) => [r.fromMembershipId, r.toMembershipId]));
+  const ehMestre = membership?.role === "mestre";
+  const visiveis = rows.filter((r) =>
+    ehMestre || membership?.id === r.fromMembershipId || membership?.id === r.toMembershipId);
+  res.json({ transferencias: visiveis.map((r) => transferenciaPublica(r, nomes)) });
+});
+
+/** POST /transferencias/:tid/responder — SOMENTE o usuário dono da
+ *  membership destino decide. Aceite = tx atômica: UPDATE condicional
+ *  do titular (CAS) + revalidações TOCTOU do destino na mesma escrita
+ *  + status do pedido — changes=0 → 409 sem efeito colateral. */
+personagensRouter.post("/transferencias/:tid/responder", requireLeasePersonagem(), async (req, res) => {
+  const [t] = await db.select().from(characterTransfers)
+    .where(eq(characterTransfers.id, req.params.tid)).limit(1);
+  if (!t || (req.params.campaignId && t.campaignId !== req.params.campaignId)) {
+    res.status(404).json({ erro: "Transferência não encontrada" }); return;
+  }
+  const [destino] = await db.select().from(memberships)
+    .where(eq(memberships.id, t.toMembershipId)).limit(1);
+  if (!destino || destino.userId !== req.usuario!.id) {
+    res.status(403).json({ erro: "Somente o novo titular pode responder" }); return;
+  }
+  const body = transferenciaResponderSchema.safeParse(req.body);
+  if (!body.success) { res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues }); return; }
+  if (t.status !== "pendente") { res.status(409).json({ erro: "Transferência já respondida" }); return; }
+  const agora = new Date();
+
+  if (!body.data.aceitar) {
+    await db.update(characterTransfers)
+      .set({ status: "recusada", decidedAt: agora })
+      .where(and(eq(characterTransfers.id, t.id), eq(characterTransfers.status, "pendente")));
+    await audit(req, "personagem.transferencia_recusada",
+      { characterId: t.characterId, transferId: t.id });
+    res.json({ ok: true, status: "recusada" });
+    return;
+  }
+
+  // Aceite atômico — tudo ou nada. O UPDATE do personagem carrega o
+  // CAS (membership_id ainda = from) E as revalidações TOCTOU do
+  // destino DENTRO da escrita: membership ativa jogador|mestre, user
+  // ativo, personagem não-arquivado/não-NPC — nada do que foi checado
+  // na criação pode ter mudado entre convite e aceite sem reprovar.
+  let resultado: { ok: true } | { erro: "indisponivel" };
+  try {
+    resultado = db.transaction((tx) => {
+    const r = tx.update(characters)
+      .set({ membershipId: t.toMembershipId, updatedAt: agora })
+      .where(and(
+        eq(characters.id, t.characterId),
+        eq(characters.membershipId, t.fromMembershipId),
+        ne(characters.status, "arquivado"),
+        eq(characters.isNpc, false),
+        sql`EXISTS (
+          SELECT 1 FROM memberships m
+          WHERE m.id = ${t.toMembershipId}
+            AND m.campaign_id = ${t.campaignId}
+            AND m.status = 'ativo'
+            AND m.role IN ('jogador', 'mestre')
+        )`,
+        sql`EXISTS (
+          SELECT 1 FROM memberships mt JOIN users ut ON ut.id = mt.user_id
+          WHERE mt.id = ${t.toMembershipId} AND ut.status = 'ativo'
+        )`,
+        sql`EXISTS (
+          SELECT 1 FROM memberships mf JOIN users uf ON uf.id = mf.user_id
+          WHERE mf.id = ${t.fromMembershipId} AND uf.status = 'ativo'
+        )`,
+      ))
+      .run();
+    if (r.changes === 0) return { erro: "indisponivel" as const };
+    const r2 = tx.update(characterTransfers)
+      .set({ status: "aceita", decidedAt: agora })
+      .where(and(eq(characterTransfers.id, t.id), eq(characterTransfers.status, "pendente")))
+      .run();
+    // recusa/cancelamento concorrente marcou o pedido entre a leitura
+    // e esta tx — desfaz a movimentação do personagem para não ficar
+    // "aceita de fato, recusada no papel"
+    if (r2.changes === 0) throw new Error("transferencia_ja_respondida");
+    return { ok: true as const };
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message === "transferencia_ja_respondida") {
+      resultado = { erro: "indisponivel" };
+    } else { throw e; }
+  }
+  if ("erro" in resultado) {
+    // pedido permanece pendente — o titular atual pode cancelar;
+    // novo titular pode tentar de novo se a inelegibilidade for
+    // transitória (ex.: conta reativada)
+    res.status(409).json({ erro: "Transferência não pode ser concluída — titular mudou ou destino não está mais elegível" });
+    return;
+  }
+  await audit(req, "personagem.transferencia_aceita",
+    { characterId: t.characterId, transferId: t.id, de: t.fromMembershipId, para: t.toMembershipId });
+  res.json({ ok: true, status: "aceita" });
+});
+
+/** POST /transferencias/:tid/cancelar — somente o titular atual
+ *  (dono da from_membership), enquanto o pedido estiver pendente. */
+personagensRouter.post("/transferencias/:tid/cancelar", requireLeasePersonagem(), async (req, res) => {
+  const [t] = await db.select().from(characterTransfers)
+    .where(eq(characterTransfers.id, req.params.tid)).limit(1);
+  if (!t || (req.params.campaignId && t.campaignId !== req.params.campaignId)) {
+    res.status(404).json({ erro: "Transferência não encontrada" }); return;
+  }
+  const [de] = await db.select().from(memberships)
+    .where(eq(memberships.id, t.fromMembershipId)).limit(1);
+  if (!de || de.userId !== req.usuario!.id) {
+    res.status(403).json({ erro: "Somente o titular atual pode cancelar" }); return;
+  }
+  const r = await db.update(characterTransfers)
+    .set({ status: "cancelada", decidedAt: new Date() })
+    .where(and(eq(characterTransfers.id, t.id), eq(characterTransfers.status, "pendente")))
+    .run();
+  if (r.changes === 0) { res.status(409).json({ erro: "Transferência já respondida" }); return; }
+  await audit(req, "personagem.transferencia_cancelada",
+    { characterId: t.characterId, transferId: t.id });
+  res.json({ ok: true, status: "cancelada" });
 });
