@@ -132,15 +132,7 @@ a revisão — não alteram o status REVIEW original.
 
 ## 2. Controles input/select/textarea — fronteira×externo (SC 1.4.11)
 
-**147 campos medidos:** 111 com externo em gradiente (108 computado-PASS, 3 abaixo-3:1) + 36 com externo sólido (quocientes do auditor reproduzidos p/ contexto).
-
-### Controles sobre gradiente abaixo de 3:1 (pior caso)
-
-| tela | viewport | campo | tipo | fillMin | bordaMin | piorCaso | contexto |
-|---|---|---|---|---|---|---|---|
-| aba Convites | celular-390 | `input` | input | 1 | — | 1 | checkbox · 1 label(is) · Exigir aprovação do mestre |
-| aba Convites | tablet-768 | `input` | input | 1 | — | 1 | checkbox · 1 label(is) · Exigir aprovação do mestre |
-| aba Convites | desktop-1366 | `input` | input | 1 | — | 1 | checkbox · 1 label(is) · Exigir aprovação do mestre |
+**147 campos medidos:** 111 com externo em gradiente (111 computado-PASS, 0 abaixo-3:1) + 36 com externo sólido (quocientes do auditor reproduzidos p/ contexto).
 
 ### Controles com externo sólido — quocientes reproduzidos (contexto p/ disposição)
 

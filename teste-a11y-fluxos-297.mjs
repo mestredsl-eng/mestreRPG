@@ -289,6 +289,97 @@ async function checarBuscaArquivos(page, rotulo) {
   await busca.evaluate(() => document.documentElement.style.removeProperty("--horror-vinho-claro"));
 }
 
+// ---------- #132 — checkbox "Exigir aprovação do mestre" (SC 1.4.11) ----------
+// Protótipo aprovado pelo INTERMEDIÁRIO: appearance:none + caixa autoral
+// com o token de destaque. Aqui medimos o DOM real — borda ≥3:1 contra
+// o fundo do próprio controle e contra o cartão adjacente, glifo checked,
+// foco ≥3:1 e fallback forced-colors — nas 4 paletas de destaque.
+async function checarCheckboxConvite(page, rotulo) {
+  const cb = page.locator('form.formulario input[type="checkbox"]').first();
+  const n = await page.locator('form.formulario input[type="checkbox"]').count();
+  t(`${rotulo}: checkbox do formulário presente`, n >= 1, `encontrados=${n}`);
+  if (n < 1) return;
+  const m = await cb.evaluate((el) => {
+    const cs = getComputedStyle(el);
+    // fundo adjacente: primeiro ancestral com background não transparente
+    let adj = null;
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const b = getComputedStyle(p).backgroundColor;
+      if (b && b !== "rgba(0, 0, 0, 0)" && b !== "transparent") { adj = b; break; }
+    }
+    return {
+      appearance: cs.appearance || cs.webkitAppearance,
+      borda: cs.borderTopColor, bordaW: parseFloat(cs.borderTopWidth),
+      raio: cs.borderTopLeftRadius, bg: cs.backgroundColor, adj,
+    };
+  });
+  // checked/disabled: getComputedStyle é vivo — ler primitivos na hora.
+  const estados = await cb.evaluate((el) => {
+    el.checked = true;
+    const checkedBg = getComputedStyle(el).backgroundImage;
+    const checkedFill = getComputedStyle(el).backgroundColor;
+    el.checked = false;
+    el.disabled = true;
+    const disabledOpacity = parseFloat(getComputedStyle(el).opacity);
+    const disabledCursor = getComputedStyle(el).cursor;
+    el.disabled = false;
+    return { checkedBg, checkedFill, disabledOpacity, disabledCursor };
+  });
+  Object.assign(m, estados);
+  // foco via teclado real (Tab) — :focus-visible não dispara em focus() programático
+  await page.evaluate(() => document.activeElement?.blur());
+  let focou = false;
+  for (let i = 0; i < 60 && !focou; i++) {
+    await page.keyboard.press("Tab");
+    focou = await cb.evaluate((el) => document.activeElement === el);
+  }
+  const foco = focou ? await cb.evaluate((el) => {
+    const f = getComputedStyle(el);
+    return { estilo: `${f.outlineStyle} ${f.outlineWidth} ${f.outlineColor}`, fv: el.matches(":focus-visible") };
+  }) : { estilo: "não focou", fv: false };
+  m.focoEstilo = foco.estilo;
+  const bg = _rgb(m.bg), adj = _rgb(m.adj), borda = _rgb(m.borda);
+  t(`${rotulo}: checkbox appearance:none (caixa autoral)`, m.appearance === "none", m.appearance);
+  t(`${rotulo}: checkbox borda 2px token`, m.bordaW === 2, `width=${m.bordaW}`);
+  t(`${rotulo}: checkbox borda ≥3:1 vs fundo próprio`, !!(borda && bg) && _ratio(borda, bg) >= 3,
+    borda && bg ? `ratio=${_ratio(borda, bg).toFixed(2)}:1` : `borda=${m.borda} bg=${m.bg}`);
+  t(`${rotulo}: checkbox borda ≥3:1 vs cartão adjacente`, !!(borda && adj) && _ratio(borda, adj) >= 3,
+    borda && adj ? `ratio=${_ratio(borda, adj).toFixed(2)}:1 adj=${m.adj}` : `adj=${m.adj}`);
+  t(`${rotulo}: checkbox checked desenha glifo`, m.checkedBg.includes("svg") && m.checkedBg.includes("data:image"),
+    m.checkedBg.slice(0, 60));
+  const fm = m.focoEstilo.match(/(\S+) (\S+) (.+)/);
+  const focoCor = fm ? _rgb(fm[3]) : null;
+  t(`${rotulo}: checkbox foco visível (outline ≥2px, ≥3:1)`,
+    !!(fm && fm[1] === "solid" && parseFloat(fm[2]) >= 2 && focoCor && bg && _ratio(focoCor, bg) >= 3),
+    m.focoEstilo);
+  t(`${rotulo}: checkbox disabled visível porém inerte`, m.disabledOpacity <= 0.6 && m.disabledCursor === "not-allowed",
+    `opacity=${m.disabledOpacity} cursor=${m.disabledCursor}`);
+
+  // 4 paletas de destaque: a borda nunca pode cair abaixo de 3:1.
+  const TEMAS = [
+    ["vinho", "#b85c69"], ["ambar", "#e3c98f"],
+    ["violeta", "#b9a4d6"], ["cinza-frio", "#c3c9d4"],
+  ];
+  for (const [tema, claro] of TEMAS) {
+    const mm = await cb.evaluate((el, cor) => {
+      document.documentElement.style.setProperty("--horror-vinho-claro", cor);
+      const cs = getComputedStyle(el);
+      return { borda: cs.borderTopColor, bg: cs.backgroundColor, adj: (() => {
+        for (let p = el.parentElement; p; p = p.parentElement) {
+          const b = getComputedStyle(p).backgroundColor;
+          if (b && b !== "rgba(0, 0, 0, 0)" && b !== "transparent") return b;
+        }
+        return null;
+      })() };
+    }, claro);
+    const bT = _rgb(mm.borda), bgT = _rgb(mm.bg), adjT = _rgb(mm.adj);
+    t(`${rotulo}: checkbox tema ${tema} — borda ≥3:1`,
+      !!(bT && bgT && adjT) && _ratio(bT, bgT) >= 3 && _ratio(bT, adjT) >= 3,
+      `borda=${mm.borda} bg=${mm.bg} adj=${mm.adj}`);
+  }
+  await cb.evaluate(() => document.documentElement.style.removeProperty("--horror-vinho-claro"));
+}
+
 let browser, proc;
 try {
   await prepararBanco(BANCO);
@@ -372,6 +463,7 @@ try {
       await page.waitForTimeout(400);
       await checarTela(page, `aba ${nomeAba}`);
       if (nomeAba === "Arquivos") await checarBuscaArquivos(page, `viewport ${vp.nome}`);
+      if (nomeAba === "Convites") await checarCheckboxConvite(page, `viewport ${vp.nome}`);
     }
 
     // Ficha: abrir personagem → detalhe (leitura) + patrimônio (regressão)
