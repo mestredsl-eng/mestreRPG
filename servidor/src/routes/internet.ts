@@ -307,6 +307,9 @@ internetRouter.post("/contacts/:id/bloquear", requirePapel("mestre", "jogador"),
     : (await contaAutorizadaPara(contato.contaDestinoId, req.usuario!.id)) ? contato.contaDestinoId
     : null;
   if (!iniciador) { erroHttp(res, 403, "Conta não autorizada"); return; }
+  // Comportamento aceito (parecer P3, ponto 2): a origem pode "bloquear"
+  // o próprio pedido `pendente` — equivale a vetar/retirar o convite
+  // antes do aceite; efeito prático idêntico a recusar.
   if (contato.status === "bloqueado") { res.json({ ok: true, status: "bloqueado", replay: true }); return; }
   const agora = new Date();
   await db.update(internetContacts)
@@ -325,7 +328,13 @@ internetRouter.delete("/contacts/:id", requirePapel("mestre", "jogador"), async 
   if (!contato) { erroHttp(res, 404, "Contato não encontrado"); return; }
   // P3: aresta `bloqueado` só pode ser removida por QUEM a bloqueou
   // (`bloqueadoPorContaId`; fallback `contaDestinoId` para arestas
-  // gravadas antes da coluna existir). Demais status: qualquer ponta.
+  // gravadas antes da coluna existir — nessas, só o destino podia
+  // bloquear, então o fallback é semanticamente correto). Demais
+  // status: qualquer ponta.
+  // Residual aceito (parecer P3, ponto 1): se a conta bloqueadora for
+  // excluída e ela era a ORIGEM, `set null` deixa o fallback creditar
+  // o bloqueio ao destino. Hoje não existe endpoint de exclusão de
+  // internet_accounts — só arquivamento — logo não é explorável.
   if (contato.status === "bloqueado") {
     const quemBloqueou = contato.bloqueadoPorContaId ?? contato.contaDestinoId;
     const okBloqueador = await contaAutorizadaPara(quemBloqueou, req.usuario!.id);
@@ -714,11 +723,21 @@ internetRouter.post("/conversations/:id/participants", requirePapel("mestre", "j
     }
     res.json({ ok: true, status: existente.status, replay: true }); return;
   }
-  await db.insert(internetParticipantes).values({
-    id: crypto.randomUUID(), conversaId: conversa.id, contaId: alvo.id,
-    papel: "membro", status: "convidado", convidadoPorContaId: origem.id,
-    convidadoEm: agora, createdAt: agora, updatedAt: agora,
-  });
+  try {
+    await db.insert(internetParticipantes).values({
+      id: crypto.randomUUID(), conversaId: conversa.id, contaId: alvo.id,
+      papel: "membro", status: "convidado", convidadoPorContaId: origem.id,
+      convidadoEm: agora, createdAt: agora, updatedAt: agora,
+    });
+  } catch (e) {
+    // corrida: dois convites simultâneos à mesma conta — UNIQUE
+    // (conversa_id, conta_id) resolve; devolve a linha existente
+    if (String(e).includes("UNIQUE")) {
+      const ex = await participanteDaConta(conversa.id, alvo.id);
+      res.json({ ok: true, status: ex?.status ?? "convidado", replay: true }); return;
+    }
+    throw e;
+  }
   await audit(req, "internet.convite_enviado", { conversaId: conversa.id, contaId: alvo.id });
   res.status(201).json({ ok: true, status: "convidado" });
 });
@@ -761,16 +780,20 @@ internetRouter.post("/conversations/:id/leave", requirePapel("mestre", "jogador"
   const parte = await participanteAtivo(conversa.id, body.data.contaId);
   if (!parte) { erroHttp(res, 403, "Não participante ativo"); return; }
   const agora = new Date();
+  const ehGrupo = conversa.tipo === "grupo";
 
-  if (conversa.tipo === "grupo" && parte.papel === "dono") {
-    // P6 — sucessor elegível: membro ativo ≠ quem sai E contaAutorizadaPara
+  // P6 — sucessores elegíveis calculados FORA da tx (gate assíncrono).
+  // Calculados para TODO leave de grupo, não só do dono: entre a leitura
+  // de `parte.papel` e a tx, uma transferência concorrente pode promover
+  // este membro a dono — a tx re-lê o papel e precisa da lista pronta.
+  let sucessores: string[] = [];
+  if (ehGrupo) {
     const candidatos = await db.select().from(internetParticipantes)
       .where(and(
         eq(internetParticipantes.conversaId, conversa.id),
         eq(internetParticipantes.status, "ativo"),
         sql`${internetParticipantes.contaId} != ${body.data.contaId}`,
       ));
-    let sucessorId: string | null = null;
     for (const cand of candidatos) {
       // resolve o dono atual da conta candidata e revalida o gate inteiro
       const [donoCand] = await db.select({ userId: memberships.userId }).from(internetAccounts)
@@ -778,25 +801,55 @@ internetRouter.post("/conversations/:id/leave", requirePapel("mestre", "jogador"
         .innerJoin(memberships, eq(characters.membershipId, memberships.id))
         .where(and(eq(internetAccounts.id, cand.contaId), eq(memberships.status, "ativo"))).limit(1);
       if (donoCand && await contaAutorizadaPara(cand.contaId, donoCand.userId)) {
-        sucessorId = cand.id; break;
+        sucessores.push(cand.contaId);
       }
-    }
-    if (sucessorId) {
-      await db.update(internetParticipantes).set({ papel: "dono", updatedAt: agora })
-        .where(eq(internetParticipantes.id, sucessorId));
-      await audit(req, "internet.grupo_propriedade_transferida", {
-        conversaId: conversa.id, de: body.data.contaId, para: candidatos.find((c) => c.id === sucessorId)?.contaId,
-      });
-    } else {
-      // sem sucessor elegível: arquiva o grupo (P6 — nunca deixa dono inelegível)
-      await db.update(internetConversations).set({ status: "arquivada", updatedAt: agora })
-        .where(eq(internetConversations.id, conversa.id));
-      await audit(req, "internet.grupo_arquivado_sem_sucessor", { conversaId: conversa.id });
     }
   }
 
-  await db.update(internetParticipantes).set({ status: "saiu", saiuEm: agora, updatedAt: agora })
-    .where(eq(internetParticipantes.id, parte.id));
+  // Decisão + escritas em UMA tx síncrona: re-lê papel/status atuais.
+  // Sem isso, dois leaves concorrentes (dono + futuro sucessor) liam
+  // estados pré-transferência e o grupo podia ficar ativo sem dono —
+  // ou o sucessor saía como "membro" e ninguém herdava a propriedade.
+  const resultado = db.transaction((tx) => {
+    const p = tx.select().from(internetParticipantes)
+      .where(eq(internetParticipantes.id, parte.id)).get();
+    if (!p || p.status !== "ativo") return { erro: "nao_participante" as const };
+    let transferiuPara: string | null = null;
+    let arquivou = false;
+    if (ehGrupo && p.papel === "dono") {
+      const linhas = tx.select().from(internetParticipantes)
+        .where(and(
+          eq(internetParticipantes.conversaId, conversa.id),
+          eq(internetParticipantes.status, "ativo"),
+          sql`${internetParticipantes.contaId} != ${body.data.contaId}`,
+        )).all();
+      const ativas = new Set(linhas.map((l) => l.contaId));
+      const succConta = sucessores.find((c) => ativas.has(c)) ?? null;
+      if (succConta) {
+        const succ = linhas.find((l) => l.contaId === succConta)!;
+        tx.update(internetParticipantes).set({ papel: "dono", updatedAt: agora })
+          .where(eq(internetParticipantes.id, succ.id)).run();
+        transferiuPara = succConta;
+      } else {
+        // sem sucessor elegível: arquiva o grupo (P6 — nunca dono inelegível)
+        tx.update(internetConversations).set({ status: "arquivada", updatedAt: agora })
+          .where(eq(internetConversations.id, conversa.id)).run();
+        arquivou = true;
+      }
+    }
+    tx.update(internetParticipantes).set({ status: "saiu", saiuEm: agora, updatedAt: agora })
+      .where(eq(internetParticipantes.id, p.id)).run();
+    return { transferiuPara, arquivou };
+  });
+  if ("erro" in resultado) { erroHttp(res, 409, "Participante já saiu"); return; }
+
+  if (resultado.transferiuPara) {
+    await audit(req, "internet.grupo_propriedade_transferida", {
+      conversaId: conversa.id, de: body.data.contaId, para: resultado.transferiuPara,
+    });
+  } else if (resultado.arquivou) {
+    await audit(req, "internet.grupo_arquivado_sem_sucessor", { conversaId: conversa.id });
+  }
   await audit(req, "internet.participante_saiu", { conversaId: conversa.id, contaId: body.data.contaId });
   res.json({ ok: true });
 });
