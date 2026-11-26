@@ -659,6 +659,109 @@ try {
     cM.join("|"));
   t("leitura mestre auditada", auditsDepoisL === auditsAntesL + 1, `${auditsAntesL}→${auditsDepoisL}`);
 
+  // ================= CONCORRÊNCIA / IDEMPOTÊNCIA / ATOMICIDADE =================
+  sec("M. Concorrência — corrida real, não sequencial");
+
+  // M1: dois pedidos de contato SIMULTÂNEOS em direções opostas (j2↔j3,
+  // aresta inexistente). O UNIQUE é por direção — sem tx atômica
+  // nasceriam duas arestas espelhadas. Esperado: 1×201 + 1×409.
+  {
+    const [pA, pB] = await Promise.all([
+      API("POST", "/contacts", j2.cookie, { contaId: contaJ3 }),
+      API("POST", "/contacts", j3.cookie, { contaId: contaJ2 }),
+    ]);
+    const criados = [pA, pB].filter((r) => r.status === 201).length;
+    const conflitos = [pA, pB].filter((r) => r.status === 409).length;
+    t("pedidos opostos simultâneos: exatamente um cria", criados === 1 && conflitos === 1,
+      `status=${pA.status},${pB.status}`);
+    const arestas = abrirDb(BANCO).prepare(
+      "select count(*) c from internet_contacts where campaign_id=? and ((conta_origem_id=? and conta_destino_id=?) or (conta_origem_id=? and conta_destino_id=?))"
+    ).get(campId, contaJ2, contaJ3, contaJ3, contaJ2).c;
+    t("apenas UMA aresta j2↔j3 existe", arestas === 1, `arestas=${arestas}`);
+  }
+
+  // M2: criação concorrente de conversa direta nas DUAS direções
+  // (j1↔j3: contato aceito, sem conversa direta ainda — só grupo2).
+  {
+    const [cA, cB] = await Promise.all([
+      API("POST", "/conversations", j1.cookie, { tipo: "direta", contaDestinoId: contaJ3 }),
+      API("POST", "/conversations", j3.cookie, { tipo: "direta", contaDestinoId: contaJ1 }),
+    ]);
+    t("criação direta concorrente: ambos resolvem a MESMA conversa",
+      cA.json?.conversa && cA.json?.conversa === cB.json?.conversa,
+      `A=${JSON.stringify(cA.json).slice(0, 120)} B=${JSON.stringify(cB.json).slice(0, 120)}`);
+    const n = abrirDb(BANCO).prepare(
+      "select count(*) c from internet_conversations where campaign_id=? and tipo='direta' and par_key is not null"
+    ).get(campId).c;
+    // 2 pares diretos no total (j1↔j2 da seção D + j1↔j3 agora) —
+    // o par j1↔j3 NÃO pode ter duplicado
+    const parJ13 = abrirDb(BANCO).prepare(
+      "select count(*) c from internet_conversations where campaign_id=? and par_key=?"
+    ).get(campId, [contaJ1, contaJ3].sort().join("|")).c;
+    t("parKey j1↔j3 gerou exatamente 1 conversa", parJ13 === 1, `conversas=${parJ13}`);
+  }
+
+  // M3: dois envios SIMULTÂNEOS mesmo requestId+conteúdo → 1 linha,
+  // um replay (idempotência dentro da tx, não check-then-act)
+  {
+    const [r1, r2] = await Promise.all([
+      emitirCb(sJ3, "internet:mensagem:enviar", {
+        conversaId: grupo2Id, contaId: contaJ3, requestId: "req-conc-1", conteudo: "corrida idempotente",
+      }),
+      emitirCb(sJ3, "internet:mensagem:enviar", {
+        conversaId: grupo2Id, contaId: contaJ3, requestId: "req-conc-1", conteudo: "corrida idempotente",
+      }),
+    ]);
+    t("envios concorrentes mesmo requestId: ambos ok", r1?.ok === true && r2?.ok === true,
+      `${JSON.stringify(r1)} | ${JSON.stringify(r2)}`);
+    const linhas = abrirDb(BANCO).prepare(
+      "select count(*) c from internet_messages where conversa_id=? and request_id='req-conc-1'"
+    ).get(grupo2Id).c;
+    t("idempotência sob corrida: exatamente 1 mensagem gravada", linhas === 1, `linhas=${linhas}`);
+    t("pelo menos um ACK é replay", r1?.replay === true || r2?.replay === true,
+      `r1.replay=${r1?.replay} r2.replay=${r2?.replay}`);
+  }
+
+  // M4: requestIds DIFERENTES com mesmo conteúdo → 2 mensagens
+  // (idempotência é por requestId, não por conteúdo)
+  {
+    await Promise.all([
+      emitirCb(sJ3, "internet:mensagem:enviar", {
+        conversaId: grupo2Id, contaId: contaJ3, requestId: "req-conc-a", conteudo: "mesmo texto",
+      }),
+      emitirCb(sJ3, "internet:mensagem:enviar", {
+        conversaId: grupo2Id, contaId: contaJ3, requestId: "req-conc-b", conteudo: "mesmo texto",
+      }),
+    ]);
+    const linhas = abrirDb(BANCO).prepare(
+      "select count(*) c from internet_messages where conversa_id=? and conteudo='mesmo texto'"
+    ).get(grupo2Id).c;
+    t("requestIds distintos não deduplicam por conteúdo", linhas === 2, `linhas=${linhas}`);
+  }
+
+  // M5: cursores de leitura concorrentes — mais novo e mais velho na
+  // mesma janela; o cursor final é SEMPRE o mais novo (monotônico)
+  {
+    const hist = await API("GET", `/conversations/${grupo2Id}/messages?limit=100`, j3.cookie);
+    const msgs = hist.json?.mensagens ?? [];
+    const antiga = msgs[0], nova = msgs[msgs.length - 1];
+    const [ra, rn] = await Promise.all([
+      API("POST", `/conversations/${grupo2Id}/read`, j3.cookie, {
+        contaId: contaJ3, ateCreatedAt: Date.parse(antiga.createdAt), ateMessageId: antiga.id,
+      }),
+      API("POST", `/conversations/${grupo2Id}/read`, j3.cookie, {
+        contaId: contaJ3, ateCreatedAt: Date.parse(nova.createdAt), ateMessageId: nova.id,
+      }),
+    ]);
+    t("leituras concorrentes aceitas", ra.status === 200 && rn.status === 200,
+      `${ra.status}/${rn.status}`);
+    const cursor = abrirDb(BANCO).prepare(
+      "select last_read_message_id m from internet_participantes where conversa_id=? and conta_id=?"
+    ).get(grupo2Id, contaJ3).m;
+    t("cursor final = mensagem MAIS NOVA (monotônico)", cursor === nova.id,
+      `cursor=${cursor} esperado=${nova.id}`);
+  }
+
   // ================= EXPORT P9 =================
   sec("K. Exportação — P9: nenhuma tabela internet_* sai no pacote");
   {
