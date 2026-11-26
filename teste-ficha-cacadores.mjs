@@ -485,6 +485,95 @@ try {
     } finally { try { w.close(); } catch {} }
   }
 
+  sec("G — #304 residual: campo.obrigatorio de tipo array rejeita []");
+  // Template dedicado: os 4 tipos-array obrigatórios + controles 0/false.
+  const tplArrId = randomUUID(), verArrId = randomUUID();
+  const ESTRUTURA_ARR = {
+    versao: 1,
+    secoes: [{
+      id: "arr-secao", titulo: "Arrays", ordem: 0,
+      campos: [
+        { id: "arr-lista", label: "Lista", tipo: "lista", obrigatorio: true, opcoes: ["alfa", "beta"], editavelPor: "ambos", visibilidade: "todos" },
+        { id: "arr-multi", label: "Multipla", tipo: "selecao_multipla", obrigatorio: true, opcoes: ["x", "y"], editavelPor: "ambos", visibilidade: "todos" },
+        { id: "arr-nivel", label: "Nivel", tipo: "selecao_nivel", obrigatorio: true, editavelPor: "ambos", visibilidade: "todos" },
+        { id: "arr-tab", label: "Tabela", tipo: "tabela", obrigatorio: true, editavelPor: "ambos", visibilidade: "todos",
+          colunas: [{ key: "qtd", label: "Qtd", tipo: "inteiro" }] },
+        { id: "arr-num", label: "Numero", tipo: "inteiro", obrigatorio: true, editavelPor: "ambos", visibilidade: "todos" },
+        { id: "arr-check", label: "Check", tipo: "checkbox", obrigatorio: true, editavelPor: "ambos", visibilidade: "todos" },
+      ],
+    }],
+    pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
+  };
+  {
+    const w = abrirDb(BANCO); const agora = Date.now();
+    try {
+      w.prepare("insert into sheet_templates (id,campaign_id,name,description,owner_id,is_active,is_default,created_at,updated_at) values (?,?,?,?,?,1,0,?,?)")
+        .run(tplArrId, CAMP_ID, "Ficha Arrays Obrigatórios", null, c.adminId, agora, agora);
+      w.prepare("insert into sheet_versions (id,template_id,version,structure,published_at,created_at) values (?,?,1,?,?,?)")
+        .run(verArrId, tplArrId, JSON.stringify(ESTRUTURA_ARR), agora, agora);
+      w.prepare("update sheet_templates set current_version_id=? where id=?").run(verArrId, tplArrId);
+    } finally { w.close(); }
+  }
+  const DADOS_ARR = {
+    "arr-lista": ["alfa"], "arr-multi": ["x"], "arr-nivel": [{ key: "coragem", nivel: 2 }],
+    "arr-tab": [{ qtd: 1 }], "arr-num": 0, "arr-check": false,
+  };
+  // NPC (nasce aprovada, validação estrita): [] em qualquer array → 400
+  const npcArraysVazios = await req(BASE, "POST", `/campaigns/${CAMP_ID}/characters`, {
+    cookie: cookieMestre, body: { name: "NPC Arrays Vazios", templateVersionId: verArrId, isNpc: true,
+      data: { "arr-lista": [], "arr-multi": [], "arr-nivel": [], "arr-tab": [], "arr-num": 0, "arr-check": false } },
+  });
+  t("NPC com [] nos 4 tipos-array → 400", npcArraysVazios.status === 400, `status=${npcArraysVazios.status}`);
+  // controle: mesmos campos com valores válidos (inclui 0 e false) → criado
+  const npcArraysOk = await req(BASE, "POST", `/campaigns/${CAMP_ID}/characters`, {
+    cookie: cookieMestre, body: { name: "NPC Arrays OK", templateVersionId: verArrId, isNpc: true, data: DADOS_ARR },
+  });
+  const idNpcArr = npcArraysOk.json?.personagem?.id ?? npcArraysOk.json?.id;
+  t("NPC com arrays válidos + 0/false → criado (0/false não são vazio)",
+    (npcArraysOk.status === 200 || npcArraysOk.status === 201) && !!idNpcArr, `status=${npcArraysOk.status}`);
+  // submissão: rascunho criado com arr-lista=[] (criação permissiva grava [])
+  // → submit → 400 citando o campo. PATCH [] explícito já é barrado antes.
+  const rascArr = await req(BASE, "POST", `/campaigns/${CAMP_ID}/characters`, {
+    cookie: u.cookie, body: { name: "Rascunho Arrays", templateVersionId: verArrId,
+      data: { ...DADOS_ARR, "arr-lista": [] } },
+  });
+  const idRascArr = rascArr.json?.personagem?.id ?? rascArr.json?.id;
+  const patchListaVazia = await req(BASE, "PATCH", `/campaigns/${CAMP_ID}/characters/${idRascArr}`, {
+    cookie: u.cookie, body: { data: { "arr-nivel": [] } },
+  });
+  t("PATCH explícito [] em obrigatório → 400 ainda em rascunho (guarda O7.2)", patchListaVazia.status === 400, `status=${patchListaVazia.status}`);
+  const submeteListaVazia = await req(BASE, "PATCH", `/campaigns/${CAMP_ID}/characters/${idRascArr}`, {
+    cookie: u.cookie, body: { status: "aguardando_aprovacao" },
+  });
+  t("submissão com arr-lista=[] persistido → 400", submeteListaVazia.status === 400, `status=${submeteListaVazia.status}`);
+  t("erro aponta arr-lista como obrigatório",
+    JSON.stringify(submeteListaVazia.json ?? {}).includes("arr-lista"),
+    JSON.stringify(submeteListaVazia.json ?? {}).slice(0, 200));
+  // controle: ficha completa com arrays válidos submete → 200
+  const rascArrOk = await req(BASE, "POST", `/campaigns/${CAMP_ID}/characters`, {
+    cookie: u.cookie, body: { name: "Rascunho Arrays OK", templateVersionId: verArrId, data: DADOS_ARR },
+  });
+  const idRascArrOk = rascArrOk.json?.personagem?.id ?? rascArrOk.json?.id;
+  const submeteArrOk = await req(BASE, "PATCH", `/campaigns/${CAMP_ID}/characters/${idRascArrOk}`, {
+    cookie: u.cookie, body: { status: "aguardando_aprovacao" },
+  });
+  t("submissão com arrays válidos → 200", submeteArrOk.status === 200, `status=${submeteArrOk.status} ${JSON.stringify(submeteArrOk.json)?.slice(0, 150)}`);
+  // PATCH explícito [] em aprovada → 400 atômico (arr-num do mesmo payload não grava)
+  const patchEsvaziaAprovada = await req(BASE, "PATCH", `/campaigns/${CAMP_ID}/characters/${idNpcArr}`, {
+    cookie: cookieMestre, body: { data: { "arr-multi": [], "arr-num": 7 } },
+  });
+  t("PATCH [] em aprovada → 400", patchEsvaziaAprovada.status === 400, `status=${patchEsvaziaAprovada.status}`);
+  const dadosNpcApos = JSON.parse(comDb(BANCO, (db) =>
+    db.prepare("select data from characters where id=?").get(idNpcArr).data));
+  t("PATCH rejeitado não gravou NADA (arr-num intacto=0, arr-multi intacto)",
+    dadosNpcApos["arr-num"] === 0 && JSON.stringify(dadosNpcApos["arr-multi"]) === JSON.stringify(["x"]),
+    JSON.stringify({ num: dadosNpcApos["arr-num"], multi: dadosNpcApos["arr-multi"] }));
+  // PATCH neutro omitindo arrays em aprovada → 200 (legado não revalidado)
+  const patchNeutroAprovada = await req(BASE, "PATCH", `/campaigns/${CAMP_ID}/characters/${idNpcArr}`, {
+    cookie: cookieMestre, body: { data: { "arr-num": 9 } },
+  });
+  t("PATCH neutro omitindo arrays em aprovada → 200", patchNeutroAprovada.status === 200, `status=${patchNeutroAprovada.status}`);
+
   console.log(`\n${pass} passaram, ${fail} falharam`);
   if (fail > 0) process.exitCode = 1;
 } finally {
