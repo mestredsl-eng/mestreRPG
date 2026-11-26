@@ -107,6 +107,7 @@ export type EventoInternet =
   | { tipo: "mensagem"; conversaId: string; mensagem: MensagemInternet }
   | { tipo: "conversa-atualizada"; conversaId: string }
   | { tipo: "convite"; conversaId: string }
+  | { tipo: "contato"; contatoId: string; status: string }
   | { tipo: "leitura"; conversaId: string; contaId: string };
 
 export type ConexaoRealtime = "conectado" | "reconectando" | "desconectado";

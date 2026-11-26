@@ -103,7 +103,7 @@ export default function Mensagens({ adaptador, aoAbrirConversa }: {
   // Conteúdo de conversa nunca passa por aqui — só ids para re-fetch.
   useEffect(() => {
     const desc = adaptador.inscreverEventos?.((ev: EventoInternet) => {
-      if (ev.tipo === "mensagem" || ev.tipo === "conversa-atualizada" || ev.tipo === "convite") {
+      if (ev.tipo === "mensagem" || ev.tipo === "conversa-atualizada" || ev.tipo === "convite" || ev.tipo === "contato") {
         recarregar();
       }
     });

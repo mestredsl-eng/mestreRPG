@@ -6,7 +6,7 @@
 import { useEffect, useState } from "react";
 import { ModalConfirmar } from "../../Modal";
 import type { AdaptadorInternet } from "./adaptador";
-import type { ContatoInternet, ContatosInternet } from "./tipos";
+import type { ContatoInternet, ContatosInternet, EventoInternet } from "./tipos";
 import { Carregando, ErroRetry, Vazio } from "./estados";
 
 type SubAba = "aceitos" | "recebidos" | "enviados" | "bloqueados";
@@ -81,6 +81,14 @@ export default function Contatos({ adaptador, aoIniciarConversa }: {
       .catch(() => { if (vivo) { setDados(null); setErro(true); } });
     return () => { vivo = false; };
   }, [adaptador, tentativa]);
+
+  // push F3 `internet:contato` → recarrega arestas (pedido novo/decidido)
+  useEffect(() => {
+    const desc = adaptador.inscreverEventos?.((ev: EventoInternet) => {
+      if (ev.tipo === "contato") recarregar();
+    });
+    return desc;
+  }, [adaptador]);
 
   const executarConfirmado = async () => {
     if (!confirmacao) return;
