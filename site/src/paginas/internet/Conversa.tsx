@@ -330,10 +330,15 @@ export default function Conversa({ adaptador, conversaId, nomeConversa, tipoConv
                     .catch(() => setErroAcao("Não foi possível aceitar o convite."))
                     .finally(() => {
                       setOcupado(false);
-                      // recarrega o status SEM abrir o painel de detalhes —
-                      // o usuário cai direto no composer, não num modal
+                      // recarrega o status e, se virou `ativo`, o histórico
+                      // autorizado — sem remontar a tela nem esperar socket
+                      // (defeito P3 do INTERMEDIÁRIO: mensagens ficavam []
+                      // até a próxima mensagem chegar)
                       void adaptador.obterDetalhesGrupo(conversaId)
-                        .then(setDetalhes)
+                        .then(async (d) => {
+                          setDetalhes(d);
+                          if (d.meuStatusParticipante === "ativo") await carregar();
+                        })
                         .catch(() => {});
                     });
                 }}
