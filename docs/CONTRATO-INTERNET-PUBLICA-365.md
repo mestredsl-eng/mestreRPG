@@ -132,10 +132,27 @@ entregues em fatias verticais próprias.
   conteúdo alheio.
 - Ownership e autoria acompanham o personagem conforme a regra de
   transferência P7, não a identidade humana do titular anterior.
-- Antes da implementação, PAI/Técnico Geral devem conferir como a conta
-  Internet e `owner_conta_id` atual se comportam na transferência P7.
-  Escolher a representação persistida que mantém o vínculo canônico ao
-  personagem; não mudar o significado da decisão.
+- **Representação já existente confirmada no código atual:** `internet_accounts`
+  contém `character_id` NOT NULL e índice único por personagem
+  (`servidor/src/db/schema.ts`, linhas 808–823). Sites e páginas guardam
+  `owner_conta_id`/`autor_conta_id` apontando para essa conta, não para
+  a membership humana. A própria tabela `character_transfers` documenta
+  que a conta diegética e o histórico acompanham `characterId` sem mudança
+  (`schema.ts`, linhas 958–970).
+- O aceite de P7 altera `characters.membershipId` para o novo titular na
+  mesma transação que marca a transferência como aceita; não altera
+  `characterId` nem a conta Internet (`servidor/src/routes/personagens.ts`,
+  linhas 1978–2023). Assim, `owner_conta_id` e `autor_conta_id` permanecem
+  referências estáveis ao personagem; `contaAutorizadaPara`/gate deve
+  resolver o titular atual a cada operação.
+- Consequência de autorização: o novo titular herda a capacidade de
+  administração/edição derivada do personagem transferido; o titular
+  anterior perde-a assim que P7 é aceita. Não duplicar conta, não migrar
+  conteúdo para outra conta e não reatribuir autoria para o usuário humano
+  que recebeu o personagem.
+- A implementação deve cobrir essa herança/revogação em testes de escrita
+  e leitura no SHA do slice; se houver diferença entre contrato e código
+  de autorização atual, corrigir o gate server-side sem mudar a decisão.
 
 ### D3 — versionamento (A)
 
