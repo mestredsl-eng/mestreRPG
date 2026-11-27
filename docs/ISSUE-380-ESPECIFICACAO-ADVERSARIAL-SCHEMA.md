@@ -122,13 +122,24 @@ Um banco legado **sem id** combinado com recibo legado **sem id** não permite p
 
 | Cenário | Resultado | Risco residual |
 |---|---|---|
-| Backup antigo da mesma instalação restaurado | id preservado ⇒ boot normal | nenhum — mesma linhagem |
+| Backup pós-ID da mesma instalação restaurado | id preservado ⇒ boot normal | nenhum — mesma linhagem |
+| Backup pré-ID da mesma instalação restaurado pelo fluxo oficial | ver §Restauração — reatribuição assistida | backup pré-ID de outra instalação é indistinguível — ver ressalva |
+| Banco sem id colocado manualmente com recibo exigindo id | bloquear `banco-nao-pertence-a-esta-instalacao` — sem TOFU | nenhum |
 | Banco legado de OUTRA instalação, sem id, no lugar do banco | verify-once atribui id novo ⇒ **aceito** (TOFU) | não distinguível retrospectivamente — declarado |
 | Cópia de `.db` com id=X em instalação com recibo id=Y | divergência ⇒ `banco-nao-pertence-a-esta-instalacao` | nenhum |
 | Clone integral (db+state+recibo) em outro diretório | `repoCanon` falha primeiro → re-adoção preserva id do banco ⇒ clone funcional | aceito — é linhagem coerente |
 | Adulteração manual da linha de id no banco | atacante precisa igualar o recibo; sem segredo, id é observável no banco ⇒ spoof possível | declarado: âncora prova linhagem, não autenticidade — evolução HMAC com segredo local fora de escopo |
 | Adulteração do recibo (id trocado) | banco é âncora primária; mismatch ⇒ bloqueio | nenhum |
 | `MESTRE_BANCO` apontado para outro arquivo autêntico | id divergente ⇒ bloqueido | nenhum |
+
+### Restauração de backups e identidade
+
+O fluxo oficial `aplicar-restauracao` é o **único** caminho autorizado a reatribuir identidade; substituição manual de arquivo nunca invoca TOFU fora do verify-once de transição.
+
+- **Backup pós-ID** (criado após a primeira vinculação): o `instalacaoIdBanco` viaja dentro do `.db` — restaurar preserva o id automaticamente, sem passo extra.
+- **Backup pré-ID da mesma instalação, restaurado pelo fluxo oficial:** antes de trocar o arquivo, o fluxo captura o id vigente do banco corrente (já conferido com o recibo) e grava um **recibo de restauração** fora do banco contendo `{ idVigente, sha256BancoSubstituido, sha256BackupRestaurado, manifestoBackup, timestamp }`. Após a troca, se o banco restaurado não contém id, o fluxo grava a linha `protocolo.instalacaoIdBanco` com o id vigente — a prova é a **captura pré-troca pelo fluxo oficial**, não TOFU. Se o banco restaurado contém id divergente do vigente ⇒ `banco-nao-pertence-a-esta-instalacao`, sem reatribuição.
+- **Substituição manual** (arquivo copiado por fora do fluxo) de banco sem id quando o recibo já exige id ⇒ **bloqueio** `banco-nao-pertence-a-esta-instalacao`. Não existe verify-once fora da transição legado→vinculado.
+- **Prova de proveniência do backup:** o manifesto do backup (gravado pelo sistema no diretório de backups da instalação) registra `sha256` do arquivo, data e — quando existir — o id do banco de origem. Backup pré-ID não carrega id de origem; nesse caso a prova de linhagem é a posse do arquivo dentro do diretório de backups gerenciado pela instalação **mais** a confirmação explícita do operador no fluxo de restauração. Um backup pré-ID de **outra** instalação restaurado pelo fluxo oficial é indistinguível de um legítimo pré-ID — risco residual declarado, mitigável apenas por decisão humana; **não** é apresentado como detectável.
 
 ### O que é e não é detectável
 
@@ -140,7 +151,7 @@ Um banco legado **sem id** combinado com recibo legado **sem id** não permite p
 
 - Identidade: 1 SELECT indexado em `server_settings` por boot — sem hash de arquivo.
 - `sha256Banco`/mtime **não** são prova de identidade nem gatilho de invalidação: dados mudam legitimamente a cada boot (WAL, novas linhas, registro de backups). Fora da decisão.
-- L2 (`REFERENCIA`) é cacheada por `(hash do _journal.json + hash dos .sql + versão do algoritmo)` e recomputada apenas quando: primeira verificação pós-recibo, integridade suspeita, ou mudança de versão do protocolo. Em regime normal com recibo íntegro, L2 pode ser dispensada — L1+L4+integridade bastam.
+- `REFERENCIA(k)` (o replay) é cacheada por `(hash do _journal.json + hash dos .sql + versão do algoritmo)` e recomputada apenas quando: primeira verificação pós-recibo, integridade suspeita, ou mudança de versão do protocolo. **A comparação L2 nunca é dispensada:** em todo boot, `ASSINATURA_DB(candidato)` é extraída do banco presente e comparada com a referência cacheada antes de `ok:true`. O cache elimina o custo do replay (≤42 migrations em memória); o custo restante por boot é a extração da assinatura do candidato (`sqlite_master` + `PRAGMA table_info` por tabela) — da ordem de dezenas de consultas indexadas, aceitável para um gate fail-closed. Se o custo medido se mostrar inviável, a alternativa é **declarar o risco explicitamente e alterar o contrato** — não manter L2 obrigatória no papel e dispensada na prática.
 
 ## Matriz adversarial mínima
 
@@ -172,6 +183,8 @@ Um banco legado **sem id** combinado com recibo legado **sem id** não permite p
 | **T7e** | banco sem id + recibo legado sem id | verify-once atribui id ⇒ boot normal; TOFU declarado | grava id (transição) |
 | **T7f** | recibo adulterado com id≠banco | bloquear (banco é âncora primária) | nenhum |
 | **T7g** | `MESTRE_BANCO` → outro arquivo autêntico | bloquear `banco-nao-pertence-a-esta-instalacao` | nenhum |
+| **T7h** | backup pré-ID da mesma instalação restaurado via `aplicar-restauracao` | recibo de restauração gravado; id vigente reatribuído ⇒ boot normal | grava linha de id + recibo de restauração |
+| **T7i** | banco sem id colocado manualmente com recibo exigindo id | bloquear `banco-nao-pertence-a-esta-instalacao` — sem TOFU | nenhum |
 | cópia manual de recibo | recibo válido copiado para outra fixture | decisão conforme ameaça aceita, documentada e testada | não alterar contrato silenciosamente |
 
 ## Requisitos das fixtures
