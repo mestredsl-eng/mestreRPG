@@ -319,6 +319,15 @@ try {
     copyFileSync(dbPath(r3b), join(bk, "mestre-rpg.db"));
     {
       const d = abrirDb(join(bk, "mestre-rpg.db"));
+      try {
+        d.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+        d.exec("PRAGMA journal_mode=DELETE");
+      } finally { d.close(); }
+      for (const suf of ["-wal", "-shm"]) rmSync(join(bk, "mestre-rpg.db" + suf), { force: true });
+    }
+    gerarManifestoBackup(bk);
+    {
+      const d = abrirDb(join(bk, "mestre-rpg.db"));
       const ok = !d.prepare("select name from sqlite_master where type='table' and name=?").get(TABELA_NOVA);
       d.close();
       t("backup simula schema anterior (sem tabela nova)", ok === true);
