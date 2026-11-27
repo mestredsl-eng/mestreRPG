@@ -2,7 +2,10 @@
 
 **Status**: DP-1…DP-9 **TODAS DECIDIDAS** pelo proprietário em #365
 (`comentário 7220007287`, 27/11 — "aceito é fogo no parquinho! arroxa").
-Este suplemento registra o fechamento; PR #371 permanece **Draft**.
+Este suplemento registra somente DP-1…DP-9; a PR #371 foi integrada.
+Os novos vereditos D3/D6/D8/D9/D11/D12/D14 estão na
+`ESPECIFICACAO.md` §6 e §9 e em `docs/CONTRATO-INTERNET-PUBLICA-365.md`.
+DP-1…DP-9 permanecem preservadas e não foram reabertas.
 **Base**: `ESPECIFICACAO.md` @ `4e08cb8` + contrato v2.6 (#365, APROVADO
 INTERMEDIÁRIO) + pacote de deliberação DP-1…DP-9 v2.7 do PAI (#365,
 14:58 — recomendações idênticas às aqui descritas) + matriz de QA (#369). Nenhuma tela paralela; tudo dentro do
@@ -43,8 +46,10 @@ como dependência de deliberação, não implementado.
 | DP-8 reversão morte | **ACEITA — `personagem_ressuscitado` auditada** |
 | DP-9 causa pós-morte | **ACEITA — só nova publicação** |
 
-**Nenhuma pendência de produto restante**: todas as DP foram aceitas
-integralmente em #365 `7220007287` (27/11). Os wireframes podem congelar
+**Nenhuma pendência dentro de DP-1…DP-9**: todas foram aceitas
+integralmente em #365 `7220007287` (27/11). Isso não substitui nem
+redefine os vereditos independentes D3/D6/D8/D9/D11/D12/D14 da
+ESPECIFICACAO.md §9. Os wireframes podem congelar
 com os valores decididos — DP-2 fixa o número 7d no estado de
 contestação; DP-5 fixa somente-leitura no W9 de morto; DP-6 fixa a
 presença/ausência da opção Anônimo por tipo no W8.

@@ -1,9 +1,12 @@
 # Contrato — Internet pública 1.1.2, fatia W1/W3 (#365)
 
-Base: `main@36f6b23` + migração `0043` (`internet_sites`, `internet_pages`).
+Base original do slice: `main@36f6b23` + migração `0043` (`internet_sites`, `internet_pages`). W1/W3 integrados em `main@4289adafe23d7343e083c02443ff09626a463726` pela PR #388.
 Escopo desta fatia: **somente leitura** — diretório de sites, detalhe de
 site e leitura de página. Criação/edição de sites e páginas NÃO existe
-aqui (regra de produto pendente de deliberação — ver #365).
+nesta fatia read-only. O ownership para futuras fatias foi decidido em
+27/11/2026 (D14): personagem elegível cria/possui e administra seu site;
+cada autor edita suas páginas; Mestre pode moderar/arquivar, sem reescrever
+conteúdo alheio.
 
 Implementação: `servidor/src/routes/internet-publica.ts`, montado em
 `/api/campaigns/:campaignId/internet` (mesmo prefixo e mesmo
@@ -93,8 +96,9 @@ Página `publicado` de site `ativo` da **mesma** campanha.
 
 Notícias, classificados, perfil público (W9/W10), pesquisa multi-escopo
 (W2), denúncias, anonimato por tipo, perfil pós-morte, investigação
-(W11), criação/edição/publicação (DP de produto pendente), menu editor,
-histórico/rollback de versões (D3 → `version`+audit basta por ora).
+(W11), criação/edição/publicação (D14 decidido; escrita pertence a fatias futuras), menu editor,
+histórico/rollback de versões (D3 fechado: `version` incremental + auditoria,
+sem revisões recuperáveis nem rollback).
 
 ## Dados
 
@@ -108,3 +112,157 @@ histórico/rollback de versões (D3 → `version`+audit basta por ora).
   updated_at`.
 - Migração `0043` puramente aditiva; `internet_pages`/`internet_sites`
   registradas em `TABELAS_ANTIGAS` de `teste-restauracao-boot.mjs`.
+
+
+## Decisões consolidadas para as próximas fatias — 27/11/2026
+
+As decisões abaixo são vinculantes para o produto 1.1.2. Não alteram
+retroativamente o escopo read-only da PR #388; as rotas de escrita serão
+entregues em fatias verticais próprias.
+
+### D14 — ownership de sites e páginas (A)
+
+- Um personagem elegível cria seu próprio site; o dono administra os
+  metadados e a configuração permitida do site.
+- Cada página possui autor próprio; somente esse autor edita o conteúdo
+  da página.
+- Na 1.1.2, somente o personagem proprietário cria páginas novas
+  dentro do próprio site. Não há convite, colaboração nem criação de página
+  em site alheio neste corte.
+- O proprietário do site não ganha permissão para reescrever páginas de
+  outros autores; páginas importadas/migradas com outro autor preservam essa
+  autoria e só podem ser editadas pelo próprio autor autorizado.
+- Mestre pode moderar/arquivar o site ou conteúdo, mas não reescrever
+  conteúdo alheio.
+- Ownership e autoria acompanham o personagem conforme a regra de
+  transferência P7, não a identidade humana do titular anterior.
+- **Representação já existente confirmada no código atual:** `internet_accounts`
+  contém `character_id` NOT NULL e índice único por personagem
+  (`servidor/src/db/schema.ts`, linhas 808–823). Sites e páginas guardam
+  `owner_conta_id`/`autor_conta_id` apontando para essa conta, não para
+  a membership humana. A própria tabela `character_transfers` documenta
+  que a conta diegética e o histórico acompanham `characterId` sem mudança
+  (`schema.ts`, linhas 958–970).
+- O aceite de P7 altera `characters.membershipId` para o novo titular na
+  mesma transação que marca a transferência como aceita; não altera
+  `characterId` nem a conta Internet (`servidor/src/routes/personagens.ts`,
+  linhas 1978–2023). Assim, `owner_conta_id` e `autor_conta_id` permanecem
+  referências estáveis ao personagem; `contaAutorizadaPara`/gate deve
+  resolver o titular atual a cada operação.
+- Consequência de autorização: o novo titular herda a capacidade de
+  administração/edição derivada do personagem transferido; o titular
+  anterior perde-a assim que P7 é aceita. Não duplicar conta, não migrar
+  conteúdo para outra conta e não reatribuir autoria para o usuário humano
+  que recebeu o personagem.
+- A implementação deve cobrir essa herança/revogação em testes de escrita
+  e leitura no SHA do slice; se houver diferença entre contrato e código
+  de autorização atual, corrigir o gate server-side sem mudar a decisão.
+
+### D3 — versionamento (A)
+
+- Cada edição aceita incrementa `version` e grava evento de auditoria
+  com autor/personagem, ator autenticado, horário e versão resultante.
+- Não criar tabela de revisões recuperáveis, histórico navegável,
+  endpoint de restauração ou rollback de conteúdo.
+- A auditoria não deve virar cópia oculta recuperável do corpo anterior.
+
+### D6 — export/import da campanha (A)
+
+- Exportar/importar o domínio público completo da campanha: sites, páginas,
+  notícias, posts, anúncios/classificados, perfis, rascunhos, estados,
+  visibilidade, denúncias/contestação e metadados necessários para
+  reconstruir o comportamento.
+- Mensagens privadas, conversas, presença/digitação e demais dados do
+  mensageiro privado não entram no export/import da campanha.
+- Preservar relações por personagem, estados, autoria permitida, datas,
+  expiração e isolamento entre campanhas; mapear IDs sem colisão no destino.
+- **Privacidade de anonimato — regra obrigatória do pacote:** para
+  publicação `anuncio`/`classificado` anônima, o export não serializa
+  `autor_conta_id`, `characterId`, `userId`, membership, handle privado,
+  pseudônimo de conta nem qualquer chave/campo que permita resolver a
+  identidade real. O registro leva apenas uma referência opaca aleatória,
+  criada para aquele pacote e sem derivação de IDs internos; ela preserva
+  agrupamento/referência histórica dentro do pacote, não permite correlação
+  entre exports e não é reversível pelo importador.
+- Denúncias/contestações exportam somente estado, prazo, categoria e
+  conteúdo estritamente necessários à continuidade do ciclo; nunca
+  exportam identidade desanonimizada consultada sob DP-1, identificadores
+  humanos ou um vínculo reversível entre referência opaca e personagem.
+- No import, a referência anônima permanece opaca e não é ligada
+  automaticamente a conta/personagem nem concede direito de edição ou
+  titularidade. O import preserva conteúdo e estado históricos; direito de
+  escrita só pode surgir de autenticação/autorização normal do personagem,
+  nunca do token exportado. Reexportar mantém a referência não resolvível.
+- Publicação anônima continua permitida somente para `anuncio` e
+  `classificado` (DP-6); qualquer campo de anonimato enviado pelo cliente
+  em `noticia`, `post_perfil`, `site` ou `pagina` deve ser rejeitado
+  server-side antes de persistir.
+- Backup integral do servidor permanece distinto e protege o banco
+  completo conforme seu próprio contrato operacional.
+
+### D8 — publicação jornalística (C)
+
+- A biblioteca inicial já contém a profissão existente
+  `profissao:jornalista` em `servidor/src/lib/seed-regras.ts`; o tipo
+  `profissao` consta de `TIPOS_REGRA` em `servidor/src/lib/regras.ts`.
+- A estrutura de ficha de referência contém o campo **Profissão**,
+  `tipo: selecao_unica`, `regraKind: "profissao"` em
+  `fixtures/estrutura-cacadores-dump.json`; `regraKind` vincula as
+  opções à biblioteca do respectivo tipo em `servidor/src/lib/ficha.ts`.
+- Elegibilidade jornalística do personagem: valor/chave estável
+  `jornalista` no campo da ficha vinculado a `regraKind: "profissao"`,
+  validado contra a definição `profissao:jornalista` ainda existente no
+  ruleset ativo da campanha. A consulta ocorre server-side; não aceitar
+  label/texto livre ou profissão informada pelo cliente como prova.
+- Mestre também pode publicar conteúdo jornalístico, independentemente
+  do gate de profissão do personagem, conforme a decisão C.
+- Não criar classe, perícia, conhecimento, habilidade, atributo,
+  especialização ou profissão nova chamada jornalista. Usar a profissão
+  existente; não semear/reativar a definição automaticamente se o Mestre
+  a tiver removido ou desativado na campanha.
+- `profissao:investigador` também consta da biblioteca, mas não concede
+  automaticamente permissão jornalística; a elegibilidade D8 escolhida
+  é `profissao:jornalista`.
+- Referências de código:
+  - [seed de profissões](../servidor/src/lib/seed-regras.ts#L96)
+  - [tipo de regra](../servidor/src/lib/regras.ts#L23-L29)
+  - [campo de ficha por ruleKind](../servidor/src/lib/ficha.ts#L92-L93)
+  - [campo Profissão da estrutura de referência](../fixtures/estrutura-cacadores-dump.json#L8-L19)
+  - [valor salvo pela chave estável da biblioteca](../site/src/FichaForm.tsx#L787-L793)
+
+### D9 — contato em anúncios (A)
+
+- A ação "Contatar" cria/usa a solicitação de contato do sistema existente.
+- A conversa existente só abre depois do aceite do destinatário.
+- Bloqueio bilateral, rejeição, pendência e privacidade continuam sob as
+  regras do mensageiro 1.1.1.
+- Nenhuma conversa direta nem segundo mecanismo de chat.
+
+### D11 — validade de anúncios (A)
+
+- `expiresAt` é opcional e escolhido pelo autor na publicação/edição
+  permitida.
+- Sem `expiresAt`, o anúncio permanece ativo até retirada/moderação.
+- Estado expirado é derivado pela comparação do instante atual com
+  `expiresAt` no momento da leitura/listagem; não criar cron/job de
+  expiração em background.
+
+### D12 — pesquisa (A)
+
+- Escopos indexados: sites, páginas, notícias, anúncios/classificados e
+  perfis públicos.
+- Perfil é localizado por `handle`; `displayName` não participa do
+  índice.
+- Visibilidade e autorização são aplicadas antes de calcular resultados,
+  snippets, totais, ordenação ou paginação. Conteúdo invisível não pode
+  influenciar contagens, ranking, cursor ou mensagens de erro.
+- O gate de Internet, a separação por campanha e os controles de
+  visibilidade existentes continuam obrigatórios.
+
+### Forma do produto
+
+A camada pública é uma plataforma integrada dentro da Internet diegética:
+Explorar reúne sites, páginas, pesquisa, notícias, perfis/posts e
+classificados; Mensagens e Lojas/Vender/Pedidos reutilizam os módulos
+privados e comerciais já existentes. Não criar app/browser/login,
+mensageiro, checkout ou armazenamento paralelo.
