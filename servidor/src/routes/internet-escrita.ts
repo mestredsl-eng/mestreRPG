@@ -20,7 +20,8 @@ import { z } from "zod";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import {
-  auditLogs, internetPages, internetSites,
+  auditLogs, characters, internetAccounts, internetPages,
+  internetSites, memberships,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
@@ -181,6 +182,52 @@ function auditTx(
   }).run();
 }
 
+/** Revalidação TOCTOU dentro da transação (bloqueio DONO TÉCNICO):
+ *  a checagem async anterior pode ficar stale se P7 transferir o
+ *  personagem entre ela e o commit. Como a tx é síncrona na mesma
+ *  conexão, estas leituras + a mutação formam uma seção crítica —
+ *  P7 commita antes (visto aqui → aborta) ou depois (nossa mutação
+ *  foi linearizada sob titularidade válida). Não inclui o gate P5
+ *  (avaliação assíncrona de regras — permanece pré-tx). */
+function titularNaTx(tx: Tx, contaId: string, userId: string, cid: string): boolean {
+  const [conta] = tx.select({
+    characterId: internetAccounts.characterId,
+    status: internetAccounts.status,
+  }).from(internetAccounts)
+    .where(and(eq(internetAccounts.id, contaId), eq(internetAccounts.campaignId, cid)))
+    .limit(1).all();
+  if (!conta || conta.status !== "ativa") return false;
+  const [pers] = tx.select({
+    membershipId: characters.membershipId,
+    status: characters.status,
+  }).from(characters)
+    .where(and(eq(characters.id, conta.characterId), eq(characters.campaignId, cid)))
+    .limit(1).all();
+  if (!pers || pers.status === "arquivado") return false;
+  const [mu] = tx.select({ role: memberships.role }).from(memberships)
+    .where(and(
+      eq(memberships.campaignId, cid),
+      eq(memberships.userId, userId),
+      eq(memberships.status, "ativo"),
+    )).limit(1).all();
+  if (!mu || (mu.role !== "mestre" && mu.role !== "jogador")) return false;
+  const [dono] = tx.select({ userId: memberships.userId, status: memberships.status })
+    .from(memberships)
+    .where(and(
+      eq(memberships.id, pers.membershipId),
+      eq(memberships.campaignId, cid),
+    )).limit(1).all();
+  return !!dono && dono.status === "ativo" && dono.userId === userId;
+}
+
+/** Site precisa continuar `ativo` no ponto da escrita — mutações
+ *  subordinadas (página) abortam se o site foi arquivado na janela. */
+function siteAtivoNaTx(tx: Tx, siteId: string): boolean {
+  const [st] = tx.select({ status: internetSites.status }).from(internetSites)
+    .where(eq(internetSites.id, siteId)).limit(1).all();
+  return st?.status === "ativo";
+}
+
 // ---------- Resolução de atores ----------
 
 interface AtorPersonagem { auth: ContaAutorizada; papel: "titular" }
@@ -265,8 +312,10 @@ internetEscritaRouter.post("/sites", requirePapel("mestre", "jogador"), async (r
   const agora = new Date();
   const id = crypto.randomUUID();
   if (negaSemCota(req, res)) return;
+  let falhaTitular = false;
   try {
     db.transaction((tx) => {
+      if (!titularNaTx(tx, auth.conta.id, req.usuario!.id, cid)) { falhaTitular = true; return; }
       tx.insert(internetSites).values({
         id, campaignId: cid, slug,
         nome: body.data.nome, descricao: body.data.descricao ?? null,
@@ -282,6 +331,7 @@ internetEscritaRouter.post("/sites", requirePapel("mestre", "jogador"), async (r
     if (String(e).includes("UNIQUE")) { erroHttp(res, 409, "slug_em_uso"); return; }
     throw e;
   }
+  if (falhaTitular) { erroHttp(res, 403, "Conta não autorizada"); return; }
   consumirMutacao(req);
   const site = await sitePorSlug(cid, slug);
   res.status(201).json({ ok: true, site: site ? siteSerializado(site) : null });
@@ -361,8 +411,12 @@ internetEscritaRouter.patch("/sites/:slug", requirePapel("mestre", "jogador"), a
 
   const agora = new Date();
   if (negaSemCota(req, res)) return;
+  let falhaTitular = false;
+  let falhaSite = false;
   try {
     db.transaction((tx) => {
+      if (!titularNaTx(tx, site.ownerContaId, req.usuario!.id, cid)) { falhaTitular = true; return; }
+      if (!siteAtivoNaTx(tx, site.id)) { falhaSite = true; return; }
       tx.update(internetSites).set({
         slug: novoSlug,
         nome: body.data.nome ?? site.nome,
@@ -378,6 +432,8 @@ internetEscritaRouter.patch("/sites/:slug", requirePapel("mestre", "jogador"), a
     if (String(e).includes("UNIQUE")) { erroHttp(res, 409, "slug_em_uso"); return; }
     throw e;
   }
+  if (falhaTitular) { erroHttp(res, 403, "Conta não autorizada"); return; }
+  if (falhaSite) { erroHttp(res, 409, "estado_invalido"); return; }
   consumirMutacao(req);
   const atualizado = await sitePorSlug(cid, novoSlug);
   res.json({ ok: true, site: atualizado ? siteSerializado(atualizado) : null });
@@ -406,7 +462,11 @@ async function transicaoSite(req: Request, res: Response, destino: "arquivado" |
   const acao = destino === "arquivado" ? "internet.site_arquivado" : "internet.site_restaurado";
   if (negaSemCota(req, res)) return;
   let corrida = false;
+  let falhaTitular = false;
   db.transaction((tx) => {
+    if (ator.papel === "titular" && !titularNaTx(tx, site.ownerContaId, req.usuario!.id, cid)) {
+      falhaTitular = true; return;
+    }
     const upd = tx.update(internetSites)
       .set({ status: destino, updatedAt: agora })
       .where(and(eq(internetSites.id, site.id), eq(internetSites.status, origem)))
@@ -418,6 +478,7 @@ async function transicaoSite(req: Request, res: Response, destino: "arquivado" |
       ...(ator.papel === "titular" ? { contaId: ator.auth.conta.id } : {}),
     });
   });
+  if (falhaTitular) { erroHttp(res, 403, "Conta não autorizada"); return; }
   if (corrida) { erroHttp(res, 409, "estado_invalido"); return; }
   consumirMutacao(req);
   const atualizado = await sitePorSlug(cid, req.params.slug);
@@ -467,8 +528,12 @@ internetEscritaRouter.post("/sites/:slug/paginas", requirePapel("mestre", "jogad
   const agora = new Date();
   const id = crypto.randomUUID();
   if (negaSemCota(req, res)) return;
+  let falhaTitular = false;
+  let falhaSite = false;
   try {
     db.transaction((tx) => {
+      if (!titularNaTx(tx, site.ownerContaId, req.usuario!.id, cid)) { falhaTitular = true; return; }
+      if (!siteAtivoNaTx(tx, site.id)) { falhaSite = true; return; }
       tx.insert(internetPages).values({
         id, siteId: site.id, campaignId: cid, slug,
         titulo: body.data.titulo, corpo: body.data.corpo, formato,
@@ -487,6 +552,8 @@ internetEscritaRouter.post("/sites/:slug/paginas", requirePapel("mestre", "jogad
     if (String(e).includes("UNIQUE")) { erroHttp(res, 409, "slug_em_uso"); return; }
     throw e;
   }
+  if (falhaTitular) { erroHttp(res, 403, "Conta não autorizada"); return; }
+  if (falhaSite) { erroHttp(res, 409, "estado_invalido"); return; }
   consumirMutacao(req);
   const criada = await paginaPorSlug(site.id, cid, slug);
   res.status(201).json({ ok: true, pagina: criada ? paginaSerializada(criada) : null });
@@ -555,7 +622,11 @@ internetEscritaRouter.patch("/sites/:slug/paginas/:pageSlug", requirePapel("mest
   const agora = new Date();
   if (negaSemCota(req, res)) return;
   let corrida = false;
+  let falhaTitular = false;
+  let falhaSite = false;
   db.transaction((tx) => {
+    if (!titularNaTx(tx, pagina.autorContaId, req.usuario!.id, cid)) { falhaTitular = true; return; }
+    if (!siteAtivoNaTx(tx, site.id)) { falhaSite = true; return; }
     const upd = tx.update(internetPages).set({
       titulo: body.data.titulo ?? pagina.titulo,
       corpo: novoCorpo,
@@ -571,6 +642,8 @@ internetEscritaRouter.patch("/sites/:slug/paginas/:pageSlug", requirePapel("mest
       camposAlterados, papel: "titular",
     });
   });
+  if (falhaTitular) { erroHttp(res, 403, "Conta não autorizada"); return; }
+  if (falhaSite) { erroHttp(res, 409, "estado_invalido"); return; }
   if (corrida) {
     const atual = await paginaPorSlug(site.id, cid, req.params.pageSlug);
     erroHttp(res, 409, "versao_desatualizada", { versionAtual: atual?.version ?? pagina.version });
@@ -664,7 +737,13 @@ async function transicaoPagina(req: Request, res: Response, transicao: Transicao
 
   if (negaSemCota(req, res)) return;
   let corrida = false;
+  let falhaTitular = false;
+  let falhaSite = false;
   db.transaction((tx) => {
+    if (ator.papel === "titular" && !titularNaTx(tx, pagina.autorContaId, req.usuario!.id, cid)) {
+      falhaTitular = true; return;
+    }
+    if (!siteAtivoNaTx(tx, site.id)) { falhaSite = true; return; }
     const upd = tx.update(internetPages).set({
       status: para, version: novaVersion, publishedAt, updatedAt: agora,
     }).where(and(eq(internetPages.id, pagina.id), eq(internetPages.version, pagina.version)))
@@ -677,6 +756,8 @@ async function transicaoPagina(req: Request, res: Response, transicao: Transicao
       ...(ator.papel === "titular" ? { contaId: ator.auth.conta.id } : {}),
     });
   });
+  if (falhaTitular) { erroHttp(res, 403, "Conta não autorizada"); return; }
+  if (falhaSite) { erroHttp(res, 409, "estado_invalido"); return; }
   if (corrida) {
     const atual = await paginaPorSlug(site.id, cid, req.params.pageSlug);
     erroHttp(res, 409, "versao_desatualizada", { versionAtual: atual?.version ?? pagina.version });
