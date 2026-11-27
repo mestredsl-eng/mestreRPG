@@ -143,6 +143,8 @@ try {
       tipo: "noticia", titulo: "x", corpo: "y", visibilidade: "campanha", autorModo: "pseudonimo", pseudoNome: "Vulto_9",
     });
     t("pseudonimo válido → 201", rPseudoOk.status === 201 || rPseudoOk.status === 200, `status=${rPseudoOk.status}`);
+    pubPseudoId = rPseudoOk.json?.publicacao?.id ?? rPseudoOk.json?.id;
+    pubPseudoV = rPseudoOk.json?.publicacao?.version ?? 1;
     // Dono gate item 8: pseudoNome segue o charset do handle — rejeitar
     // espaços/acentos/símbolos que o handle não aceitaria
     const rPseudoCharset = await api(BASE, C.campId, J1, "POST", "/publicacoes", {
@@ -150,8 +152,21 @@ try {
       autorModo: "pseudonimo", pseudoNome: "Vulto Com Espaço!",
     });
     t("pseudoNome com charset inválido (espaço/!) → 4xx", rPseudoCharset.status >= 400 && rPseudoCharset.status < 500, `status=${rPseudoCharset.status}`);
-    pubPseudoId = rPseudoOk.json?.publicacao?.id ?? rPseudoOk.json?.id;
-    pubPseudoV = rPseudoOk.json?.publicacao?.version ?? 1;
+    // idem via PATCH (mesma regra deve valer na edição)
+    if (pubPseudoId) {
+      const rPatchCharset = await api(BASE, C.campId, J1, "PATCH", `/publicacoes/${pubPseudoId}`, {
+        pseudoNome: "Outro Nome Inválido!", expectedVersion: pubPseudoV,
+      });
+      t("PATCH pseudoNome charset inválido → 4xx", rPatchCharset.status >= 400 && rPatchCharset.status < 500, `status=${rPatchCharset.status}`);
+      // se o produto aceitar (bug), restaura pseudoNome/versão p/ não
+      // cascatear falhas vacuas nas seções seguintes
+      if (rPatchCharset.status === 200) {
+        pubPseudoV = rPatchCharset.json?.publicacao?.version ?? (pubPseudoV + 1);
+        await api(BASE, C.campId, J1, "PATCH", `/publicacoes/${pubPseudoId}`, {
+          pseudoNome: "Vulto_9", expectedVersion: pubPseudoV,
+        }).then((r2) => { if (r2.status === 200) pubPseudoV = r2.json?.publicacao?.version ?? (pubPseudoV + 1); });
+      }
+    }
     // D8/NEWS-04/05: gate profissao:jornalista server-side (decisão fechada,
     // INTERMEDIÁRIO B-1 na PR #394) — conta sem a profissão não publica noticia
     const rSemProf = await api(BASE, C.campId, J3, "POST", "/publicacoes", {
@@ -418,7 +433,8 @@ try {
     await new Promise((r) => setTimeout(r, 300));
     const rows2Morte = pubsDb().filter((p) => p.origem === "sistema" && p.personagem_id === ch3);
     t("segunda morte: 1ª notícia permanece publicada", rows2Morte.some((p) => p.id === mortePub.id && p.status === "publicado"), `n=${rows2Morte.length}`);
-    console.log(`  ~ info: notícias de sistema p/ ch3 após 2ª morte = ${rows2Morte.length}`);
+    // Dono gate item 6 / B-5: notícia por cada nova epoch (dedup por `em`)
+    t("B-5: nova epoch pós-ressurreição gera nova notícia de sistema", rows2Morte.length >= 2, `n=${rows2Morte.length}`);
     // DP-9: correção só via nova publicação — autoria exige conta elegível
     // (mestre sem conta de internet → 403; quem corrige é autor elegível, ex.: j1)
     const rCorrigeM = await api(BASE, C.campId, M, "POST", "/publicacoes", {
