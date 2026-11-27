@@ -126,8 +126,12 @@ entregues em fatias verticais próprias.
   metadados e a configuração permitida do site.
 - Cada página possui autor próprio; somente esse autor edita o conteúdo
   da página.
+- Na 1.1.2, somente o personagem proprietário cria páginas novas
+  dentro do próprio site. Não há convite, colaboração nem criação de página
+  em site alheio neste corte.
 - O proprietário do site não ganha permissão para reescrever páginas de
-  outros autores.
+  outros autores; páginas importadas/migradas com outro autor preservam essa
+  autoria e só podem ser editadas pelo próprio autor autorizado.
 - Mestre pode moderar/arquivar o site ou conteúdo, mas não reescrever
   conteúdo alheio.
 - Ownership e autoria acompanham o personagem conforme a regra de
@@ -172,11 +176,27 @@ entregues em fatias verticais próprias.
   mensageiro privado não entram no export/import da campanha.
 - Preservar relações por personagem, estados, autoria permitida, datas,
   expiração e isolamento entre campanhas; mapear IDs sem colisão no destino.
-- **Privacidade de anonimato**: exportação de campanha não pode revelar
-  o vínculo de identidade real de publicação anônima. Manter somente os
-  dados necessários ao comportamento público/moderação, respeitando DP-1
-  e DP-6; não serializar campo secreto de desanonimização para o pacote
-  entregue ao Mestre.
+- **Privacidade de anonimato — regra obrigatória do pacote:** para
+  publicação `anuncio`/`classificado` anônima, o export não serializa
+  `autor_conta_id`, `characterId`, `userId`, membership, handle privado,
+  pseudônimo de conta nem qualquer chave/campo que permita resolver a
+  identidade real. O registro leva apenas uma referência opaca aleatória,
+  criada para aquele pacote e sem derivação de IDs internos; ela preserva
+  agrupamento/referência histórica dentro do pacote, não permite correlação
+  entre exports e não é reversível pelo importador.
+- Denúncias/contestações exportam somente estado, prazo, categoria e
+  conteúdo estritamente necessários à continuidade do ciclo; nunca
+  exportam identidade desanonimizada consultada sob DP-1, identificadores
+  humanos ou um vínculo reversível entre referência opaca e personagem.
+- No import, a referência anônima permanece opaca e não é ligada
+  automaticamente a conta/personagem nem concede direito de edição ou
+  titularidade. O import preserva conteúdo e estado históricos; direito de
+  escrita só pode surgir de autenticação/autorização normal do personagem,
+  nunca do token exportado. Reexportar mantém a referência não resolvível.
+- Publicação anônima continua permitida somente para `anuncio` e
+  `classificado` (DP-6); qualquer campo de anonimato enviado pelo cliente
+  em `noticia`, `post_perfil`, `site` ou `pagina` deve ser rejeitado
+  server-side antes de persistir.
 - Backup integral do servidor permanece distinto e protege o banco
   completo conforme seu próprio contrato operacional.
 
