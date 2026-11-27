@@ -141,13 +141,24 @@ async function gateReconhecimentoPreMigration(): Promise<void> {
       carregarEstadoExterno, recuperarIntencaoPendente,
     } = await import("../lib/identidade-banco.js");
 
-    // 1. Intenção de vínculo pendente (crash no meio do ciclo
+    // 1. Reconhecimento L1–L4 do candidato como está AGORA — produz
+    //    também REFERENCIA(k) (assinaturaSchema), exigida pela validação
+    //    fase-aware da intenção pendente (ramo B3 do Adendo A1).
+    const v = await reconhecerSchema(CAMINHOS.banco, migrationsFolder, process.env);
+    if (!v.ok) {
+      console.error(`[db] schema não reconhecido (${v.motivo})${v.detalhe ? ` — ${v.detalhe}` : ""} — migrações NÃO aplicadas.`);
+      process.exit(1);
+    }
+
+    // 2. Intenção de vínculo pendente (crash no meio do ciclo
     //    intenção→linha→recibo→consumo): recupera convergindo ou bloqueia.
     const estado = await carregarEstadoExterno();
     if (estado) {
       const sqlite = new Database(CAMINHOS.banco);
       try {
-        const rec = recuperarIntencaoPendente({ estado, sqlite, env: process.env });
+        const rec = recuperarIntencaoPendente({
+          estado, sqlite, env: process.env, referenciaSchema: v.assinaturaSchema,
+        });
         if (rec.status === "bloqueada") {
           console.error(`[db] identidade do banco bloqueada (${rec.motivo})${rec.detalhe ? ` — ${rec.detalhe}` : ""} — migrações NÃO aplicadas.`);
           process.exit(1);
@@ -157,12 +168,6 @@ async function gateReconhecimentoPreMigration(): Promise<void> {
       }
     }
 
-    // 2. Reconhecimento L1–L4 do candidato como está AGORA.
-    const v = await reconhecerSchema(CAMINHOS.banco, migrationsFolder, process.env);
-    if (!v.ok) {
-      console.error(`[db] schema não reconhecido (${v.motivo})${v.detalhe ? ` — ${v.detalhe}` : ""} — migrações NÃO aplicadas.`);
-      process.exit(1);
-    }
     console.log(`[db] schema reconhecido: ${v.familia} (${v.migrations} migrations, identidade ${v.evidencias.identidadeBanco})`);
   } catch (e) {
     // Falha do próprio gate (módulo indisponível, I/O) é fail-closed.
@@ -202,7 +207,18 @@ async function posMigracaoIdentidade(sqlite: Database.Database): Promise<void> {
     prepararIntencao({ estado, tipo: "vinculacao-inicial", idFixo, env: process.env });
     gravarInstalacaoIdBanco(sqlite, idFixo);
     dbId = idFixo;
-    estado.atualizarReciboInstalacao(RAIZ, process.env, { instalacaoIdBanco: idFixo });
+    // O patch carrega id + assinaturaSchema juntos: mantém o recibo no
+    // estado convergido (ramo B3) se houver crash antes do consumo.
+    const upd = estado.atualizarReciboInstalacao(RAIZ, process.env, {
+      instalacaoIdBanco: idFixo,
+      assinaturaSchema: assinaturaSchemaCorrente(migrationsFolder).hash,
+    });
+    // Retorno verificado (anti-autobloqueio): recibo não gravado ⇒
+    // intenção NÃO é consumida — a recuperação converge na próxima
+    // passada. Falha propaga ⇒ exit 1 pelo catch do chamador.
+    if (!upd.atualizado) {
+      throw new Error(`recibo não atualizado no verify-once (${upd.motivo ?? "sem motivo"})`);
+    }
     concluirIntencao({ estado, env: process.env });
     console.log("[db] identidade do banco atribuída (verify-once — TOFU declarado)");
   } else if (instalacaoIdBancoValido(dbId) && recId && dbId !== recId) {
@@ -213,10 +229,13 @@ async function posMigracaoIdentidade(sqlite: Database.Database): Promise<void> {
   // P1-3: recibo sempre reflete o schema corrente pós-migrate.
   const { hash } = assinaturaSchemaCorrente(migrationsFolder);
   const idVigente = instalacaoIdBancoValido(dbId) ? dbId : recId;
-  estado.atualizarReciboInstalacao(RAIZ, process.env, {
+  const updRefresh = estado.atualizarReciboInstalacao(RAIZ, process.env, {
     assinaturaSchema: hash,
     ...(idVigente ? { instalacaoIdBanco: idVigente } : {}),
   });
+  if (!updRefresh.atualizado) {
+    throw new Error(`recibo não atualizado pós-migrate (${updRefresh.motivo ?? "sem motivo"})`);
+  }
 }
 
 if (precisaBackup) {

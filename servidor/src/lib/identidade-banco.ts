@@ -142,13 +142,20 @@ export function concluirIntencao(opts: {
 /** Recuperação de intenção pendente (matriz B do spec) — executada no
  *  boot antes de qualquer nova transição. Retorno:
  *  { status:"nenhuma" } | { status:"recuperada", idBanco } |
- *  { status:"bloqueada", motivo, detalhe? }. */
+ *  { status:"incompleta", idBanco } — fase do recibo ainda não ocorreu;
+ *  intenção preservada para o vínculo do bootstrap concluir |
+ *  { status:"bloqueada", motivo, detalhe? }.
+ *
+ *  `referenciaSchema` = hash da assinatura estrutural de REFERENCIA(k)
+ *  do candidato (v.assinaturaSchema do reconhecedor) — exigido pelo
+ *  ramo B3 da "intenção válida" fase-aware (Adendo A1). */
 export function recuperarIntencaoPendente(opts: {
   estado: EstadoExternoMod;
   sqlite: Database.Database;
   env?: NodeJS.ProcessEnv;
   repoDir?: string;
-}): { status: "nenhuma" | "recuperada" | "bloqueada"; idBanco?: string; motivo?: string; detalhe?: string } {
+  referenciaSchema?: string;
+}): { status: "nenhuma" | "recuperada" | "incompleta" | "bloqueada"; idBanco?: string; motivo?: string; detalhe?: string } {
   const repoDir = opts.repoDir ?? RAIZ;
   const env = opts.env ?? process.env;
   const intencao = opts.estado.lerIntencaoVinculacao(repoDir, env);
@@ -159,7 +166,7 @@ export function recuperarIntencaoPendente(opts: {
   const dados = intencao.dados as {
     instalacaoIdBanco?: unknown;
     tipo?: unknown;
-    vinculo?: { repoCanon?: unknown };
+    vinculo?: { repoCanon?: unknown; reciboSha256NaCriacao?: unknown };
   };
   const idIntencao = dados.instalacaoIdBanco;
   if (!instalacaoIdBancoValido(idIntencao)) {
@@ -181,14 +188,76 @@ export function recuperarIntencaoPendente(opts: {
     return { status: "bloqueada", motivo: "identidade-nao-atada", detalhe: "recibo diverge do id fixado na intenção (B5)" };
   }
 
+  // "Intenção válida" é fase-aware (Adendo A1):
+  //   válida ⇔ repoCanon confere (garantido acima) ∧
+  //     ( reciboSha256NaCriacao == sha256(recibo atual)              // B1/B2
+  //     ∨ (recibo.id == intencao.id ∧ recibo.assinaturaSchema
+  //        == REFERENCIA(k)) )                                       // B3
+  // Sem um dos dois ramos a intenção não prova autoridade → B5.
+  const vinculo = dados.vinculo;
+  const temAncora = !!vinculo && "reciboSha256NaCriacao" in vinculo;
+  const shaNaCriacao = (vinculo?.reciboSha256NaCriacao ?? null) as string | null;
+  const shaAtual = opts.estado.sha256ReciboInstalacao(repoDir, env);
+  const bytesConferem = temAncora && shaNaCriacao === shaAtual;
+  const recAssin = recibo.status === "ok" ? recibo.dados?.assinaturaSchema : undefined;
+  const b3Converge = recId === idIntencao
+    && typeof recAssin === "string"
+    && typeof opts.referenciaSchema === "string"
+    && recAssin === opts.referenciaSchema;
+  if (!bytesConferem && !b3Converge) {
+    return {
+      status: "bloqueada",
+      motivo: "identidade-nao-atada",
+      detalhe: "intenção não confere com o recibo vigente (âncora sha ausente/divergente e estado convergido não demonstrado)",
+    };
+  }
+
   // B1/B2: convergir — gravar id fixado se ausente/malformado.
   if (!instalacaoIdBancoValido(dbId)) {
     gravarInstalacaoIdBanco(opts.sqlite, idIntencao);
   }
-  // Recibo legado sem id: completar com o id fixado (B1/B2).
+
   if (recibo.status === "ok" && !recId) {
-    opts.estado.atualizarReciboInstalacao(repoDir, env, { instalacaoIdBanco: idIntencao });
+    // Recibo legado sem id: completar atomicamente com id + schema de
+    // referência (mantém o ramo B3 alcançável se houver crash aqui).
+    // Retorno verificado: falha NÃO consome a intenção — sem o recibo
+    // concluído não há prova de convergência (anti-autobloqueio).
+    const upd = opts.estado.atualizarReciboInstalacao(repoDir, env, {
+      instalacaoIdBanco: idIntencao,
+      ...(typeof opts.referenciaSchema === "string"
+        ? { assinaturaSchema: opts.referenciaSchema }
+        : {}),
+    });
+    if (!upd.atualizado) {
+      return {
+        status: "bloqueada",
+        motivo: "identidade-nao-atada",
+        detalhe: `recibo não atualizado (${upd.motivo ?? "sem motivo"}) — intenção preservada para nova tentativa`,
+      };
+    }
+    opts.estado.consumirIntencaoVinculacao(repoDir, env);
+    return { status: "recuperada", idBanco: idIntencao };
   }
+
+  if (recibo.status === "ausente") {
+    // Fase "recibo externo" ainda não ocorreu (crash antes do recibo):
+    // o id já está gravado; a intenção PERMANECE single-slot — o vínculo
+    // do bootstrap (ou a próxima recuperação) conclui a fase do recibo.
+    // Consumir aqui deixaria dbId sem prova de vínculo (janela B6).
+    return { status: "incompleta", idBanco: idIntencao };
+  }
+
+  if (recibo.status !== "ok") {
+    // corrompido/incompativel/divergente: a fase do recibo não conclui
+    // por este caminho — quarentena é domínio do operador. Fail-closed.
+    return {
+      status: "bloqueada",
+      motivo: "identidade-nao-atada",
+      detalhe: `recibo ${recibo.status} — fase do recibo não conclui sem intervenção`,
+    };
+  }
+
+  // B3: convergido — consumir intenção (idempotente).
   opts.estado.consumirIntencaoVinculacao(repoDir, env);
   return { status: "recuperada", idBanco: idIntencao };
 }
