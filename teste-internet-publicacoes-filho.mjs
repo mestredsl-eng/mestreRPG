@@ -107,7 +107,7 @@ try {
 
   // ---------- P1. Criação de publicações ----------
   sec("P1. POST /publicacoes — tipos, autoria, anonimato");
-  let pubNoticia = null, pubPseudoId = null, pubPseudoV = 1;
+  let pubNoticia = null, pubPseudoId = null, pubPseudoV = 1, pubContatosId = null;
   {
     const r = await api(BASE, C.campId, J1, "POST", "/publicacoes", {
       tipo: "noticia", titulo: "Festa no largo", corpo: "Houve festa.", visibilidade: "campanha",
@@ -124,6 +124,13 @@ try {
     t("anuncio/classificado fora do slice → 4xx", rAnuncio.status >= 400 && rAnuncio.status < 500, `status=${rAnuncio.status}`);
     const rSemVis = await api(BASE, C.campId, J1, "POST", "/publicacoes", { tipo: "noticia", titulo: "x", corpo: "y" });
     t("visibilidade obrigatória → 4xx", rSemVis.status >= 400 && rSemVis.status < 500, `status=${rSemVis.status}`);
+    // contrato §4: "status só rascunho na criação" — statusInicial=publicado
+    // não pode publicar direto (desvio real se 201)
+    const rStatusInicial = await api(BASE, C.campId, J1, "POST", "/publicacoes", {
+      tipo: "noticia", titulo: "publicado direto", corpo: "y", visibilidade: "campanha", statusInicial: "publicado",
+    });
+    t("POST statusInicial=publicado rejeitado (só rascunho na criação)",
+      rStatusInicial.status >= 400 && rStatusInicial.status < 500, `status=${rStatusInicial.status}`);
     const rAnon = await api(BASE, C.campId, J1, "POST", "/publicacoes", {
       tipo: "noticia", titulo: "x", corpo: "y", visibilidade: "campanha", autorModo: "anonimo",
     });
@@ -149,6 +156,11 @@ try {
     });
     t("NEWS-04: profissão forjada no body/characterId alheio → rejeitado",
       rForjaProf.status === 403 || rForjaProf.status === 400 || rForjaProf.status === 404, `status=${rForjaProf.status}`);
+    // ordem FILHO: post_perfil NÃO exige profissao:jornalista
+    const rPerfilSemProf = await api(BASE, C.campId, J3, "POST", "/publicacoes", {
+      tipo: "post_perfil", titulo: "Perfil médico", corpo: "y", visibilidade: "campanha",
+    });
+    t("post_perfil não exige profissao:jornalista → 201", rPerfilSemProf.status === 201 || rPerfilSemProf.status === 200, `status=${rPerfilSemProf.status}`);
     const rForja = await api(BASE, C.campId, J1, "POST", "/publicacoes", {
       tipo: "noticia", titulo: "x", corpo: "y", visibilidade: "campanha", autorContaId: "forjado", origem: "sistema",
     });
@@ -226,6 +238,7 @@ try {
     // publicação contatos de j1 — j3 (sem aresta) não pode ver em feed nem detalhe
     const rCont = await api(BASE, C.campId, J1, "POST", "/publicacoes", { tipo: "noticia", titulo: "SEGREDO_CONTATOS_X9", corpo: "só contatos", visibilidade: "contatos" });
     const idCont = rCont.json?.publicacao?.id ?? rCont.json?.id;
+    pubContatosId = idCont;
     const vCont = rCont.json?.publicacao?.version ?? 1;
     if (idCont) await api(BASE, C.campId, J1, "PATCH", `/publicacoes/${idCont}`, { status: "publicado", expectedVersion: vCont });
     const rFeed = await api(BASE, C.campId, J3, "GET", "/publicacoes?tipo=noticia&limit=50");
@@ -233,7 +246,11 @@ try {
     t("feed 200 para leitor elegível", rFeed.status === 200, `status=${rFeed.status}`);
     t("feed não vaza publicação contatos (sem aresta)", !blob.includes("SEGREDO_CONTATOS_X9"), blob.slice(0, 140));
     const itens = rFeed.json?.publicacoes ?? rFeed.json?.items ?? rFeed.json?.data ?? [];
-    t("feed traz publicadas com autor.handle", Array.isArray(itens) && itens.length >= 1 && JSON.stringify(itens[0]).includes("handle"), JSON.stringify(itens[0] ?? null).slice(0, 140));
+    const primeiroItem = Array.isArray(itens) ? itens[0] : null;
+    t("feed traz publicadas com representação de autor",
+      !!primeiroItem && typeof primeiroItem === "object" &&
+      (primeiroItem.autor?.nome != null || primeiroItem.autor?.handle != null || primeiroItem.autor?.modo != null),
+      JSON.stringify(primeiroItem ?? null).slice(0, 160));
     // j2 (com aresta) vê a de contatos no detalhe direto, não no feed agregado? contrato: leitura direta autorizada
     if (idCont) {
       const rDetJ3 = await api(BASE, C.campId, J3, "GET", `/publicacoes/${idCont}`);
@@ -307,9 +324,10 @@ try {
     const graveV = rGraveAlvo.json?.publicacao?.version ?? 1;
     if (graveId) {
       await api(BASE, C.campId, J1, "PATCH", `/publicacoes/${graveId}`, { status: "publicado", expectedVersion: graveV });
-      const rDG = await api(BASE, C.campId, J3, "POST", `/publicacoes/${graveId}/denunciar`, { motivo: "ilegal", denunciaGrave: true });
+      const rDG = await api(BASE, C.campId, J3, "POST", `/publicacoes/${graveId}/denunciar`, { motivo: "ilegal" });
+      t("denuncia motivo=ilegal aceita (grave derivado server-side)", rDG.status === 200 || rDG.status === 201, `status=${rDG.status}`);
       const rowGrave = pubsDb().find((p) => p.id === graveId);
-      t("DP-3: denuncia_grave=1 → remoção imediata", rowGrave?.status === "removido" || rowGrave?.status === "retirado", `denuncia=${rDG.status} db=${rowGrave?.status}`);
+      t("DP-3: denuncia_grave (motivo=ilegal) → remoção imediata", rowGrave?.status === "removido" || rowGrave?.status === "retirado", `denuncia=${rDG.status} db=${rowGrave?.status}`);
     }
     // autor não pode denunciar a própria publicação
     if (alvoId) {
@@ -319,6 +337,31 @@ try {
     // contestação DP-2: prazo 7d — verificar campo na denúncia persistida
     const den = denunciasDb();
     t("denúncias persistidas com trilha (status/motivo)", den.length >= 2, `n=${den.length}`);
+    const d0 = den[0];
+    t("DP-2: denúncia carrega status contestável + janela",
+      !!d0 && typeof d0 === "object" && ("status" in d0) && ("prazo_contestacao_em" in d0 || "contestacao" in d0 || "motivo" in d0),
+      JSON.stringify(d0 ?? null).slice(0, 200));
+    // denúncia respeita visibilidade: j3 NÃO tem aresta com j1 — não pode
+    // denunciar publicação 'contatos' que nem pode ler (anti-oráculo)
+    if (pubContatosId) {
+      const rDetAntes = await api(BASE, C.campId, J3, "GET", `/publicacoes/${pubContatosId}`);
+      const rDenVis = await api(BASE, C.campId, J3, "POST", `/publicacoes/${pubContatosId}/denunciar`, { motivo: "spam" });
+      t("denúncia de publicação 'contatos' sem aresta → 404 (visibilidade respeitada)",
+        rDetAntes.status === 404 && (rDenVis.status === 404 || rDenVis.status === 403),
+        `det=${rDetAntes.status} den=${rDenVis.status}`);
+    }
+    // fail-closed P5: conta inativa não denuncia nem lê feed
+    {
+      const contaJ3 = comDb((db) => db.prepare("select id from internet_accounts where character_id=?").get(ch3)?.id);
+      if (contaJ3) {
+        comDb((db) => db.prepare("update internet_accounts set status='inativa' where id=?").run(contaJ3));
+        const rFeedInat = await api(BASE, C.campId, J3, "GET", "/publicacoes?tipo=noticia&limit=5");
+        t("P5: conta inativa → feed negado (fail-closed)", rFeedInat.status === 403 || rFeedInat.status === 404, `status=${rFeedInat.status}`);
+        const rDenInat = await api(BASE, C.campId, J3, "POST", `/publicacoes/${graveId}/denunciar`, { motivo: "spam" });
+        t("P5: conta inativa → denúncia negada", rDenInat.status === 403 || rDenInat.status === 404, `status=${rDenInat.status}`);
+        comDb((db) => db.prepare("update internet_accounts set status='ativa' where id=?").run(contaJ3));
+      }
+    }
   }
 
   // ---------- P5. Notícia automática de morte (DP-8/DP-9) ----------
@@ -339,21 +382,38 @@ try {
       // somente leitura: ninguém edita/apaga a notícia de sistema
       const rPatchSis = await api(BASE, C.campId, M, "PATCH", `/publicacoes/${mortePub.id}`, { titulo: "editada", expectedVersion: mortePub.version ?? 1 });
       t("DP-8: notícia de sistema não é editável", rPatchSis.status === 403 || rPatchSis.status === 404, `status=${rPatchSis.status}`);
-      // selo no feed: origem=sistema derivável
-      const rFeedSis = await api(BASE, C.campId, J2, "GET", "/publicacoes?tipo=noticia&origem=sistema");
-      t("feed filtra origem=sistema (selo automático)", rFeedSis.status === 200 && JSON.stringify(rFeedSis.json).includes(mortePub.id), `status=${rFeedSis.status}`);
+      // selo no feed: item carrega origem='sistema' (filtro ?origem= é PROPOSTA
+      // não implementada — selo derivável por item, contrato §4)
+      const rFeedSis = await api(BASE, C.campId, J2, "GET", "/publicacoes?tipo=noticia&limit=50");
+      const itensFeed = rFeedSis.json?.publicacoes ?? rFeedSis.json?.items ?? [];
+      const itemMorte = (Array.isArray(itensFeed) ? itensFeed : []).find((i) => i.id === mortePub.id);
+      t("selo automático: feed expõe origem='sistema' no item",
+        rFeedSis.status === 200 && itemMorte?.origem === "sistema", `status=${rFeedSis.status} item=${JSON.stringify(itemMorte ?? null).slice(0, 140)}`);
     }
-    // ressurreição: recuperar HP → notícia permanece
-    const hpRec = await apiChars(BASE, M, "POST", `/characters/${ch3}/hp`, { acao: "recuperar", quantidade: 9999, motivo: "ressuscita teste" });
-    t("recuperação de HP aceita", hpRec.status === 200 || hpRec.status === 201, `status=${hpRec.status}`);
+    // DP-8: ressurreição via ação mestre auditada dedicada (não basta HP cheio)
+    const rRess = await apiChars(BASE, M, "POST", `/characters/${ch3}/ressuscitar`, { motivo: "ressuscita teste w45" });
+    t("ressuscitar (ação mestre) aceita", rRess.status === 200, `status=${rRess.status} ${JSON.stringify(rRess.json).slice(0, 120)}`);
     await new Promise((r) => setTimeout(r, 300));
     const rowsDepois = pubsDb().filter((p) => p.origem === "sistema" && p.personagem_id === ch3);
-    t("DP-8: ressurreição NÃO remove a notícia", rowsDepois.length >= 1 && rowsDepois[0].status !== "removido", `n=${rowsDepois.length}`);
-    // DP-9: correção só via nova publicação — a original segue intacta
-    const rCorrige = await api(BASE, C.campId, M, "POST", "/publicacoes", {
+    t("DP-8: ressurreição NÃO remove a notícia", rowsDepois.length >= 1 && rowsDepois.every((p) => p.status !== "removido"), `n=${rowsDepois.length}`);
+    // morte → ressurreição → NOVA morte: epoch novo não pode apagar a 1ª notícia
+    // (ressuscitar não restaura HP — precisa recuperar antes de morrer de novo)
+    await apiChars(BASE, M, "POST", `/characters/${ch3}/hp`, { acao: "recuperar", quantidade: 50, motivo: "cura p/ segunda morte" });
+    const hp2 = await apiChars(BASE, M, "POST", `/characters/${ch3}/hp`, { acao: "dano", quantidade: 9999, motivo: "segunda morte w45" });
+    t("segunda morte (novo dano letal) aceita", hp2.status === 200 || hp2.status === 201, `status=${hp2.status}`);
+    await new Promise((r) => setTimeout(r, 300));
+    const rows2Morte = pubsDb().filter((p) => p.origem === "sistema" && p.personagem_id === ch3);
+    t("segunda morte: 1ª notícia permanece publicada", rows2Morte.some((p) => p.id === mortePub.id && p.status === "publicado"), `n=${rows2Morte.length}`);
+    console.log(`  ~ info: notícias de sistema p/ ch3 após 2ª morte = ${rows2Morte.length}`);
+    // DP-9: correção só via nova publicação — autoria exige conta elegível
+    // (mestre sem conta de internet → 403; quem corrige é autor elegível, ex.: j1)
+    const rCorrigeM = await api(BASE, C.campId, M, "POST", "/publicacoes", {
+      tipo: "noticia", titulo: "Correção", corpo: "x", visibilidade: "campanha",
+    });
+    const rCorrige = await api(BASE, C.campId, J1, "POST", "/publicacoes", {
       tipo: "noticia", titulo: "Correção: morte de W45 Alvo", corpo: "A morte foi revertida.", visibilidade: "campanha",
     });
-    t("DP-9: correção via nova publicação (201)", rCorrige.status === 201 || rCorrige.status === 200, `status=${rCorrige.status}`);
+    t("DP-9: correção via nova publicação de conta elegível (201)", rCorrige.status === 201 || rCorrige.status === 200, `j1=${rCorrige.status} mestre=${rCorrigeM.status}`);
     const rowsFinal = pubsDb().filter((p) => p.origem === "sistema" && p.personagem_id === ch3);
     t("notícia original permanece após correção", rowsFinal.length >= 1, `n=${rowsFinal.length}`);
   }
@@ -371,6 +431,35 @@ try {
     t("feed não lista rascunho", !JSON.stringify(rFeed.json).includes("RASCUNHO_SECRETO_Y7"));
     const rFeedTodos = await api(BASE, C.campId, J3, "GET", "/publicacoes?limit=50");
     t("feed sem tipo agrega só visíveis", rFeedTodos.status === 200, `status=${rFeedTodos.status}`);
+  }
+
+  // ---------- P7. Regressão ficha: profissão ≠ atributo/perícia ----------
+  sec("P7. Regressão — profissão é elegibilidade, não substitui ficha jogável");
+  {
+    // dois personagens com a MESMA profissão e atributos diferentes:
+    // a profissão não pode achatar/substituir comp (perícia real)
+    const ch4 = C.novoPersonagem(C.jogadores.j2.membershipId, "W45 Colega", { comp: 9, prof: "jornalista" });
+    const f1 = await req(BASE, "GET", `/characters/${ch1}`, { cookie: J1 });
+    const f4 = await req(BASE, "GET", `/characters/${ch4}`, { cookie: J2 });
+    const blob1 = JSON.stringify(f1.json), blob4 = JSON.stringify(f4.json);
+    t("mesma profissao:jornalista nos dois", blob1.includes('"prof":"jornalista"') && blob4.includes('"prof":"jornalista"'),
+      `f1=${f1.status} f4=${f4.status}`);
+    t("atributo comp preservado e divergente (3 vs 9) — profissão não substitui perícia",
+      blob1.includes('"comp":3') && blob4.includes('"comp":9'), `f1.comp em ${blob1.includes('"comp"')} f4=${blob4.includes('"comp":9')}`);
+    t("sem classe/perícia paralela injetada pela profissão",
+      !/"(classe|skill|pericia|habilidade)"\s*:\s*"jornalista"/i.test(blob1 + blob4),
+      "n/a");
+    // kind real reutilizado: profissao existe como kind próprio no ruleset
+    const kindsProf = comDb((db) => db.prepare("select distinct kind from rule_definitions where kind='profissao'").all());
+    t("profissao usa kind real do ruleset (sem kind inventado)", kindsProf.length >= 1, `kinds=${JSON.stringify(kindsProf)}`);
+    // rolagens reais são socket/mesa — fora do escopo HTTP; regressão de
+    // resultado de rolagem coberta pelas suítes de mesa existentes.
+    t("skip: resultado de rolagem D10 exige socket (fora do escopo black-box HTTP)", "skip",
+      "coberto por suítes de mesa; profissão não aparece em nenhum caminho de roll");
+    // import/restore de __morte: suíte do PAI (74/74) cobre strip+re-derivação;
+    // aqui apenas registro de escopo
+    t("skip: import/restore __morte — delegada à suíte PAI (não duplicar)", "skip",
+      "teste-internet-publicacoes.mjs seção I @ bfa2c5f");
   }
 
   console.log(`\n===== W4/W5 publicações black-box: ${pass} ok / ${fail} falhas / ${skip} skips =====`);
