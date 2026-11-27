@@ -8,46 +8,46 @@ a revisão — não alteram o status REVIEW original.
 
 ## 1. Texto sobre gradiente (SC 1.4.3)
 
-**1229 elementos medidos — 1229 computado-PASS, 0 computado-FAIL**.
+**1264 elementos medidos — 1264 computado-PASS, 0 computado-FAIL**.
 
 | tela / fluxo | viewport | elementos | PASS | FAIL | pior razão |
 |---|---|---|---|---|---|
 | login→painel | celular-390 | 13 | 13 | 0 | 5.73:1 |
-| campanha (visão geral) | celular-390 | 27 | 27 | 0 | 5.73:1 |
-| aba Personagens | celular-390 | 35 | 35 | 0 | 5.73:1 |
-| aba Diário | celular-390 | 24 | 24 | 0 | 5.73:1 |
-| aba Arquivos | celular-390 | 26 | 26 | 0 | 5.73:1 |
-| aba Convites | celular-390 | 28 | 28 | 0 | 5.73:1 |
-| ficha detalhe | celular-390 | 58 | 58 | 0 | 5.73:1 |
-| patrimônio Inventário | celular-390 | 58 | 58 | 0 | 5.73:1 |
-| patrimônio Dinheiro | celular-390 | 60 | 60 | 0 | 5.73:1 |
-| aba Mesa | celular-390 | 24 | 24 | 0 | 5.73:1 |
+| campanha (visão geral) | celular-390 | 29 | 29 | 0 | 5.73:1 |
+| aba Personagens | celular-390 | 36 | 36 | 0 | 5.73:1 |
+| aba Diário | celular-390 | 25 | 25 | 0 | 5.73:1 |
+| aba Arquivos | celular-390 | 27 | 27 | 0 | 5.73:1 |
+| aba Convites | celular-390 | 29 | 29 | 0 | 5.73:1 |
+| ficha detalhe | celular-390 | 59 | 59 | 0 | 5.73:1 |
+| patrimônio Inventário | celular-390 | 59 | 59 | 0 | 5.73:1 |
+| patrimônio Dinheiro | celular-390 | 61 | 61 | 0 | 5.73:1 |
+| aba Mesa | celular-390 | 25 | 25 | 0 | 5.73:1 |
 | login→painel | tablet-768 | 13 | 13 | 0 | 5.73:1 |
-| campanha (visão geral) | tablet-768 | 28 | 28 | 0 | 5.73:1 |
-| aba Personagens | tablet-768 | 35 | 35 | 0 | 5.73:1 |
-| aba Diário | tablet-768 | 24 | 24 | 0 | 5.73:1 |
-| aba Arquivos | tablet-768 | 26 | 26 | 0 | 5.73:1 |
-| aba Convites | tablet-768 | 34 | 34 | 0 | 5.73:1 |
-| ficha detalhe | tablet-768 | 63 | 63 | 0 | 5.73:1 |
-| patrimônio Inventário | tablet-768 | 63 | 63 | 0 | 5.73:1 |
-| patrimônio Dinheiro | tablet-768 | 67 | 67 | 0 | 5.73:1 |
-| aba Mesa | tablet-768 | 24 | 24 | 0 | 5.73:1 |
+| campanha (visão geral) | tablet-768 | 29 | 29 | 0 | 5.73:1 |
+| aba Personagens | tablet-768 | 36 | 36 | 0 | 5.73:1 |
+| aba Diário | tablet-768 | 25 | 25 | 0 | 5.73:1 |
+| aba Arquivos | tablet-768 | 27 | 27 | 0 | 5.73:1 |
+| aba Convites | tablet-768 | 35 | 35 | 0 | 5.73:1 |
+| ficha detalhe | tablet-768 | 64 | 64 | 0 | 5.73:1 |
+| patrimônio Inventário | tablet-768 | 64 | 64 | 0 | 5.73:1 |
+| patrimônio Dinheiro | tablet-768 | 68 | 68 | 0 | 5.73:1 |
+| aba Mesa | tablet-768 | 25 | 25 | 0 | 5.73:1 |
 | login→painel | desktop-1366 | 13 | 13 | 0 | 5.73:1 |
-| campanha (visão geral) | desktop-1366 | 28 | 28 | 0 | 5.73:1 |
-| aba Personagens | desktop-1366 | 35 | 35 | 0 | 5.73:1 |
-| aba Diário | desktop-1366 | 24 | 24 | 0 | 5.73:1 |
-| aba Arquivos | desktop-1366 | 26 | 26 | 0 | 5.73:1 |
-| aba Convites | desktop-1366 | 34 | 34 | 0 | 5.73:1 |
-| ficha detalhe | desktop-1366 | 63 | 63 | 0 | 5.73:1 |
-| patrimônio Inventário | desktop-1366 | 63 | 63 | 0 | 5.73:1 |
-| patrimônio Dinheiro | desktop-1366 | 67 | 67 | 0 | 5.73:1 |
-| aba Mesa | desktop-1366 | 24 | 24 | 0 | 5.73:1 |
-| jogador: campanha | desktop-1366 | 22 | 22 | 0 | 5.73:1 |
-| jogador: personagens | desktop-1366 | 19 | 19 | 0 | 5.73:1 |
-| jogador: campanha | celular-390 | 21 | 21 | 0 | 5.73:1 |
-| jogador: personagens | celular-390 | 19 | 19 | 0 | 5.73:1 |
-| jogador: campanha | tablet-768 | 22 | 22 | 0 | 5.73:1 |
-| jogador: personagens | tablet-768 | 19 | 19 | 0 | 5.73:1 |
+| campanha (visão geral) | desktop-1366 | 29 | 29 | 0 | 5.73:1 |
+| aba Personagens | desktop-1366 | 36 | 36 | 0 | 5.73:1 |
+| aba Diário | desktop-1366 | 25 | 25 | 0 | 5.73:1 |
+| aba Arquivos | desktop-1366 | 27 | 27 | 0 | 5.73:1 |
+| aba Convites | desktop-1366 | 35 | 35 | 0 | 5.73:1 |
+| ficha detalhe | desktop-1366 | 64 | 64 | 0 | 5.73:1 |
+| patrimônio Inventário | desktop-1366 | 64 | 64 | 0 | 5.73:1 |
+| patrimônio Dinheiro | desktop-1366 | 68 | 68 | 0 | 5.73:1 |
+| aba Mesa | desktop-1366 | 25 | 25 | 0 | 5.73:1 |
+| jogador: campanha | desktop-1366 | 23 | 23 | 0 | 5.73:1 |
+| jogador: personagens | desktop-1366 | 20 | 20 | 0 | 5.73:1 |
+| jogador: campanha | celular-390 | 23 | 23 | 0 | 5.73:1 |
+| jogador: personagens | celular-390 | 20 | 20 | 0 | 5.73:1 |
+| jogador: campanha | tablet-768 | 23 | 23 | 0 | 5.73:1 |
+| jogador: personagens | tablet-768 | 20 | 20 | 0 | 5.73:1 |
 
 ### Padrões computado-PASS (deduplicados por fundo+cor de texto)
 
@@ -61,6 +61,7 @@ a revisão — não alteram o status REVIEW original.
 | th,tr,thead,table.tabela.tabela-responsiva,div,section.cartao,div#painel-personagens,main.container.container-largo,div#root,body,html | rgb(154,160,166) | 4.5:1 | 34 | 6.48:1 | 6.48:1 | ficha detalhe/tablet-768/`th`; ficha detalhe/tablet-768/`th`; ficha detalhe/tablet-768/`th` |
 | h2,div,div.linha-entre,section.cartao,main.container.container-largo,div#root,body,html | rgb(240,229,232) | 4.5:1 | 33 | 13.92:1 | 13.92:1 | campanha (visão geral)/celular-390/`h2`; aba Personagens/celular-390/`h2`; aba Diário/celular-390/`h2` |
 | p.meta,div,div.linha-entre,section.cartao,main.container.container-largo,div#root,body,html | rgb(180,169,177) | 4.5:1 | 33 | 7.54:1 | 7.54:1 | campanha (visão geral)/celular-390/`p.meta`; aba Personagens/celular-390/`p.meta`; aba Diário/celular-390/`p.meta` |
+| span.conexao.conexao-conectado,p.meta,div,div.linha-entre,section.cartao,main.container.container-largo,div#root,body,html | rgb(127,208,138) | 4.5:1 | 33 | 9.20:1 | 9.20:1 | campanha (visão geral)/celular-390/`span.conexao.conexao-conectado`; aba Personagens/celular-390/`span.conexao.conexao-conectado`; aba Diário/celular-390/`span.conexao.conexao-conectado` |
 | button.secundario,div.linha-entre,section.cartao,main.container.container-largo,div#root,body,html | rgb(232,230,227) | 4.5:1 | 33 | 11.40:1 | 11.40:1 | campanha (visão geral)/celular-390/`button.secundario`; aba Personagens/celular-390/`button.secundario`; aba Diário/celular-390/`button.secundario` |
 | button#aba-historico.secundario,div.abas,section.cartao,main.container.container-largo,div#root,body,html | rgb(201,205,211) | 4.5:1 | 33 | 8.90:1 | 8.90:1 | campanha (visão geral)/celular-390/`button#aba-historico.secundario`; aba Personagens/celular-390/`button#aba-historico.secundario`; aba Diário/celular-390/`button#aba-historico.secundario` |
 | button#aba-mesa.secundario,div.abas,section.cartao,main.container.container-largo,div#root,body,html | rgb(201,205,211) | 4.5:1 | 30 | 8.90:1 | 8.90:1 | campanha (visão geral)/celular-390/`button#aba-mesa.secundario`; aba Personagens/celular-390/`button#aba-mesa.secundario`; aba Diário/celular-390/`button#aba-mesa.secundario` |
@@ -73,12 +74,12 @@ a revisão — não alteram o status REVIEW original.
 | button#aba-convites.secundario,div.abas,section.cartao,main.container.container-largo,div#root,body,html | rgb(201,205,211) | 4.5:1 | 24 | 8.90:1 | 8.90:1 | campanha (visão geral)/celular-390/`button#aba-convites.secundario`; aba Personagens/celular-390/`button#aba-convites.secundario`; aba Diário/celular-390/`button#aba-convites.secundario` |
 | button.secundario,div.linha,div.linha-entre,section.cartao,div#painel-personagens,main.container.container-largo,div#root,body,html | rgb(232,230,227) | 4.5:1 | 24 | 11.40:1 | 11.40:1 | aba Personagens/celular-390/`button.secundario`; aba Personagens/celular-390/`button.secundario`; ficha detalhe/celular-390/`button.secundario` |
 | span,span.marca,header.topo,div#root,body,html | rgb(241,231,233) | 3:1 | 24 | 15.14:1 | 15.14:1 | login→painel/tablet-768/`span`; campanha (visão geral)/tablet-768/`span`; aba Personagens/tablet-768/`span` |
+| button#aba-personagens.secundario,div.abas,section.cartao,main.container.container-largo,div#root,body,html | rgb(201,205,211) | 4.5:1 | 18 | 8.90:1 | 8.90:1 | campanha (visão geral)/celular-390/`button#aba-personagens.secundario`; aba Diário/celular-390/`button#aba-personagens.secundario`; aba Arquivos/celular-390/`button#aba-personagens.secundario` |
 | p,section.cartao,div#painel-info,main.container.container-largo,div#root,body,html | rgb(238,231,232) | 4.5:1 | 18 | 14.04:1 | 14.04:1 | campanha (visão geral)/celular-390/`p`; campanha (visão geral)/celular-390/`p`; campanha (visão geral)/celular-390/`p` |
 | strong,p,section.cartao,div#painel-info,main.container.container-largo,div#root,body,html | rgb(238,231,232) | 4.5:1 | 18 | 14.04:1 | 14.04:1 | campanha (visão geral)/celular-390/`strong`; campanha (visão geral)/celular-390/`strong`; campanha (visão geral)/celular-390/`strong` |
 | button.perigo,div.linha,section.cartao,div#painel-personagens,main.container.container-largo,div#root,body,html | rgb(255,255,255) | 4.5:1 | 18 | 9.00:1 | 9.00:1 | ficha detalhe/celular-390/`button.perigo`; ficha detalhe/celular-390/`button.perigo`; patrimônio Inventário/celular-390/`button.perigo` |
 | h4,div.cartao.progressao-xp,div.ficha,section.cartao.ficha-cartao,div#painel-personagens,main.container.container-largo,div#root,body,html | rgb(238,231,232) | 4.5:1 | 18 | 14.04:1 | 14.04:1 | ficha detalhe/celular-390/`h4`; ficha detalhe/celular-390/`h4`; patrimônio Inventário/celular-390/`h4` |
 | p.meta,div.cartao.progressao-xp,div.ficha,section.cartao.ficha-cartao,div#painel-personagens,main.container.container-largo,div#root,body,html | rgb(180,169,177) | 4.5:1 | 18 | 7.54:1 | 7.54:1 | ficha detalhe/celular-390/`p.meta`; ficha detalhe/celular-390/`p.meta`; patrimônio Inventário/celular-390/`p.meta` |
-| button#aba-personagens.secundario,div.abas,section.cartao,main.container.container-largo,div#root,body,html | rgb(201,205,211) | 4.5:1 | 16 | 8.90:1 | 8.90:1 | aba Diário/celular-390/`button#aba-personagens.secundario`; aba Arquivos/celular-390/`button#aba-personagens.secundario`; aba Convites/celular-390/`button#aba-personagens.secundario` |
 | span,span.marca,header.topo,div#root,body,html | rgb(241,231,233) | 4.5:1 | 12 | 15.14:1 | 15.14:1 | login→painel/celular-390/`span`; campanha (visão geral)/celular-390/`span`; aba Personagens/celular-390/`span` |
 | th,tr,thead,table.tabela,section.cartao,div#painel-personagens,main.container.container-largo,div#root,body,html | rgb(154,160,166) | 4.5:1 | 12 | 6.48:1 | 6.48:1 | aba Personagens/celular-390/`th`; aba Personagens/celular-390/`th`; aba Personagens/celular-390/`th` |
 | td,tr.clicavel,tbody,table.tabela,section.cartao,div#painel-personagens,main.container.container-largo,div#root,body,html | rgb(238,231,232) | 4.5:1 | 12 | 14.04:1 | 14.04:1 | aba Personagens/celular-390/`td`; aba Personagens/celular-390/`td`; aba Personagens/celular-390/`td` |
