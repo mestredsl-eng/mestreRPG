@@ -873,7 +873,9 @@ const publicacaoCriarSchema = z.object({
   // W8: declaração de visibilidade é OBRIGATÓRIA já na criação.
   visibilidade: z.enum(["campanha", "contatos"]),
   autorModo: z.enum(["identificado", "pseudonimo"]).optional(),
-  pseudoNome: z.string().trim().min(2).max(60).optional(),
+  // Charset do handle (internet.ts): letras/dígitos/._- — sem espaços
+  // nem pontuação livre; caixa preservada para exibição do pseudônimo.
+  pseudoNome: z.string().trim().min(2).max(60).regex(/^[A-Za-z0-9._-]+$/, "pseudoNome inválido").optional(),
   contaId: z.string().min(1).optional(),
   // statusInicial removido: POST sempre cria 'rascunho' — publicar é
   // transição posterior via PATCH + expectedVersion (D3).
@@ -885,7 +887,7 @@ const publicacaoPatchSchema = z.object({
   formato: z.enum(["texto", "markdown-subset"]).optional(),
   visibilidade: z.enum(["campanha", "contatos"]).optional(),
   autorModo: z.enum(["identificado", "pseudonimo"]).optional(),
-  pseudoNome: z.string().trim().min(2).max(60).nullable().optional(),
+  pseudoNome: z.string().trim().min(2).max(60).regex(/^[A-Za-z0-9._-]+$/, "pseudoNome inválido").nullable().optional(),
   status: z.enum(["rascunho", "publicado"]).optional(),
   expectedVersion: z.number().int().min(1),
 }).strict();

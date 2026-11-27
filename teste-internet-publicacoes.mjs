@@ -159,7 +159,7 @@ try {
 
   const pubContatos = await API("POST", "/publicacoes", j1.cookie, {
     tipo: "post_perfil", titulo: "Só pra contatos", corpo: "segredo",
-    visibilidade: "contatos", autorModo: "pseudonimo", pseudoNome: "A. F.",
+    visibilidade: "contatos", autorModo: "pseudonimo", pseudoNome: "A.F.",
   });
   t("post_perfil pseudônimo criado → 201", pubContatos.status === 201, JSON.stringify(pubContatos.json).slice(0, 200));
   const pubB = pubContatos.json?.publicacao?.id;
@@ -195,7 +195,7 @@ try {
 
   // pseudônimo não vaza handle real no feed
   const itemB = (feedJ1Todos.json?.publicacoes ?? []).find((p) => p.id === pubB);
-  t("pseudônimo expõe pseudoNome", itemB?.autor?.modo === "pseudonimo" && itemB?.autor?.nome === "A. F.");
+  t("pseudônimo expõe pseudoNome", itemB?.autor?.modo === "pseudonimo" && itemB?.autor?.nome === "A.F.");
   t("pseudônimo não vaza handle", !("handle" in (itemB?.autor ?? {})));
 
   // ================= MATÉRIA W5 =================
