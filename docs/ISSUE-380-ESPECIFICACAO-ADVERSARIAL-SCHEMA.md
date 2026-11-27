@@ -108,7 +108,7 @@ O recibo externo (`instalacao-recibo.json`) passa a registrar `instalacaoIdBanco
 
 ### Ciclo de vida
 
-- **Bootstrap novo / adoção:** após todas as provas (candidato + integridade + L1–L3 + backup validado), o produtor de estado gera o UUID e grava a linha no banco na mesma janela em que grava o recibo. Se o banco já contém id bem-formado (clone de instalação adotada), **preserva-se o id existente** — é o que permite clonagem legítima.
+- **Bootstrap novo / adoção:** após todas as provas (candidato + integridade + L1–L3 + backup validado), o produtor de estado gera o UUID e grava a linha no banco **antes** de atualizar o recibo externo — a ordem canônica e a recuperação de crash estão em §Recuperação de crash. Se o banco já contém id bem-formado (clone de instalação adotada), **preserva-se o id existente** — é o que permite clonagem legítima.
 - **Boot subsequente (`instalacao-concluida`):** lê a linha do banco e compara com o recibo:
   - confere ⇒ segue;
   - banco sem id + recibo legado sem id ⇒ **verify-once**: grava id no banco e no recibo, segue (idempotente);
@@ -134,14 +134,52 @@ Um banco legado **sem id** combinado com recibo legado **sem id** não permite p
 
 ### Restauração de backups e identidade
 
-O fluxo oficial `aplicar-restauracao` é o **único** caminho autorizado a reatribuir identidade; substituição manual de arquivo nunca invoca TOFU fora do verify-once de transição.
+O fluxo oficial `aplicar-restauracao` é o **único** caminho autorizado a reatribuir identidade; substituição manual de arquivo nunca invoca TOFU fora do verify-once de transição. A ordem de gravação e a recuperação de crash desse fluxo estão em §Recuperação de crash (C4a–C5).
 
 - **Backup pós-ID** (criado após a primeira vinculação): o `instalacaoIdBanco` viaja dentro do `.db` — restaurar preserva o id automaticamente, sem passo extra.
 - **Backup pré-ID da mesma instalação, restaurado pelo fluxo oficial:** antes de trocar o arquivo, o fluxo captura o id vigente do banco corrente (já conferido com o recibo) e grava um **recibo de restauração** fora do banco contendo `{ idVigente, sha256BancoSubstituido, sha256BackupRestaurado, manifestoBackup, timestamp }`. Após a troca, se o banco restaurado não contém id, o fluxo grava a linha `protocolo.instalacaoIdBanco` com o id vigente — a prova é a **captura pré-troca pelo fluxo oficial**, não TOFU. Se o banco restaurado contém id divergente do vigente ⇒ `banco-nao-pertence-a-esta-instalacao`, sem reatribuição.
 - **Substituição manual** (arquivo copiado por fora do fluxo) de banco sem id quando o recibo já exige id ⇒ **bloqueio** `banco-nao-pertence-a-esta-instalacao`. Não existe verify-once fora da transição legado→vinculado.
 - **Prova de proveniência do backup:** o manifesto do backup (gravado pelo sistema no diretório de backups da instalação) registra `sha256` do arquivo, data e — quando existir — o id do banco de origem. Backup pré-ID não carrega id de origem; nesse caso a prova de linhagem é a posse do arquivo dentro do diretório de backups gerenciado pela instalação **mais** a confirmação explícita do operador no fluxo de restauração. Um backup pré-ID de **outra** instalação restaurado pelo fluxo oficial é indistinguível de um legítimo pré-ID — risco residual declarado, mitigável apenas por decisão humana; **não** é apresentado como detectável.
 
-### O que é e não é detectável
+### Recuperação de crash — matriz SQLite × recibo
+
+**Não há transação atômica entre SQLite e filesystem.** Este protocolo usa ordem canônica de gravação + recuperação idempotente + provas revalidadas a cada boot. Onde o código conhecido ainda não garante o mecanismo, o item está marcado como **requisito de implementação / risco aberto** — não como propriedade existente.
+
+### Ordem canônica
+
+1. **Vinculação inicial:** grava `instalacaoIdBanco` no banco → só então atualiza o recibo externo. O banco é a âncora primária; o recibo é a cópia secundária.
+2. **Restauração pré-ID:** grava recibo de restauração (tmp+rename, validado) → troca o arquivo do banco → reatribui o id → grava marcador `concluida` no recibo de restauração. O banco substituído é preservado (movido, não apagado) até a conclusão.
+
+### Matriz de estados
+
+| # | Estado no crash | Estado resultante | Recuperação |
+|---|---|---|---|
+| C1 | Antes da gravação do ID | DB sem id; recibo legado sem id | Estado pré-transição legítimo — verify-once autorizado no próximo boot, idempotente |
+| C2 | Depois do ID no DB, antes do recibo | DB tem X; recibo sem id | **Forward recovery:** completar o recibo com X somente se a prova abaixo existir; caso contrário bloquear **sem** emitir recibo positivo |
+| C3 | Depois do recibo atualizado | DB=X; recibo=X | Boot normal — estado convergido |
+| C4a | Restore pré-ID: crash antes da troca | Banco corrente intacto; recibo de restauração válido ou ausente | Ausente/inválido ⇒ restore não iniciado, ignorar. Válido sem evidência de troca ⇒ abortar restore (operador repete) |
+| C4b | Restore pré-ID: crash após troca, antes da reatribuição | Banco restaurado sem id no lugar; recibo de restauração registra `idVigente`+`sha256BackupRestaurado`; banco substituído preservado | **Fonte autoritativa = recibo de restauração.** Recomputar sha256 do arquivo presente: se ≠ `sha256BackupRestaurado`, o arquivo não é o backup confirmado ⇒ **bloquear, não aceitar**. Se confere e passa L1–L3+integridade ⇒ reatribuir `idVigente` |
+| C4c | Restore pré-ID: crash durante a reatribuição (id parcialmente gravado) | Linha de id ausente ou malformada no restaurado | Tratar como C4b: recibo de restauração autoriza completar; id malformado ⇒ reescrever com `idVigente` somente após revalidar sha256+L1–L3 |
+| C5 | Restore pré-ID: crash após reatribuição, antes do marcador `concluida` | DB restaurado com id=idVigente; recibo de restauração sem marcador | Idempotente: verificar `id==idVigente` e sha256 do arquivo ⇒ gravar marcador `concluida`, encerrar. Sem duplicar identidade nem trocar id |
+
+### Prova que autoriza o forward recovery de C2
+
+Completar o recibo com o id X do banco exige **todas**:
+
+1. L1–L3 + `integrity_check`/`foreign_key_check` passam no banco candidato (é um schema legítimo reconhecido);
+2. a linha `protocolo.instalacaoIdBanco` é bem-formada e foi escrita por módulo do protocolo (chave protegida — não gravável via API de settings);
+3. o recibo externo é **legado** (sem campo `instalacaoIdBanco`) — janela de transição, não estado arbitrário;
+4. `assinaturaSchema` do recibo confere com a `REFERENCIA(k)` corrente — prova de que o banco presente é o adotado, não um intruso.
+
+Sem as 4 condições ⇒ bloquear com `banco-nao-pertence-a-esta-instalacao`-equivalente e **não** gravar recibo positivo. A gravação do recibo deve ser atômica por arquivo (tmp+rename) — **requisito de implementação**; o formato atual do recibo não garante isso e deve ser verificado no código antes de declarar a propriedade.
+
+### Riscos abertos declarados
+
+- Janela C2 depende da ordem DB→recibo; se uma implementação inverter a ordem, C2 vira "recibo=X, DB sem id" — estado ambíguo que esta matriz não cobre e que deve ser tratado como bloqueio até revisão. **Requisito:** a ordem canônica é normativa, não sugestão.
+- O recibo de restauração pressupõe escrita atômica tmp+rename e validação de integridade na leitura — **requisito de implementação**.
+- Preservação do banco substituído durante restore é obrigatória para rollback manual; política de retenção/limpeza fica fora desta especificação.
+
+## O que é e não é detectável
 
 **Detectável:** substituição de arquivo inteiro, restore de outra linhagem, journal/schema adulterado, rollback para estado sem identidade.
 
