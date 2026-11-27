@@ -231,6 +231,9 @@ try {
 
     // VER-05: falha forçada do INSERT de auditoria deve reverter a página.
     const antes = snapshotPagina(siteA.slug, "capitulo-1");
+    if (!antes) {
+      t("VER-05: pré-condição — página capitulo-1 persistida", false, "rota de escrita ausente (TDD)");
+    } else {
     comDb((db) => db.exec(`
       CREATE TRIGGER teste_falha_audit_w3
       BEFORE INSERT ON audit_logs
@@ -249,6 +252,7 @@ try {
     t("VER-05: falha de audit reverte corpo, status e versão",
       depois?.corpo === antes?.corpo && depois?.status === antes?.status && depois?.version === antes?.version,
       `antes=${JSON.stringify(antes)} depois=${JSON.stringify(depois)}`);
+    }
   }
 
   // ---------- E4b. Atomicidade em site/página/status (VER-05) ----------
@@ -313,7 +317,7 @@ try {
       try {
         rStatusAudit = await api(BASE, C.campId, J1, "POST",
           `/sites/${siteA.slug}/paginas/${slugStatusAtomic}/publicar`,
-          { expectedVersion: antesStatus.version });
+          { expectedVersion: antesStatus?.version });
       } finally { removerTriggerFalha("teste_falha_audit_status_w3"); }
       const depoisStatus = snapshotPagina(siteA.slug, slugStatusAtomic);
       t("VER-05: falha do audit em transição reverte status e versão",
