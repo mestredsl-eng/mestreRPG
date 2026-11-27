@@ -24,10 +24,19 @@ import {
   contaAutorizadaPara, contasDoUsuario, codificarCursor, decodificarCursor,
   mestreLeitorDaCampanha,
 } from "../lib/conta-internet.js";
+import { limiteUsuario } from "../lib/ratelimit.js";
 
 const db = getDb();
 export const internetPublicaRouter = Router({ mergeParams: true });
 internetPublicaRouter.use(requireAuth);
+
+/** Limite de leitura da camada pública (aceite #387 "rate limit
+ *  observado" + parecer #367 §7): cota por usuário autenticado
+ *  compartilhada entre os 3 GETs — enumeração de slugs fica cara
+ *  mesmo para elegíveis; navegação humana normal fica muito abaixo. */
+const limiteLeituraPublica = limiteUsuario({
+  nome: "internet-publica-leitura", janelaMs: 60_000, max: 60,
+});
 
 const campanhaId = (req: Request) => req.params.campaignId as string;
 
@@ -72,7 +81,7 @@ const querySitesSchema = z.object({
  *  filtro prefixo opcional em `nome` (?q=). Cada item traz o dono
  *  (handle/displayName) e a contagem de páginas PUBLICADAS — rascunho,
  *  retirado e arquivado nunca contam para o leitor. */
-internetPublicaRouter.get("/sites", requirePapel("mestre", "jogador"), async (req, res) => {
+internetPublicaRouter.get("/sites", requirePapel("mestre", "jogador"), limiteLeituraPublica, async (req, res) => {
   const cid = campanhaId(req);
   const leitor = await exigirLeitorPublico(req, res, cid);
   if (!leitor) return;
@@ -134,7 +143,7 @@ internetPublicaRouter.get("/sites", requirePapel("mestre", "jogador"), async (re
 /** GET /api/campaigns/:campaignId/internet/sites/:slug — detalhe do
  *  site + menu derivado das páginas PUBLICADAS (D13-a: sem editor de
  *  menu nesta fatia). Site arquivado ou de outra campanha → 404. */
-internetPublicaRouter.get("/sites/:slug", requirePapel("mestre", "jogador"), async (req, res) => {
+internetPublicaRouter.get("/sites/:slug", requirePapel("mestre", "jogador"), limiteLeituraPublica, async (req, res) => {
   const cid = campanhaId(req);
   const leitor = await exigirLeitorPublico(req, res, cid);
   if (!leitor) return;
@@ -177,7 +186,7 @@ internetPublicaRouter.get("/sites/:slug", requirePapel("mestre", "jogador"), asy
  *  (a fronteira "visível-antes vs nunca-visível" de estados honestos
  *  fica para a fatia de publicações — aqui não há como distinguir sem
  *  vazar existência). */
-internetPublicaRouter.get("/sites/:slug/paginas/:pageSlug", requirePapel("mestre", "jogador"), async (req, res) => {
+internetPublicaRouter.get("/sites/:slug/paginas/:pageSlug", requirePapel("mestre", "jogador"), limiteLeituraPublica, async (req, res) => {
   const cid = campanhaId(req);
   const leitor = await exigirLeitorPublico(req, res, cid);
   if (!leitor) return;

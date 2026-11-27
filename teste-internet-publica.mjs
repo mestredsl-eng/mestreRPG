@@ -236,6 +236,27 @@ try {
 
   // j1 NÃO é membro de B → papel negado antes mesmo do 404
   t("j1 em campanha B → 403 (sem membership)", (await APIB("GET", "/sites", j1.cookie)).status === 403);
+
+  // ================= RATE LIMIT (aceite #387 "rate limit observado") =========
+  sec("H. Rate limit — cota por usuário nas leituras públicas");
+
+  // rajada no MESMO usuário: a cota compartilhada dos 3 GETs (60/min)
+  // precisa produzir 429 — enumeração de slugs fica cara. Respostas
+  // só podem ser 200 ou 429, nunca 5xx.
+  {
+    let viu429 = false, viu5xx = false, total = 0;
+    for (let i = 0; i < 70 && !viu429; i++) {
+      const r = await API("GET", "/sites", j1.cookie);
+      total++;
+      if (r.status === 429) viu429 = true;
+      if (r.status >= 500) viu5xx = true;
+    }
+    t("rajada gera 429 dentro de 70 requests", viu429, `total=${total}`);
+    t("rate limit nunca responde 5xx", !viu5xx);
+    // usuário diferente tem cota própria — j2 ainda lê
+    const dirJ2 = await API("GET", "/sites", j2.cookie);
+    t("cota é por usuário (j2 não herda o 429 de j1)", dirJ2.status === 200, `status=${dirJ2.status}`);
+  }
 } finally {
   if (proc) await encerrarServidor(proc);
   console.log(`\n${pass} ok, ${fail} falhas`);
