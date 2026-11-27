@@ -221,11 +221,19 @@ try {
 
   definirEnv("1111");
   writeFileSync(cfgPorta, JSON.stringify({ porta: 4567 }));
-  t("servidor.json prevalece sobre MESTRE_PORTA", resolverPortaServidor(repoPorta).porta === 4567);
+  t("MESTRE_PORTA prevalece sobre servidor.json (ambos divergentes)", resolverPortaServidor(repoPorta).porta === 1111);
+  t("origem reportada = MESTRE_PORTA", resolverPortaServidor(repoPorta).origem === "MESTRE_PORTA");
+  definirEnv(undefined);
+  t("sem env → porta vem do servidor.json", resolverPortaServidor(repoPorta).porta === 4567);
+  t("origem reportada = servidor.json", resolverPortaServidor(repoPorta).origem === "servidor.json");
+  definirEnv("1111");
   writeFileSync(cfgPorta, JSON.stringify({ host: "x" })); // sem porta → env
   t("JSON sem 'porta' → usa MESTRE_PORTA", resolverPortaServidor(repoPorta).porta === 1111);
   writeFileSync(cfgPorta, "{invalido");
-  t("JSON inválido → padrão (env)", resolverPortaServidor(repoPorta).porta === 1111);
+  t("JSON inválido → env prevalece", resolverPortaServidor(repoPorta).porta === 1111);
+  definirEnv("abc"); // env inválida → NaN → cai no JSON
+  writeFileSync(cfgPorta, JSON.stringify({ porta: 4567 }));
+  t("MESTRE_PORTA inválida → porta do JSON", resolverPortaServidor(repoPorta).porta === 4567);
   definirEnv(undefined);
   writeFileSync(cfgPorta, "{invalido");
   rmSync(cfgPorta, { force: true }); // ausente → 3001
@@ -468,17 +476,19 @@ try {
     t(".bat falha → auto-update executou (marker)", existsSync(ctx.marker));
     t(".bat falha → lock LIBERADO", !existsSync(lockBat(ctx)), lockBat(ctx));
 
-    // d) servidor ativo na porta efetiva (servidor.json) → exit 0, sem updater
+    // d) servidor ativo na porta efetiva → exit 0, sem updater.
+    // Precedência env > json > 3001: MESTRE_PORTA aponta para o servidor
+    // vivo; json.porta divergente é ignorado (mesma regra de config.ts).
     ctx = prepararRaizBat("ja-no-ar");
     mkdirSync(join(ctx.dir, "configuracao"), { recursive: true });
     const srv = createServer((req, res) => { res.writeHead(200); res.end("ok"); });
     await new Promise((res2) => srv.listen(0, "127.0.0.1", res2));
     const portaSrv = srv.address().port;
-    writeFileSync(join(ctx.dir, "configuracao", "servidor.json"), JSON.stringify({ porta: portaSrv }));
-    ctx.env.MESTRE_PORTA = "39992"; // env ignorada: JSON prevalece
+    writeFileSync(join(ctx.dir, "configuracao", "servidor.json"), JSON.stringify({ porta: 39993 }));
+    ctx.env.MESTRE_PORTA = String(portaSrv); // env prevalece → sonda a porta viva
     try {
       r = await rodarBatAsync(ctx);
-      t(".bat com servidor na porta do JSON → exit 0", r.status === 0, `status=${r.status} ${r.stdout.slice(-300)}`);
+      t(".bat com servidor na porta efetiva → exit 0", r.status === 0, `status=${r.status} ${r.stdout.slice(-300)}`);
       t(".bat servidor ativo → updater NÃO rodou", !existsSync(ctx.marker));
       t(".bat servidor ativo → nenhum lock criado", !existsSync(lockBat(ctx)));
     } finally {

@@ -77,9 +77,9 @@ try {
   } else {
     console.log("== E2E oficial: BAT real sobre instalação 1.0.8 em fixture descartável ==");
 
-    // Porta sorteada ANTES da extração: configuracao/servidor.json
-    // (rastreado, porta 3001) tem precedência sobre MESTRE_PORTA — sem o
-    // patch abaixo o fixture colidiria com um servidor dev na 3001.
+    // Porta sorteada ANTES da extração: MESTRE_PORTA e
+    // configuracao/servidor.json recebem a mesma porta efetiva — sem
+    // isso o fixture colidiria com um servidor dev na 3001.
     const PORTA = await portaLivre();
     const BASE = `http://127.0.0.1:${PORTA}`;
 
@@ -93,9 +93,9 @@ try {
       && existsSync(join(FIX, "scripts", "adotar-legado.mjs"))
       && !existsSync(join(FIX, ".git")));
 
-    // Porta efetiva do fixture: json.porta prevalece sobre MESTRE_PORTA
-    // (mesma precedência de servidor/src/config.ts) — aponta para a
-    // porta livre sorteada para não depender da 3001 estar ocupada.
+    // Porta efetiva do fixture: MESTRE_PORTA (env) e json.porta recebem
+    // o MESMO valor — a precedência env > json > 3001 de config.ts e
+    // boot-lock.mjs é irrelevante aqui; o objetivo é só desviar da 3001.
     {
       const cfgPath = join(FIX, "configuracao", "servidor.json");
       const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
