@@ -120,9 +120,10 @@ leitura — mutações são mais caras; enumeração de slugs continua cara).
 
 `POST /sites/:slug/arquivar` e `POST /sites/:slug/restaurar`
 
-- Dono da conta ou mestre, ambos sujeitos à autorização/gate vigente;
-  transição `ativo ↔ arquivado`. Mestre não ganha bypass do gate nem
-  permissão para editar conteúdo.
+- Titular da conta, em ação diegética: revalida titularidade e gate P5.
+  Mestre administrativo: membership `mestre` ativa, sem conta de
+  personagem/dispositivo, limitado a arquivar/restaurar. Nenhum dos dois
+  pode usar esta rota para editar conteúdo.
 - Site arquivado some do diretório/leitura pública (read slice já filtra
   `status="ativo"` — invariante preservada, zero mudança no GET)
 - Audit `internet.site_arquivado` / `internet.site_restaurado` com
@@ -198,8 +199,10 @@ POST /sites/:slug/paginas/:pageSlug/publicar
 `POST /sites/:slug/paginas/:pageSlug/arquivar` e
 `POST /sites/:slug/paginas/:pageSlug/restaurar`
 
-- Autor da página ou Mestre; Mestre pode somente moderar, nunca
-  reescrever conteúdo. Ambos revalidam autorização/gate P5.
+- Autor da página, em ação diegética: revalida conta, titularidade e
+  gate P5. Mestre administrativo: membership `mestre` ativa, sem conta
+  de personagem/dispositivo, limitado a arquivar/restaurar. Mestre nunca
+  reescreve conteúdo.
 - Body exige `{ expectedVersion }`; versão divergente →
   `409 versao_desatualizada`.
 - Arquivar: qualquer estado permitido → `arquivado`. Restaurar:
@@ -325,8 +328,10 @@ registro de auditoria no banco.
 
 ## Decisões técnicas fechadas para a implementação
 
-- Gate P5 é revalidado em **toda** mutação, inclusive rascunhos e
-  moderação; não há exceção para trabalho privado.
+- Gate P5 é revalidado em **toda mutação diegética de personagem**,
+  inclusive rascunhos e edição privada. A moderação administrativa do
+  Mestre é a única exceção: membership ativa, sem conta de personagem,
+  limitada a arquivar/restaurar site/página; não cria nem edita conteúdo.
 - `publishedAt` registra a primeira publicação. Re-publicações não
   substituem a data original; `updatedAt` registra alterações
   posteriores.
