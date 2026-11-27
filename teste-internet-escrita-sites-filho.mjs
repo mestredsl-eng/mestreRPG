@@ -366,6 +366,105 @@ try {
     }
   }
 
+  // ---------- E9b. Gate P5 revalidado em toda escrita de personagem (SITE-13) ----------
+  sec("E9b. P5 — revogação do dispositivo bloqueia toda mutação diegética");
+  {
+    const slugJ4 = "herdado-j4";
+    const slugRestore = "p5-restaura-site-" + crypto.randomUUID().slice(0, 5);
+
+    // Pré-condições: titular novo herdou conta/personagem e ainda tem gate.
+    const siteAntes = await api(BASE, C.campId, J4, "GET", `/sites/${slugJ4}`);
+    t("SITE-13 setup: titular novo lê o próprio site", siteAntes.status === 200, `status=${siteAntes.status}`);
+
+    const rRascunho = await api(BASE, C.campId, J4, "POST", `/sites/${slugJ4}/paginas`,
+      { slug: "p5-rascunho", titulo: "Rascunho gate", corpo: "privado" });
+    const rPublicada = await api(BASE, C.campId, J4, "POST", `/sites/${slugJ4}/paginas`,
+      { slug: "p5-publicada", titulo: "Publicada gate", corpo: "publico", statusInicial: "publicado" });
+    const rRetirada = await api(BASE, C.campId, J4, "POST", `/sites/${slugJ4}/paginas`,
+      { slug: "p5-retirada", titulo: "Retirada gate", corpo: "publico", statusInicial: "publicado" });
+    const rArquivada = await api(BASE, C.campId, J4, "POST", `/sites/${slugJ4}/paginas`,
+      { slug: "p5-arquivada", titulo: "Arquivada gate", corpo: "privado" });
+    const paginasPreparadas = [rRascunho, rPublicada, rRetirada, rArquivada]
+      .every((r) => r.status === 201 || r.status === 200);
+    t("SITE-13 setup: páginas draft/publicadas criadas antes de revogar gate", paginasPreparadas,
+      [rRascunho.status, rPublicada.status, rRetirada.status, rArquivada.status].join(","));
+
+    if (paginasPreparadas) {
+      const archVer = versionPagina(slugJ4, "p5-arquivada");
+      const arquivarPreparacao = await api(BASE, C.campId, J4, "POST",
+        `/sites/${slugJ4}/paginas/p5-arquivada/arquivar`, { expectedVersion: archVer });
+      t("SITE-13 setup: página de teste ficou arquivada",
+        arquivarPreparacao.status === 200 || arquivarPreparacao.status === 201,
+        `status=${arquivarPreparacao.status}`);
+    }
+
+    const rSiteRestore = await api(BASE, C.campId, J4, "POST", "/sites",
+      { slug: slugRestore, nome: "Site para teste de gate de restauração" });
+    const slugRestoreCriado = rSiteRestore.json?.site?.slug ?? slugRestore;
+    const rSiteArchive = await api(BASE, C.campId, J4, "POST", `/sites/${slugRestoreCriado}/arquivar`);
+    t("SITE-13 setup: site de teste arquivado antes de revogar gate",
+      (rSiteRestore.status === 201 || rSiteRestore.status === 200) &&
+      (rSiteArchive.status === 200 || rSiteArchive.status === 201),
+      `create=${rSiteRestore.status} archive=${rSiteArchive.status}`);
+
+    // O personagem perde o dispositivo: gateInternetDoPersonagem deve falhar
+    // mesmo com conta ativa, ficha/requisitos e ownership preservados.
+    comDb((db) => db.prepare("delete from inventory_entries where character_id=?").run(ch3));
+
+    const tentativas = [
+      ["metadados do site", () => api(BASE, C.campId, J4, "PATCH", `/sites/${slugJ4}`, { nome: "não pode editar" })],
+      ["criação de rascunho", () => api(BASE, C.campId, J4, "POST", `/sites/${slugJ4}/paginas`,
+        { slug: "p5-negado-criacao", titulo: "Não", corpo: "não" })],
+      ["edição de página", () => api(BASE, C.campId, J4, "PATCH", `/sites/${slugJ4}/paginas/p5-publicada`,
+        { corpo: "não pode editar", expectedVersion: 1 })],
+      ["publicação de rascunho", () => api(BASE, C.campId, J4, "POST", `/sites/${slugJ4}/paginas/p5-rascunho/publicar`,
+        { expectedVersion: 1 })],
+      ["retirada de página", () => api(BASE, C.campId, J4, "POST", `/sites/${slugJ4}/paginas/p5-retirada/retirar`,
+        { expectedVersion: 1 })],
+      ["arquivamento por autor", () => api(BASE, C.campId, J4, "POST", `/sites/${slugJ4}/paginas/p5-publicada/arquivar`,
+        { expectedVersion: 1 })],
+      ["restauração de página", () => api(BASE, C.campId, J4, "POST", `/sites/${slugJ4}/paginas/p5-arquivada/restaurar`,
+        { expectedVersion: 2 })],
+      ["restauração de site", () => api(BASE, C.campId, J4, "POST", `/sites/${slugRestoreCriado}/restaurar`)],
+    ];
+    const negados = [];
+    for (const [nome, executar] of tentativas) {
+      const r = await executar();
+      negados.push(r.status === 403);
+      t(`SITE-13: gate revogado bloqueia ${nome}`, r.status === 403, `status=${r.status}`);
+    }
+
+    // Nenhuma tentativa negada pode ter alterado conteúdo, estado ou versão.
+    const pgPub = snapshotPagina(slugJ4, "p5-publicada");
+    const pgRasc = snapshotPagina(slugJ4, "p5-rascunho");
+    const pgRet = snapshotPagina(slugJ4, "p5-retirada");
+    const pgArq = snapshotPagina(slugJ4, "p5-arquivada");
+    const siteRestoreStatus = comDb((db) => db.prepare("select status from internet_sites where slug=?").get(slugRestoreCriado)?.status);
+    const siteJ4Nome = comDb((db) => db.prepare("select nome from internet_sites where slug=?").get(slugJ4)?.nome);
+    t("SITE-13: recusas não alteram conteúdo/status/version",
+      negados.every(Boolean) &&
+      pgPub?.corpo === "publico" && pgPub?.status === "publicado" && pgPub?.version === 1 &&
+      pgRasc?.status === "rascunho" && pgRasc?.version === 1 &&
+      pgRet?.status === "publicado" && pgRet?.version === 1 &&
+      pgArq?.status === "arquivado" && pgArq?.version === 2 &&
+      siteRestoreStatus === "arquivado" && siteJ4Nome === "Herdado",
+      `pub=${JSON.stringify(pgPub)} draft=${JSON.stringify(pgRasc)} withdraw=${JSON.stringify(pgRet)} archive=${JSON.stringify(pgArq)} site=${siteRestoreStatus}/${siteJ4Nome}`);
+
+    // Devolver o dispositivo recupera o gate sem trocar conta/autor.
+    darNotebook(ch3);
+    const rSiteRestaurado = await api(BASE, C.campId, J4, "POST",
+      `/sites/${slugRestoreCriado}/restaurar`);
+    t("SITE-13: após recuperar dispositivo, titular volta a restaurar site",
+      rSiteRestaurado.status === 200 || rSiteRestaurado.status === 201,
+      `status=${rSiteRestaurado.status}`);
+    const vArq = versionPagina(slugJ4, "p5-arquivada");
+    const rPaginaRestaurada = await api(BASE, C.campId, J4, "POST",
+      `/sites/${slugJ4}/paginas/p5-arquivada/restaurar`, { expectedVersion: vArq });
+    t("SITE-13: após recuperar dispositivo, autor volta a restaurar página",
+      rPaginaRestaurada.status === 200 || rPaginaRestaurada.status === 201,
+      `status=${rPaginaRestaurada.status}`);
+  }
+
   // ---------- E10. Concorrência / idempotência (SITE-11) ----------
   sec("E10. Concorrência — expectedVersion evita lost-update");
   {
