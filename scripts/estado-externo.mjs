@@ -364,6 +364,70 @@ export function removerProvisionamento(repoDir, env = process.env) {
   rmSync(join(dirEstado(repoDir, env), ARQUIVO_PROVISIONAMENTO), { force: true });
 }
 
+// ---------- intenção de vínculo de identidade (Issue #380, L4) ----------
+// Artefato single-slot gravado atomicamente ANTES de qualquer mutação do
+// banco na ordem canônica INTENÇÃO → linha SQLite → recibo → consumo.
+// Tipos: "vinculacao-inicial" (bootstrap/verify-once) e
+// "reatribuicao-restore" (recibo de restauração do fluxo oficial, com
+// campos de fase/hashes acrescentados pelo chamador).
+export const ARQUIVO_INTENCAO_VINCULACAO = "intencao-vinculacao.json";
+const TIPOS_INTENCAO_VINCULACAO = new Set(["vinculacao-inicial", "reatribuicao-restore"]);
+
+/** Grava a intenção de vínculo — o uuid do banco é FIXADO aqui e nunca
+ *  regenerado (idempotência por construção). Single-slot: chamadores
+ *  garantem que não existe intenção pendente (a recuperação roda antes). */
+export function gravarIntencaoVinculacao(repoDir, dados, env = process.env) {
+  return gravarEstado(repoDir, ARQUIVO_INTENCAO_VINCULACAO, {
+    protocolo: "identidade-vinculacao",
+    versao: 1,
+    criadoEm: new Date().toISOString(),
+    ...dados,
+  }, env);
+}
+
+/** Leitura NÃO destrutiva da intenção — mesmo contrato de validação dos
+ *  demais artefatos: ok | ausente | corrompido | incompativel |
+ *  divergente | invalido. */
+export function lerIntencaoVinculacao(repoDir, env = process.env) {
+  const caminho = join(dirEstado(repoDir, env), ARQUIVO_INTENCAO_VINCULACAO);
+  if (!existsSync(caminho)) return { status: "ausente" };
+  const dados = lerJsonCru(caminho);
+  if (!dados || typeof dados !== "object" || Array.isArray(dados)) return { status: "corrompido" };
+  if (dados.protocoloVersao !== PROTOCOLO_VERSAO) return { status: "incompativel" };
+  if (dados.instalacaoId !== instalacaoId(repoDir)) return { status: "divergente" };
+  if (dados.repoCanon !== caminhoCanonico(repoDir)) return { status: "divergente" };
+  if (dados.protocolo !== "identidade-vinculacao" || dados.versao !== 1
+      || !TIPOS_INTENCAO_VINCULACAO.has(dados.tipo)) {
+    return { status: "invalido" };
+  }
+  return { status: "ok", dados };
+}
+
+/** Consome a intenção após a convergência (recibo gravado/atualizado). */
+export function consumirIntencaoVinculacao(repoDir, env = process.env) {
+  rmSync(join(dirEstado(repoDir, env), ARQUIVO_INTENCAO_VINCULACAO), { force: true });
+}
+
+/** sha256 do recibo vigente — âncora da intenção ("reciboSha256NaCriacao").
+ *  null quando não há recibo (estados pré-recibo B1/B2). */
+export function sha256ReciboInstalacao(repoDir, env = process.env) {
+  const caminho = join(dirEstado(repoDir, env), ARQUIVO_RECIBO_INSTALACAO);
+  if (!existsSync(caminho)) return null;
+  try { return createHash("sha256").update(readFileSync(caminho)).digest("hex"); }
+  catch { return null; }
+}
+
+/** Atualiza o recibo de instalação preservando TODOS os campos existentes
+ *  (tipo, criadoEm, origem, esquemaLegado...) e aplicando `patch` por cima.
+ *  Uso: regravação pós-migrate de assinaturaSchema/instalacaoIdBanco
+ *  (Adendo A1 P1-3) e conclusão de vínculo em recibo legado. */
+export function atualizarReciboInstalacao(repoDir, env = process.env, patch = {}) {
+  const atual = lerReciboInstalacao(repoDir, env);
+  if (atual.status !== "ok") return { atualizado: false, motivo: `recibo-${atual.status}` };
+  gravarEstado(repoDir, ARQUIVO_RECIBO_INSTALACAO, { ...atual.dados, ...patch }, env);
+  return { atualizado: true };
+}
+
 /** Diagnóstico NÃO destrutivo do estado de instalação — usado para
  *  mensagens fail-closed e pela avaliação de boot. Retorno:
  *  "primeiro-bootstrap"      → autorização válida ainda não consumida;
@@ -699,10 +763,10 @@ export function autorizarPrimeiroBootstrap(repoDir, env = process.env) {
  * { concluido:true, motivo:"recibo-gravado", recibo } |
  * { concluido:false, motivo }.
  */
-export function concluirBootstrapAposHealth(repoDir, env = process.env, bancoComDados = false) {
+export function concluirBootstrapAposHealth(repoDir, env = process.env, bancoComDados = false, dadosExtra = {}) {
   const diag = diagnosticarBootstrap(repoDir, env);
   if (diag !== "bootstrap-interrompido") return { concluido: false, motivo: diag };
   if (bancoComDados !== true) return { concluido: false, motivo: "banco-nao-comprovado" };
-  const recibo = gravarReciboInstalacao(repoDir, env);
+  const recibo = gravarReciboInstalacao(repoDir, env, dadosExtra);
   return { concluido: true, motivo: "recibo-gravado", recibo };
 }

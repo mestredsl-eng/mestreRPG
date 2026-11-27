@@ -269,7 +269,8 @@ async function concluirBootstrapSePossivel() {
     const { pathToFileURL } = await import("node:url");
     const { join } = await import("node:path");
     const mod = await import(pathToFileURL(join(RAIZ, "scripts", "estado-externo.mjs")).href) as {
-      concluirBootstrapAposHealth(repoDir: string, env?: NodeJS.ProcessEnv, bancoComDados?: boolean): { concluido: boolean; motivo?: string };
+      concluirBootstrapAposHealth(repoDir: string, env?: NodeJS.ProcessEnv, bancoComDados?: boolean, dadosExtra?: Record<string, unknown>): { concluido: boolean; motivo?: string };
+      diagnosticarBootstrap(repoDir: string, env?: NodeJS.ProcessEnv): string;
     };
     let bancoComDados = false;
     try {
@@ -279,7 +280,51 @@ async function concluirBootstrapSePossivel() {
         bancoComDados = (row?.c ?? 0) > 0;
       }
     } catch { bancoComDados = false; }
-    const r = mod.concluirBootstrapAposHealth(RAIZ, process.env, bancoComDados);
+
+    // Issue #380 (L4): vínculo de identidade ANTES do recibo —
+    // ordem canônica intenção → linha SQLite → recibo → consumo.
+    // O uuid é fixado na intenção; id bem-formado preexistente no banco
+    // é preservado (clone de instalação adotada). Falha no vínculo não
+    // impede a tentativa de recibo legado — o verify-once do migrate
+    // reattempta na próxima passada (degradação logada, nunca silenciosa).
+    let dadosRecibo: Record<string, unknown> = {};
+    try {
+      const diag = mod.diagnosticarBootstrap(RAIZ, process.env);
+      if (diag === "bootstrap-interrompido" && bancoComDados) {
+        const { randomUUID } = await import("node:crypto");
+        const {
+          carregarEstadoExterno, prepararIntencao, concluirIntencao,
+          lerInstalacaoIdBanco, gravarInstalacaoIdBanco, instalacaoIdBancoValido,
+        } = await import("./lib/identidade-banco.js");
+        const { assinaturaSchemaCorrente } = await import("./lib/schema-reconhecedor.js");
+        const estado = await carregarEstadoExterno();
+        if (estado) {
+          const sqlite = (getDb() as unknown as { $client: import("better-sqlite3").Database }).$client;
+          const dbId = lerInstalacaoIdBanco(sqlite);
+          const idFixo = instalacaoIdBancoValido(dbId) ? dbId : randomUUID();
+          prepararIntencao({ estado, tipo: "vinculacao-inicial", idFixo, env: process.env });
+          if (!instalacaoIdBancoValido(dbId)) gravarInstalacaoIdBanco(sqlite, idFixo);
+          const migFolder = process.env.MESTRE_MIGRATIONS_FOLDER
+            ? resolve(process.env.MESTRE_MIGRATIONS_FOLDER)
+            : join(RAIZ, "servidor", "migrations");
+          dadosRecibo = {
+            instalacaoIdBanco: idFixo,
+            assinaturaSchema: assinaturaSchemaCorrente(migFolder).hash,
+          };
+          const r = mod.concluirBootstrapAposHealth(RAIZ, process.env, bancoComDados, dadosRecibo);
+          if (r.concluido) {
+            concluirIntencao({ estado, env: process.env });
+            log("info", "bootstrap concluído — recibo de instalação gravado com identidade", { motivo: r.motivo });
+            return;
+          }
+          log("erro", "recibo de bootstrap não gravado — intenção de vínculo permanece para recuperação", { motivo: r.motivo });
+          return;
+        }
+      }
+    } catch (e) {
+      log("erro", "vínculo de identidade do banco falhou — seguindo para recibo legado", { erro: String(e) });
+    }
+    const r = mod.concluirBootstrapAposHealth(RAIZ, process.env, bancoComDados, dadosRecibo);
     if (r.concluido) log("info", "bootstrap concluído — recibo de instalação gravado", { motivo: r.motivo });
   } catch (e) {
     log("erro", "falha ao avaliar conclusão de bootstrap", { erro: String(e) });
