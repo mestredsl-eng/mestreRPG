@@ -1,6 +1,7 @@
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import Database from "better-sqlite3";
 import { existsSync, statSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDb, CAMINHOS, RAIZ } from "./index.js";
@@ -126,6 +127,98 @@ if (classe === "pendente" || classe === "parcial" || classe === "indeterminado")
   }
 }
 
+// ---------- Issue #380: reconhecedor fail-closed + identidade L4 ----------
+// Gate pré-migrate: bancos com tabelas de usuário (pendente/em-dia) são
+// reconhecidos ANTES de qualquer mutação — journal, hash, estrutura,
+// sentinelas e identidade precisam formar prova coerente. Falha = exit 1
+// sem tocar no banco (o backup pré-migration já foi criado acima quando
+// cabia). Bancos vazio/parcial/indeterminado seguem o fluxo anterior
+// (backup + classificação própria) — não há schema reconhecível a gatear.
+async function gateReconhecimentoPreMigration(): Promise<void> {
+  try {
+    const { reconhecerSchema } = await import("../lib/schema-reconhecedor.js");
+    const {
+      carregarEstadoExterno, recuperarIntencaoPendente,
+    } = await import("../lib/identidade-banco.js");
+
+    // 1. Intenção de vínculo pendente (crash no meio do ciclo
+    //    intenção→linha→recibo→consumo): recupera convergindo ou bloqueia.
+    const estado = await carregarEstadoExterno();
+    if (estado) {
+      const sqlite = new Database(CAMINHOS.banco);
+      try {
+        const rec = recuperarIntencaoPendente({ estado, sqlite, env: process.env });
+        if (rec.status === "bloqueada") {
+          console.error(`[db] identidade do banco bloqueada (${rec.motivo})${rec.detalhe ? ` — ${rec.detalhe}` : ""} — migrações NÃO aplicadas.`);
+          process.exit(1);
+        }
+      } finally {
+        sqlite.close();
+      }
+    }
+
+    // 2. Reconhecimento L1–L4 do candidato como está AGORA.
+    const v = await reconhecerSchema(CAMINHOS.banco, migrationsFolder, process.env);
+    if (!v.ok) {
+      console.error(`[db] schema não reconhecido (${v.motivo})${v.detalhe ? ` — ${v.detalhe}` : ""} — migrações NÃO aplicadas.`);
+      process.exit(1);
+    }
+    console.log(`[db] schema reconhecido: ${v.familia} (${v.migrations} migrations, identidade ${v.evidencias.identidadeBanco})`);
+  } catch (e) {
+    // Falha do próprio gate (módulo indisponível, I/O) é fail-closed.
+    console.error(`[db] gate de reconhecimento falhou (${String(e)}) — migrações NÃO aplicadas.`);
+    process.exit(1);
+  }
+}
+
+// ---------- Issue #380: verify-once + refresh do recibo (P1-3) ----------
+// Após migrate bem-sucedido, com recibo de instalação concluída:
+//   - recibo legado sem id + banco sem id ⇒ verify-once (TOFU declarado):
+//     intenção → linha SQLite → recibo atualizado → consumo;
+//   - ids já vinculados ⇒ só regrava assinaturaSchema/instalacaoIdBanco
+//     (boot subsequente a migrate legítimo nunca bloqueia por recibo
+//     defasado — propriedade exigida pelo Adendo A1 P1-3).
+async function posMigracaoIdentidade(sqlite: Database.Database): Promise<void> {
+  const { carregarEstadoExterno } = await import("../lib/identidade-banco.js");
+  const estado = await carregarEstadoExterno();
+  if (!estado) return;
+  const recibo = estado.lerReciboInstalacao(RAIZ, process.env);
+  if (recibo.status !== "ok") return; // primeiro bootstrap: vínculo no listen
+
+  const {
+    lerInstalacaoIdBanco, gravarInstalacaoIdBanco, instalacaoIdBancoValido,
+    prepararIntencao, concluirIntencao,
+  } = await import("../lib/identidade-banco.js");
+  const { assinaturaSchemaCorrente } = await import("../lib/schema-reconhecedor.js");
+
+  let dbId = lerInstalacaoIdBanco(sqlite);
+  const recId = typeof recibo.dados?.instalacaoIdBanco === "string"
+    ? (recibo.dados.instalacaoIdBanco as string)
+    : null;
+
+  if (!instalacaoIdBancoValido(dbId) && !recId) {
+    // Verify-once: recibo legado sem id + banco sem id.
+    const idFixo = randomUUID();
+    prepararIntencao({ estado, tipo: "vinculacao-inicial", idFixo, env: process.env });
+    gravarInstalacaoIdBanco(sqlite, idFixo);
+    dbId = idFixo;
+    estado.atualizarReciboInstalacao(RAIZ, process.env, { instalacaoIdBanco: idFixo });
+    concluirIntencao({ estado, env: process.env });
+    console.log("[db] identidade do banco atribuída (verify-once — TOFU declarado)");
+  } else if (instalacaoIdBancoValido(dbId) && recId && dbId !== recId) {
+    console.error("[db] instalacaoIdBanco do banco diverge do recibo — bloqueio fail-closed.");
+    process.exit(1);
+  }
+
+  // P1-3: recibo sempre reflete o schema corrente pós-migrate.
+  const { hash } = assinaturaSchemaCorrente(migrationsFolder);
+  const idVigente = instalacaoIdBancoValido(dbId) ? dbId : recId;
+  estado.atualizarReciboInstalacao(RAIZ, process.env, {
+    assinaturaSchema: hash,
+    ...(idVigente ? { instalacaoIdBanco: idVigente } : {}),
+  });
+}
+
 if (precisaBackup) {
   try {
     const { criarBackupPreUpdate } = await import("./backup-pre-update.js");
@@ -140,6 +233,12 @@ if (precisaBackup) {
     console.error(`[db] Backup pré-migration lançou exceção (${String(e)}) — migrações NÃO aplicadas.`);
     process.exit(1);
   }
+}
+
+// Issue #380: gate fail-closed DEPOIS do backup (o snapshot forense do
+// estado anômalo é preservado) e ANTES de qualquer mutação no banco.
+if (classe === "pendente" || classe === "em-dia") {
+  await gateReconhecimentoPreMigration();
 }
 
 // Instância ÚNICA: getDb() reutiliza a conexão que o backup
@@ -167,5 +266,14 @@ try {
 const violacoesFk = sqlite.pragma("foreign_key_check") as unknown[];
 if (violacoesFk.length > 0) {
   throw new Error(`[db] foreign_key_check falhou após migrações: ${violacoesFk.length} violação(ões)`);
+}
+// Issue #380: verify-once/refresh do recibo + assinaturaSchema pós-migrate.
+// Falha aqui é fail-closed — o migrate já aplicou, mas boot não pode
+// seguir com identidade/recibo inconsistente.
+try {
+  await posMigracaoIdentidade(sqlite);
+} catch (e) {
+  console.error(`[db] identidade pós-migration falhou (${String(e)}) — interrompendo.`);
+  process.exit(1);
 }
 console.log(`[db] Migrações aplicadas em ${CAMINHOS.banco}`);

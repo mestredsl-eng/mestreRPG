@@ -145,7 +145,7 @@ try {
     t("nenhum backup novo", backupsPreUpdate(c.dir).length === antes, `${antes} → ${backupsPreUpdate(c.dir).length}`);
   }
 
-  sec("3B. Contagem completa com watermark antigo — backup ainda obrigatório");
+  sec("3B. Contagem completa com watermark antigo — gate #380 bloqueia journal não-canônica");
   {
     const c = cenario();
     bootstrapar(c);
@@ -157,8 +157,10 @@ try {
 
     // Duplica uma entrada antiga: COUNT(*) agora iguala o tamanho do
     // journal completo, mas o maior created_at continua no penúltimo
-    // timestamp. O Drizzle aplica a última migration mesmo assim; logo
-    // o preflight precisa criar backup antes de invocar o migrator.
+    // timestamp. Antes da #380 o Drizzle aplicava a última migration;
+    // agora o reconhecedor fail-closed rejeita a row extra na comparação
+    // posicional (rowid×entries) — journal não-canônica bloqueia ANTES
+    // do migrate, com backup forense já criado.
     const db = new Database(c.env.MESTRE_BANCO);
     try {
       const ultima = db.prepare("select created_at from __drizzle_migrations order by created_at desc limit 1").get();
@@ -175,13 +177,12 @@ try {
     const antes = backupsPreUpdate(c.dir).length;
     const r2 = migrar(c.env);
     const depois = backupsPreUpdate(c.dir);
-    t("migração pendente executa", r2.status === 0 && aplicadas(c.env.MESTRE_BANCO) === totalJournal + 1,
-      `status=${r2.status} aplicadas=${aplicadas(c.env.MESTRE_BANCO)}`);
-    t("backup criado antes da migration", depois.length === antes + 1);
-    const backupLog = String(r2.stdout).indexOf("Backup pré-migration criado e validado");
-    const migrateLog = String(r2.stdout).indexOf("Migrações aplicadas");
-    t("log comprova backup antes do migrate", backupLog >= 0 && migrateLog > backupLog,
-      `backup=${backupLog} migrate=${migrateLog}`);
+    t("gate #380 bloqueia journal não-canônica (exit != 0)", r2.status !== 0,
+      `status=${r2.status} stderr=${String(r2.stderr).slice(-200)}`);
+    t("zero migrations aplicadas no banco bloqueado", aplicadas(c.env.MESTRE_BANCO) === totalJournal,
+      `aplicadas=${aplicadas(c.env.MESTRE_BANCO)}`);
+    t("backup forense criado antes do bloqueio", depois.length === antes + 1,
+      `${antes} → ${depois.length}`);
     const man = depois.at(-1);
     t("manifesto do backup presente", !!man && existsSync(join(man, "manifesto.json")));
   }
