@@ -210,3 +210,35 @@
 .internet-pagina-corpo { display: flex; flex-direction: column; gap: 10px; }
 .internet-pagina-corpo p { margin: 0; white-space: pre-line; }
 .internet-pagina-irmaos ul { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+
+/* ---------- Publicações (W4/W5/W8-subset, #365) ---------- */
+.internet-feed-acoes {
+  display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;
+  margin-top: 0.75rem;
+}
+.internet-feed-filtros, .internet-feed-botoes {
+  display: flex; gap: 0.35rem; flex-wrap: wrap;
+}
+.internet-feed-filtros { flex: 1 1 auto; }
+.internet-selo-sistema {
+  font-size: 0.75em; opacity: 0.75; font-style: italic;
+}
+.internet-form-grupo {
+  border: 1px solid var(--borda, #3a3f4a); border-radius: 8px;
+  padding: 0.5rem 0.75rem; margin: 0.5rem 0;
+  display: flex; flex-direction: column; gap: 0.35rem;
+}
+.internet-form-grupo legend { font-size: 0.85em; opacity: 0.8; padding: 0 0.25rem; }
+.internet-form-grupo label { display: flex; gap: 0.4rem; align-items: center; }
+.internet-form-grupo label input[type="text"] { flex: 1; }
+.internet-publicar { display: flex; flex-direction: column; gap: 0.5rem; max-width: 42rem; }
+.internet-publicar label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9em; }
+.internet-publicar input[type="text"], .internet-publicar textarea, .internet-publicar select {
+  font: inherit; padding: 0.4rem 0.5rem; border-radius: 6px;
+  border: 1px solid var(--borda, #3a3f4a); background: transparent; color: inherit;
+}
+.internet-form-erro { color: #e08a8a; font-size: 0.9em; }
+.internet-minha-item { display: flex; align-items: stretch; gap: 0.5rem; }
+.internet-minha-item .internet-conversa-item { flex: 1; }
+.internet-minha-acoes { display: flex; flex-direction: column; gap: 0.3rem; justify-content: center; }
+.internet-minha-acoes .secundario { padding: 0.2rem 0.6rem; font-size: 0.85em; }

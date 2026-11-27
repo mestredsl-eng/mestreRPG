@@ -46,3 +46,70 @@ export interface PaginaPagina<T> {
   /** cursor opaco da próxima página; null = fim. */
   proximoCursor: string | null;
 }
+
+// ---------- Publicações (W4 feed / W5 matéria / W8-subset escrita) ----------
+
+export type TipoPublicacao = "noticia" | "post_perfil";
+export type VisibilidadePublicacao = "campanha" | "contatos";
+export type AutorPublicacao =
+  | { modo: "identificado"; id: string; handle: string; displayName: string }
+  | { modo: "pseudonimo"; nome: string }
+  | null;
+
+export interface PublicacaoResumo {
+  id: string;
+  tipo: TipoPublicacao;
+  titulo: string;
+  autor: AutorPublicacao;
+  origem: "usuario" | "sistema";
+  visibilidade: VisibilidadePublicacao;
+  publicadoEm: string | null;
+  atualizadoEm: string;
+}
+
+export interface PublicacaoDetalhe {
+  id: string;
+  tipo: TipoPublicacao;
+  titulo: string;
+  corpo: string;
+  formato: string;
+  status: "rascunho" | "publicado" | "removido";
+  visibilidade: VisibilidadePublicacao;
+  autorModo: "identificado" | "pseudonimo";
+  pseudoNome: string | null;
+  origem: "usuario" | "sistema";
+  autor: AutorPublicacao;
+  personagemId: string | null;
+  publicadoEm: string | null;
+  criadoEm: string;
+  atualizadoEm: string;
+  // Só presentes para autor/mestre (prévia privilegiada)
+  autorContaId?: string | null;
+  version?: number;
+  retiradoMotivo?: string | null;
+}
+
+export interface MinhaPublicacao {
+  id: string;
+  tipo: TipoPublicacao;
+  titulo: string;
+  status: string;
+  visibilidade: VisibilidadePublicacao;
+  autorModo: string;
+  pseudoNome: string | null;
+  origem: string;
+  publicadoEm: string | null;
+  version: number;
+  criadoEm: string;
+  atualizadoEm: string;
+}
+
+export interface PublicacaoNova {
+  tipo: TipoPublicacao;
+  titulo: string;
+  corpo: string;
+  visibilidade: VisibilidadePublicacao;
+  autorModo?: "identificado" | "pseudonimo";
+  pseudoNome?: string;
+  contaId?: string;
+}

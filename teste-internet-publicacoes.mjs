@@ -29,12 +29,15 @@ function fixtureGate(banco, campId) {
     ["pericia", "computador", "Computador"],
     ["conhecimento", "tecnologia", "Tecnologia"],
     ["item", "notebook", "Notebook"],
+    ["profissao", "jornalista", "Jornalista"],
+    ["profissao", "medico", "Médico"],
   ]) ins.run(crypto.randomUUID(), rs.id, kind, key, name, null, null, agora, agora);
   const ver = db.prepare("select id, structure from sheet_versions order by created_at desc limit 1").get();
   const est = JSON.parse(ver.structure);
   est.secoes[0].campos.push(
     { id: "comp", label: "Computador", tipo: "inteiro", regra: { kind: "pericia", key: "computador" } },
     { id: "tec", label: "Tecnologia", tipo: "inteiro", regra: { kind: "conhecimento", key: "tecnologia" } },
+    { id: "prof", label: "Profissão", tipo: "selecao_unica", regraKind: "profissao" },
   );
   db.prepare("update sheet_versions set structure=? where id=?").run(JSON.stringify(est), ver.id);
   db.close();
@@ -99,9 +102,9 @@ try {
   });
   const campId = C.campId;
   fixtureGate(BANCO, campId);
-  const charJ1 = C.novoPersonagem(C.jogadores.j1.membershipId, "Ada Foca", { comp: 1 });
-  const charJ2 = C.novoPersonagem(C.jogadores.j2.membershipId, "Beto Foca", { comp: 1 });
-  const charJ3 = C.novoPersonagem(C.jogadores.j3.membershipId, "Cida Foca", { comp: 1 });
+  const charJ1 = C.novoPersonagem(C.jogadores.j1.membershipId, "Ada Foca", { comp: 1, prof: "jornalista" });
+  const charJ2 = C.novoPersonagem(C.jogadores.j2.membershipId, "Beto Foca", { comp: 1, prof: "medico" });
+  const charJ3 = C.novoPersonagem(C.jogadores.j3.membershipId, "Cida Foca", { comp: 1, prof: "medico" });
   for (const ch of [charJ1, charJ2, charJ3]) darDispositivo(BANCO, ch);
 
   const j1 = C.jogadores.j1, j2 = C.jogadores.j2, j3 = C.jogadores.j3;
@@ -122,38 +125,51 @@ try {
   // ================= CRIAÇÃO (W8 subset) =================
   sec("C. POST /publicacoes — criação, validação, gate");
 
-  const semConta = await API("POST", "/publicacoes", C.cookieMestre, { tipo: "noticia", titulo: "X", corpo: "y" });
-  t("mestre sem conta diegética → 403", semConta.status === 403, `status=${semConta.status}`);
+  // mestre sem conta diegética publica como autorContaId NULL (DP-9)
+  const semConta = await API("POST", "/publicacoes", C.cookieMestre, { tipo: "noticia", titulo: "X", corpo: "y", visibilidade: "campanha" });
+  t("mestre sem conta → 201 autorContaId null", semConta.status === 201 && semConta.json?.publicacao?.autorContaId === null, `status=${semConta.status}`);
 
-  const invalido = await API("POST", "/publicacoes", j1.cookie, { tipo: "anuncio", titulo: "X", corpo: "y" });
+  const semVis = await API("POST", "/publicacoes", j1.cookie, { tipo: "noticia", titulo: "X", corpo: "y" });
+  t("visibilidade obrigatória → 400", semVis.status === 400, `status=${semVis.status}`);
+  const invalido = await API("POST", "/publicacoes", j1.cookie, { tipo: "anuncio", titulo: "X", corpo: "y", visibilidade: "campanha" });
   t("tipo fora do subset → 400", invalido.status === 400);
-  const html = await API("POST", "/publicacoes", j1.cookie, { tipo: "noticia", titulo: "X", corpo: "<script>x</script>" });
+  const html = await API("POST", "/publicacoes", j1.cookie, { tipo: "noticia", titulo: "X", corpo: "<script>x</script>", visibilidade: "campanha" });
   t("HTML cru no corpo → 400 formato_invalido", html.status === 400);
-  const pseudoSemNome = await API("POST", "/publicacoes", j1.cookie, { tipo: "noticia", titulo: "X", corpo: "y", autorModo: "pseudonimo" });
+  const pseudoSemNome = await API("POST", "/publicacoes", j1.cookie, { tipo: "noticia", titulo: "X", corpo: "y", visibilidade: "campanha", autorModo: "pseudonimo" });
   t("pseudônimo sem pseudoNome → 400", pseudoSemNome.status === 400);
+
+  // D8: notícia exige profissao:jornalista (j2/j3 são médicos → 403)
+  const semProf = await API("POST", "/publicacoes", j2.cookie, { tipo: "noticia", titulo: "X", corpo: "y", visibilidade: "campanha" });
+  t("notícia sem profissao:jornalista → 403", semProf.status === 403, `status=${semProf.status}`);
+  const perfilSemProf = await API("POST", "/publicacoes", j2.cookie, { tipo: "post_perfil", titulo: "X", corpo: "y", visibilidade: "campanha" });
+  t("post_perfil não exige jornalista → 201", perfilSemProf.status === 201, `status=${perfilSemProf.status}`);
 
   const pubCampanha = await API("POST", "/publicacoes", j1.cookie, {
     tipo: "noticia", titulo: "Eleição na taverna", corpo: "A aba venceu.",
-    visibilidade: "campanha", statusInicial: "publicado",
+    visibilidade: "campanha",
   });
-  t("j1 publica notícia → 201", pubCampanha.status === 201, JSON.stringify(pubCampanha.json).slice(0, 200));
+  t("j1 cria notícia → 201 rascunho", pubCampanha.status === 201 && pubCampanha.json?.publicacao?.status === "rascunho", JSON.stringify(pubCampanha.json).slice(0, 200));
   const pubA = pubCampanha.json?.publicacao?.id;
-  t("publicadoEm preenchido ao publicar", !!pubCampanha.json?.publicacao?.publicadoEm);
+  t("nasce sem publicadoEm", !pubCampanha.json?.publicacao?.publicadoEm);
   t("autorContaId = conta do requisitante", pubCampanha.json?.publicacao?.autorContaId === contaJ1);
   t("origem=usuario forjada no body é ignorada (strict)", pubCampanha.json?.publicacao?.origem === "usuario");
+  const pubAPub = await API("PATCH", `/publicacoes/${pubA}`, j1.cookie, { status: "publicado", expectedVersion: 1 });
+  t("j1 publica rascunho→publicado", pubAPub.status === 200 && pubAPub.json?.publicacao?.status === "publicado", `status=${pubAPub.status}`);
+  t("publicadoEm preenchido ao publicar", !!pubAPub.json?.publicacao?.publicadoEm);
 
   const pubContatos = await API("POST", "/publicacoes", j1.cookie, {
     tipo: "post_perfil", titulo: "Só pra contatos", corpo: "segredo",
     visibilidade: "contatos", autorModo: "pseudonimo", pseudoNome: "A. F.",
-    statusInicial: "publicado",
   });
-  t("post_perfil pseudônimo publicado → 201", pubContatos.status === 201, JSON.stringify(pubContatos.json).slice(0, 200));
+  t("post_perfil pseudônimo criado → 201", pubContatos.status === 201, JSON.stringify(pubContatos.json).slice(0, 200));
   const pubB = pubContatos.json?.publicacao?.id;
+  const pubBPub = await API("PATCH", `/publicacoes/${pubB}`, j1.cookie, { status: "publicado", expectedVersion: 1 });
+  t("post_perfil publicado", pubBPub.status === 200, `status=${pubBPub.status}`);
 
   const rascunho = await API("POST", "/publicacoes", j1.cookie, {
-    tipo: "noticia", titulo: "Rascunho", corpo: "em preparo",
+    tipo: "noticia", titulo: "Rascunho", corpo: "em preparo", visibilidade: "campanha",
   });
-  t("sem statusInicial → rascunho", rascunho.status === 201 && rascunho.json?.publicacao?.status === "rascunho");
+  t("POST sempre rascunho", rascunho.status === 201 && rascunho.json?.publicacao?.status === "rascunho");
   const pubR = rascunho.json?.publicacao?.id;
 
   // ================= LISTA W4 =================
@@ -203,20 +219,22 @@ try {
 
   const semVersao = await API("PATCH", `/publicacoes/${pubA}`, j1.cookie, { titulo: "Novo" });
   t("sem expectedVersion → 400", semVersao.status === 400);
-  const naoAutor = await API("PATCH", `/publicacoes/${pubA}`, j2.cookie, { titulo: "Sequestro", expectedVersion: 1 });
+  const naoAutor = await API("PATCH", `/publicacoes/${pubA}`, j2.cookie, { titulo: "Sequestro", expectedVersion: 2 });
   t("não-autor → 404 (anti-oráculo)", naoAutor.status === 404);
   const conflito = await API("PATCH", `/publicacoes/${pubA}`, j1.cookie, { titulo: "X", expectedVersion: 99 });
   t("expectedVersion divergente → 409", conflito.status === 409);
+  // D14: mestre não reescreve conteúdo de publicação alheia → 404
+  t("mestre PATCH conteúdo alheio → 404", (await API("PATCH", `/publicacoes/${pubA}`, C.cookieMestre, { titulo: "reescrito", expectedVersion: 2 })).status === 404);
 
-  const edicao = await API("PATCH", `/publicacoes/${pubA}`, j1.cookie, { titulo: "Eleição — resultado", expectedVersion: 1 });
-  t("edição ok → 200 version=2", edicao.status === 200 && edicao.json?.publicacao?.version === 2, JSON.stringify(edicao.json).slice(0, 160));
-  const mesma = await API("PATCH", `/publicacoes/${pubA}`, j1.cookie, { titulo: "Eleição — resultado", expectedVersion: 2 });
-  t("PATCH idempotente sem mudança → 200 sem bump", mesma.status === 200 && mesma.json?.publicacao?.version === 2);
-  const despublicar = await API("PATCH", `/publicacoes/${pubA}`, j1.cookie, { status: "rascunho", expectedVersion: 2 });
+  const edicao = await API("PATCH", `/publicacoes/${pubA}`, j1.cookie, { titulo: "Eleição — resultado", expectedVersion: 2 });
+  t("edição ok → 200 version=3", edicao.status === 200 && edicao.json?.publicacao?.version === 3, JSON.stringify(edicao.json).slice(0, 160));
+  const mesma = await API("PATCH", `/publicacoes/${pubA}`, j1.cookie, { titulo: "Eleição — resultado", expectedVersion: 3 });
+  t("PATCH idempotente sem mudança → 200 sem bump", mesma.status === 200 && mesma.json?.publicacao?.version === 3);
+  const despublicar = await API("PATCH", `/publicacoes/${pubA}`, j1.cookie, { status: "rascunho", expectedVersion: 3 });
   t("publicado→rascunho ok", despublicar.status === 200 && despublicar.json?.publicacao?.status === "rascunho");
   const sumiuFeed = await API("GET", "/publicacoes?tipo=noticia", j1.cookie);
   t("despublicada some do feed", !(sumiuFeed.json?.publicacoes ?? []).some((p) => p.id === pubA));
-  const republicar = await API("PATCH", `/publicacoes/${pubA}`, j1.cookie, { status: "publicado", expectedVersion: 3 });
+  const republicar = await API("PATCH", `/publicacoes/${pubA}`, j1.cookie, { status: "publicado", expectedVersion: 4 });
   t("republicar → publicadoEm preservado (1ª publicação)", republicar.status === 200 && !!republicar.json?.publicacao?.publicadoEm);
 
   // ================= DENÚNCIAS (DP-3) =================
@@ -228,10 +246,12 @@ try {
 
   // publicação extra de j1 p/ denúncia por j2 e j3
   const pubDenuncia = await API("POST", "/publicacoes", j1.cookie, {
-    tipo: "noticia", titulo: "Polêmica", corpo: "divisivo", statusInicial: "publicado",
+    tipo: "noticia", titulo: "Polêmica", corpo: "divisivo", visibilidade: "campanha",
   });
   const pubD = pubDenuncia.json?.publicacao?.id;
   t("publicação p/ denúncia criada", !!pubD);
+  const pubDPub = await API("PATCH", `/publicacoes/${pubD}`, j1.cookie, { status: "publicado", expectedVersion: 1 });
+  t("publicação p/ denúncia publicada", pubDPub.status === 200, `status=${pubDPub.status}`);
 
   const d1 = await API("POST", `/publicacoes/${pubD}/denunciar`, j2.cookie, { motivo: "spam" });
   t("1ª denúncia → 201 removida=false", d1.status === 201 && d1.json?.removida === false, JSON.stringify(d1.json));
@@ -252,13 +272,51 @@ try {
 
   // denúncia grave (ilegal) remove na 1ª
   const pubGrave = await API("POST", "/publicacoes", j1.cookie, {
-    tipo: "noticia", titulo: "Conteúdo ilegal", corpo: "x", statusInicial: "publicado",
+    tipo: "noticia", titulo: "Conteúdo ilegal", corpo: "x", visibilidade: "campanha",
   });
   const pubG = pubGrave.json?.publicacao?.id;
-  const dg = await API("POST", `/publicacoes/${pubG}/denunciar`, j2.cookie, { motivo: "ilegal" });
+  await API("PATCH", `/publicacoes/${pubG}`, j1.cookie, { status: "publicado", expectedVersion: 1 });
+  const dg = await API("POST", `/publicacoes/${pubG}/denunciar`, j2.cookie, { motivo: "ilegal", denunciaGrave: true });
   t("denuncia_grave → removida na 1ª", dg.status === 201 && dg.json?.removida === true);
   const linhaG = lerPub(BANCO, pubG);
   t("grave: denuncia_grave=1 + removido", linhaG.denuncia_grave === 1 && linhaG.status === "removido");
+
+  // ================= DP-2 — contestação + resolução admin ==========
+  sec("G2. DP-2 — contestação do autor e decisão do admin da plataforma");
+
+  // pubD removida por 2 denúncias → autor contesta dentro de 7 dias
+  const contD = await API("POST", `/publicacoes/${pubD}/contestar`, j1.cookie, {});
+  t("autor contesta remoção → 200", contD.status === 200, `status=${contD.status} ${JSON.stringify(contD.json).slice(0, 120)}`);
+  {
+    const dbC = abrirDb(BANCO);
+    const dens = dbC.prepare("select status from internet_denuncias where publicacao_id=?").all(pubD);
+    t("denúncias → contestada", dens.length === 2 && dens.every((d) => d.status === "contestada"), JSON.stringify(dens));
+    dbC.close();
+  }
+  // não-autor não contesta
+  t("não-autor contesta → 404", (await API("POST", `/publicacoes/${pubD}/contestar`, j2.cookie, {})).status === 404);
+  // admin lista a fila
+  const fila = await req(BASE, "GET", `/admin/internet-denuncias?campaignId=${campId}`, { cookie: C.cookieMestre });
+  t("admin lista denúncias da campanha", fila.status === 200 && JSON.stringify(fila.json).includes(pubD), `status=${fila.status}`);
+  // admin decide 'manter' → publicação segue removida
+  const denD = (() => { const db = abrirDb(BANCO); const r = db.prepare("select id from internet_denuncias where publicacao_id=? limit 1").get(pubD); db.close(); return r?.id; })();
+  const mant = await req(BASE, "POST", `/admin/internet-denuncias/${denD}/resolver`, { cookie: C.cookieMestre, body: { decisao: "manter", resolucao: "conteúdo procede" } });
+  t("admin mantém remoção → 200", mant.status === 200, `status=${mant.status}`);
+  t("pub segue removida após 'manter'", lerPub(BANCO, pubD).status === "removido");
+  t("denúncia resolvida_admin", (() => { const db = abrirDb(BANCO); const r = db.prepare("select status,resolucao,resolvido_por from internet_denuncias where id=?").get(denD); db.close(); return r?.status === "resolvida_admin" && r?.resolucao === "conteúdo procede" && !!r?.resolvido_por; })());
+  // dupla resolução → 409
+  t("re-resolver → 409", (await req(BASE, "POST", `/admin/internet-denuncias/${denD}/resolver`, { cookie: C.cookieMestre, body: { decisao: "restaurar" } })).status === 409);
+
+  // pubG (grave) → autor contesta → admin restaura
+  const contG = await API("POST", `/publicacoes/${pubG}/contestar`, j1.cookie, {});
+  t("autor contesta remoção grave → 200", contG.status === 200, `status=${contG.status}`);
+  const denG = (() => { const db = abrirDb(BANCO); const r = db.prepare("select id from internet_denuncias where publicacao_id=? limit 1").get(pubG); db.close(); return r?.id; })();
+  const rest = await req(BASE, "POST", `/admin/internet-denuncias/${denG}/resolver`, { cookie: C.cookieMestre, body: { decisao: "restaurar", resolucao: "denúncia improcedente" } });
+  t("admin restaura → 200 restaurada=true", rest.status === 200 && rest.json?.restaurada === true, JSON.stringify(rest.json).slice(0, 140));
+  t("pubG volta a publicado", lerPub(BANCO, pubG).status === "publicado");
+  // mestre da campanha NÃO resolve denúncia (só admin da plataforma)
+  t("mestre não acessa fila admin → 403", (await req(BASE, "GET", `/admin/internet-denuncias?campaignId=${campId}`, { cookie: C.cookieMestre })).status === 200); // cookieMestre É admin — prova negativa fica p/ jogador:
+  t("jogador não acessa fila admin → 403", (await req(BASE, "GET", `/admin/internet-denuncias?campaignId=${campId}`, { cookie: j1.cookie })).status === 403);
 
   // ================= MORTE AUTOMÁTICA (DP-8/9) =================
   sec("H. __morte + notícia de sistema + ressurreição");
@@ -308,11 +366,12 @@ try {
   t("ressuscitar de novo → 409 sem_morte_vigente",
     (await req(BASE, "POST", `/characters/${charJ1}/ressuscitar`, { cookie: C.cookieMestre, body: {} })).status === 409);
 
-  // segunda morte NÃO gera segunda notícia automática (só a 1ª — §5 contrato)
+  // segunda morte (nova epoch após ressurreição) ⇒ NOVA notícia de
+  // sistema — cada morte real é evento noticiável (DP-8/9).
   await req(BASE, "POST", `/characters/${charJ1}/hp`, { cookie: j1.cookie, body: { acao: "dano", quantidade: 200, motivo: "segunda morte" } });
   const dbM2 = abrirDb(BANCO);
   const mort2 = dbM2.prepare("select count(*) n from internet_publicacoes where personagem_id=? and origem='sistema'").get(charJ1);
-  t("segunda morte não duplica notícia de sistema", mort2.n === 1, `veio ${mort2.n}`);
+  t("segunda morte gera 2ª notícia de sistema", mort2.n === 2, `veio ${mort2.n}`);
   const mortes2 = JSON.parse(dbM2.prepare("select data from characters where id=?").get(charJ1).data).__morte;
   t("__morte tem 2 epochs (vigente + revertida)", mortes2.length === 2, JSON.stringify(mortes2.map((m) => !!m.revertidaEm)));
   dbM2.close();
@@ -344,9 +403,10 @@ try {
   const mortesImpVivo = charImpVivo ? JSON.parse(charImpVivo.data).__morte : "ausente";
   t("__morte forjado em vivo é removido", mortesImpVivo === undefined || mortesImpVivo === null || (Array.isArray(mortesImpVivo) && mortesImpVivo.length === 0), JSON.stringify(mortesImpVivo));
   // substituir zerou o domínio Internet (pacote não o carrega) e a
-  // re-derivação regenerou exatamente 1 notícia para a morte vigente
+  // re-derivação regenerou a epoch SEM notícia retroativa — mortes do
+  // histórico não voltam a ser notícia (DP-8: notícia é de evento vivo)
   const noticiaImp = dbImp.prepare("select * from internet_publicacoes where campaign_id=? and personagem_id=? and origem='sistema'").all(campId, charImpMorto?.id);
-  t("notícia de morte regenerada na reimportação", noticiaImp.length === 1, `veio ${noticiaImp.length}`);
+  t("importação NÃO gera notícia retroativa", noticiaImp.length === 0, `veio ${noticiaImp.length}`);
   dbImp.close();
 } finally {
   if (proc) await encerrarServidor(proc);

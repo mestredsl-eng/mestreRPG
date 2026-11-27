@@ -7,12 +7,12 @@ import {
   ruleSets, ruleDefinitions, itemTemplates, inventoryEntries, equipmentEntries, vehicles,
   financialAccounts, moneyTransactions, shops, shopManagers, shopOffers, shopOrders,
   sessions, turns, chatMessages, rolls, tests, notes, files, folders, noteAttachments,
-  users, internetPublicacoes, auditLogs,
+  users, internetPublicacoes,
   internetAccounts, internetContacts, internetConversations,
   internetDenuncias, internetMessages, internetPages,
   internetParticipantes, internetSites,
 } from "../db/schema.js";
-import { avaliarMorte, noticiaMorteTexto, CHAVE_MORTE } from "./morte.js";
+import { avaliarMorte, CHAVE_MORTE } from "./morte.js";
 import { lerHp } from "./vida.js";
 import type { EstadoCampanha } from "./estado.js";
 import { obterChaveAssinatura } from "./assinatura-xp.js";
@@ -176,7 +176,6 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: Or
   // saneado. HP≤0 ⇒ epoch + notícia de sistema na mesma tx (apenas
   // primeira morte da ficha). Snapshots internos (origem='interna')
   // não passam por aqui — estado confiável preservado integralmente.
-  const mortesImportadas: { charId: string; nome: string; cid: string; em: string; causa: string | null }[] = [];
   if (origem === "externa" && chars.length) {
     // autoria: autorId precisa existir nesta instalação para manter o nome
     const autores = new Map<string, string | null>();
@@ -206,18 +205,10 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: Or
             em: letal?.em ?? new Date().toISOString(),
             causa: letal?.causa ?? null,
           });
-          if (r.morteNova) {
-            row.data = r.dados;
-            if (r.primeiraMorte) {
-              mortesImportadas.push({
-                charId: String(row.id ?? ""),
-                nome: String(row.name ?? "Personagem"),
-                cid: String(row.campaignId ?? ""),
-                em: r.morteNova.em,
-                causa: r.morteNova.causa ?? null,
-              });
-            }
-          }
+          // DP-8/9: a epoch é re-derivada para dedup futuro, mas a
+          // importação NÃO gera notícia retroativa — mortes do
+          // histórico já foram (ou não foram) notícia na origem.
+          if (r.morteNova) row.data = r.dados;
         }
       }
       if (!acumulou(rep)) continue;
@@ -248,30 +239,6 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: Or
   inserir(tx, sheetTemplates, dados.sheetTemplates);
   inserir(tx, sheetVersions, dados.sheetVersions);
   inserir(tx, characters, dados.characters);
-  // Notícias automáticas de morte geradas pela re-derivação de __morte
-  // (somente origem externa — ver bloco de saneamento acima). Na mesma
-  // tx da importação; publicadoEm = instante letal do histórico.
-  for (const m of mortesImportadas) {
-    if (!m.charId || !m.cid) continue;
-    const { titulo, corpo } = noticiaMorteTexto(m.nome, m.causa);
-    const pubId = crypto.randomUUID();
-    const emDate = new Date(m.em);
-    const agora = new Date();
-    tx.insert(internetPublicacoes).values({
-      id: pubId, campaignId: m.cid, tipo: "noticia", titulo, corpo,
-      formato: "texto", status: "publicado", visibilidade: "campanha",
-      autorModo: "identificado", autorContaId: null, origem: "sistema",
-      fonteRef: `morte:${m.charId}`, personagemId: m.charId,
-      publicadoEm: Number.isNaN(emDate.getTime()) ? agora : emDate,
-      createdAt: agora, updatedAt: agora,
-    }).run();
-    tx.insert(auditLogs).values({
-      id: crypto.randomUUID(), actorId: null, campaignId: m.cid, guildId: null,
-      action: "personagem_morreu",
-      detail: { characterId: m.charId, publicacaoId: pubId, morteEm: m.em, origem: "importacao" },
-      createdAt: agora,
-    }).run();
-  }
   inserir(tx, characterFields, dados.characterFields);
   inserir(tx, ruleSets, dados.ruleSets);
   inserir(tx, ruleDefinitions, dados.ruleDefinitions);

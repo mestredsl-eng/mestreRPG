@@ -292,6 +292,7 @@ async function visivelParaLeitor(
 
 const queryPublicacoesSchema = z.object({
   tipo: z.enum(["noticia", "post_perfil"]).optional(),
+  origem: z.enum(["usuario", "sistema"]).optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(50).optional(),
 }).strict();
@@ -319,7 +320,7 @@ internetPublicaRouter.get("/publicacoes", requirePapel("mestre", "jogador"), lim
 
   const query = queryPublicacoesSchema.safeParse(req.query);
   if (!query.success) { erroHttp(res, 400, "Parâmetros inválidos"); return; }
-  const { tipo, cursor: cursorRaw, limit = 20 } = query.data;
+  const { tipo, origem, cursor: cursorRaw, limit = 20 } = query.data;
   const cursor = cursorRaw ? decodificarCursor(cursorRaw) : null;
   if (cursorRaw && !cursor) { erroHttp(res, 400, "Cursor inválido"); return; }
 
@@ -329,6 +330,7 @@ internetPublicaRouter.get("/publicacoes", requirePapel("mestre", "jogador"), lim
     sql`${internetPublicacoes.publicadoEm} IS NOT NULL`,
   ];
   if (tipo) conds.push(eq(internetPublicacoes.tipo, tipo));
+  if (origem) conds.push(eq(internetPublicacoes.origem, origem));
   if (cursor) {
     conds.push(or(
       lt(internetPublicacoes.publicadoEm, cursor.createdAt),
@@ -367,6 +369,34 @@ internetPublicaRouter.get("/publicacoes", requirePapel("mestre", "jogador"), lim
       publicadoEm: p.publicadoEm, atualizadoEm: p.updatedAt,
     })),
     cursor: proximoCursor,
+  });
+});
+
+/** GET /publicacoes/minhas — publicações das contas do requisitante
+ *  em QUALQUER status (rascunho incluído — prévia do autor). Devolve
+ *  version/status para o PATCH esperado; nunca vaza publicações de
+ *  terceiros. Ordenação: atualizadaEm DESC. */
+internetPublicaRouter.get("/publicacoes/minhas", requirePapel("mestre", "jogador"), limiteLeituraPublica, async (req, res) => {
+  const cid = campanhaId(req);
+  const leitor = await exigirLeitorPublico(req, res, cid);
+  if (!leitor) return;
+  const meusIds = contaIdsDoLeitor(leitor);
+  if (!meusIds.length) { res.json({ publicacoes: [] }); return; }
+  const rows = await db.select().from(internetPublicacoes)
+    .where(and(
+      eq(internetPublicacoes.campaignId, cid),
+      inArray(internetPublicacoes.autorContaId, meusIds),
+    ))
+    .orderBy(sql`${internetPublicacoes.updatedAt} DESC`)
+    .limit(100);
+  res.json({
+    publicacoes: rows.map((p) => ({
+      id: p.id, tipo: p.tipo, titulo: p.titulo, status: p.status,
+      visibilidade: p.visibilidade, autorModo: p.autorModo,
+      pseudoNome: p.pseudoNome, origem: p.origem,
+      publicadoEm: p.publicadoEm, version: p.version,
+      criadoEm: p.createdAt, atualizadoEm: p.updatedAt,
+    })),
   });
 });
 
