@@ -681,7 +681,9 @@ async function rodarBatParado(cloneDir, logFile, barDir, ponto, env, porta = 300
 const REMOTO_OFICIAL_W0 = "https://github.com/mestredsl-eng/mestreRPG";
 
 function gitRemoto(args, cwd) {
-  return sh(`git ${args}`, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }).trim();
+  const r = gitRemotoOpcional(args, cwd);
+  if (r.code !== 0) throw new Error(`git ${args[0]} falhou (${r.code}): ${r.stderr.slice(0, 300)}`);
+  return r.stdout;
 }
 function gitRemotoOpcional(args, cwd) {
   const r = spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
