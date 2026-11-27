@@ -108,7 +108,7 @@ O recibo externo (`instalacao-recibo.json`) passa a registrar `instalacaoIdBanco
 
 ### Ciclo de vida
 
-- **Bootstrap novo / adoção:** após todas as provas (candidato + integridade + L1–L3 + backup validado), o produtor de estado gera o UUID e grava a linha no banco **antes** de atualizar o recibo externo — a ordem canônica e a recuperação de crash estão em §Recuperação de crash. Se o banco já contém id bem-formado (clone de instalação adotada), **preserva-se o id existente** — é o que permite clonagem legítima.
+- **Bootstrap novo / adoção:** após todas as provas (candidato + integridade + L1–L3 + backup validado), o produtor de estado executa a ordem canônica `intenção → linha de id no banco → recibo externo → consumo da intenção` (§Recuperação de crash). O UUID é fixado na intenção e nunca regenerado. Se o banco já contém id bem-formado (clone de instalação adotada), **preserva-se o id existente** — é o que permite clonagem legítima.
 - **Boot subsequente (`instalacao-concluida`):** lê a linha do banco e compara com o recibo:
   - confere ⇒ segue;
   - banco sem id + recibo legado sem id ⇒ **verify-once**: grava id no banco e no recibo, segue (idempotente);
@@ -159,12 +159,27 @@ Uma única máquina de estados, dois tipos de intenção — convergência das r
   "versao": 1,
   "instalacaoIdBanco": "<uuid fixado — nunca regenerado>",
   "tipo": "vinculacao-inicial" | "reatribuicao-restore",
-  "vinculo": "sha256({repoCanon, sha256ReciboOuNulo}) — amarra a intenção a ESTA instalação/recibo vigente",
+  "vinculo": {
+    "repoCanon": "<identidade canônica da instalação>",
+    "reciboSha256NaCriacao": "<sha256 do recibo vigente no momento da intenção>"
+  },
   "criadoEm": "ISO-8601"
 }
 ```
 
-Propriedades: uuid **fixado na intenção** (retry nunca gera segundo id — idempotência por construção); `vinculo` impede replay da intenção em outra instalação ou após troca do recibo; ausência de intenção ⇒ transição de identidade **não autorizada** (fail-closed). O **recibo de restauração** do fluxo `aplicar-restauracao` é o caso `tipo:"reatribuicao-restore"` do mesmo mecanismo, acrescido de `sha256BancoSubstituido`, `sha256BackupRestaurado`, `sha256EstadoPosAtribuido` e fases — uma máquina, dois tipos.
+Propriedades: uuid **fixado na intenção** (retry nunca gera segundo id — idempotência por construção); `vinculo.repoCanon` impede replay da intenção em outra instalação; ausência de intenção ⇒ transição de identidade **não autorizada** (fail-closed). O **recibo de restauração** do fluxo `aplicar-restauracao` é o caso `tipo:"reatribuicao-restore"` do mesmo mecanismo, acrescido de `sha256BancoSubstituido`, `sha256BackupRestaurado`, `sha256EstadoPosAtribuido` e fases — uma máquina, dois tipos.
+
+**"Intenção válida" é fase-aware** (correção do achado do FILHO — o recibo muda de bytes quando recebe o id, então um hash opaco do recibo tornaria B3 inalcançável):
+
+```
+válida ⇔ repoCanon confere ∧ (
+    reciboSha256NaCriacao == sha256(recibo atual)          // estados pré-recibo (B1/B2)
+    ∨ (recibo.instalacaoIdBanco == intencao.instalacaoIdBanco
+       ∧ recibo.assinaturaSchema confere REFERENCIA(k))     // estado convergido (B3)
+)
+```
+
+No estado convergido a prova de vínculo é o próprio recibo carregando o id fixado + schema conferindo; o `repoCanon` continua verificado nos dois caminhos.
 
 ### Ordem canônica
 
@@ -174,7 +189,7 @@ Propriedades: uuid **fixado na intenção** (retry nunca gera segundo id — ide
 ### Separação de hashes (obrigatória)
 
 - `sha256BackupRestaurado` — imagem **pré-mutação**; prova de proveniência do arquivo; usado **somente** no portão pré-escrita.
-- `sha256EstadoPosAtribuido` — computado **após** a escrita do id; evidência de **continuidade** para crashes futuros; gravado na fase `pos-atribuicao`. Não prova proveniência (já estabelecida pelo hash pré-mutação + autoridade do recibo) e nunca é gate de boot futuro — dados mudam legitimamente.
+- `sha256EstadoPosAtribuido` — computado **após** a escrita do id; evidência de **continuidade** para crashes futuros; gravado na fase `pos-atribuicao`. Não prova proveniência (já estabelecida pelo hash pré-mutação + autoridade do recibo) e nunca é gate de boot futuro — dados mudam legitimamente. **Artefato hasheado (especificado):** antes do cálculo, executar `PRAGMA wal_checkpoint(TRUNCATE)` e hashear **somente o arquivo `.db` principal** — `-wal`/`-shm` ficam fora do escopo, pois o checkpoint pode movê-los sem escrita lógica e geraria falso bloqueio. Requisito de implementação: o cálculo deve forçar o checkpoint explicitamente.
 
 ### Matriz de estados — binding (B)
 
