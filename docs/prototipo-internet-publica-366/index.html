@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Protótipo #366 — Internet pública (wireframe)</title>
+<style>
+  :root {
+    --fundo-pagina: #0b0a0f;
+    --fundo-cartao: #161a26;
+    --fundo-input: #0f1219;
+    --borda: #2a2f3f;
+    --texto: #e8e6f0;
+    --texto-fraco: #9aa0b4;
+    --horror-vinho-claro: #b85c69;
+    --ok: #7fb069;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--fundo-pagina); color: var(--texto); font: 14px/1.5 system-ui, sans-serif; }
+  header { padding: 14px 20px; border-bottom: 1px solid var(--borda); display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; }
+  header .nota { color: var(--texto-fraco); font-size: 12px; }
+  main { display: grid; grid-template-columns: 210px 1fr; min-height: calc(100vh - 52px); }
+  nav { border-right: 1px solid var(--borda); padding: 12px; }
+  nav button { display: block; width: 100%; text-align: left; background: none; border: 1px solid transparent; color: var(--texto-fraco); padding: 7px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  nav button.ativo { background: var(--fundo-cartao); border-color: var(--horror-vinho-claro); color: var(--texto); }
+  nav button small { display: block; color: var(--texto-fraco); font-size: 11px; }
+  section.tela { display: none; padding: 20px; }
+  section.tela.ativo { display: block; }
+  .frame { max-width: 430px; border: 1px solid var(--borda); border-radius: 12px; background: var(--fundo-cartao); overflow: hidden; }
+  .frame .topo { padding: 10px 14px; border-bottom: 1px solid var(--borda); display: flex; gap: 8px; align-items: center; }
+  .frame .topo b { font-size: 13px; }
+  .frame .corpo { padding: 14px; }
+  .abas { display: flex; gap: 4px; border-bottom: 1px solid var(--borda); padding: 0 14px; }
+  .abas span { padding: 8px 10px; font-size: 12px; color: var(--texto-fraco); border-bottom: 2px solid transparent; }
+  .abas span.on { color: var(--texto); border-bottom-color: var(--horror-vinho-claro); }
+  .subabas { display: flex; gap: 4px; padding: 8px 14px 0; }
+  .subabas span { padding: 5px 9px; font-size: 11px; border-radius: 6px; color: var(--texto-fraco); border: 1px solid var(--borda); }
+  .subabas span.on { color: var(--texto); border-color: var(--horror-vinho-claro); background: var(--fundo-input); }
+  .busca { display: flex; gap: 8px; margin-bottom: 12px; }
+  .busca .campo { flex: 1; background: var(--fundo-input); border: 1px solid var(--horror-vinho-claro); border-radius: 6px; padding: 8px 10px; color: var(--texto-fraco); font-size: 13px; }
+  .busca button, .btn { background: var(--horror-vinho-claro); color: #0f1219; border: 0; border-radius: 6px; padding: 8px 14px; font-weight: 600; cursor: pointer; font-size: 13px; }
+  .btn.sec { background: none; border: 1px solid var(--borda); color: var(--texto); }
+  .cartao { background: var(--fundo-input); border: 1px solid var(--borda); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+  .cartao .meta { color: var(--texto-fraco); font-size: 11px; display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+  .cartao h4 { margin: 0 0 4px; font-size: 13px; }
+  .chip { display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--borda); color: var(--texto-fraco); }
+  .chip.diegetico { color: var(--ok); border-color: var(--ok); }
+  .chip.alerta { color: #e3c98f; border-color: #e3c98f; }
+  .vazio { text-align: center; color: var(--texto-fraco); padding: 26px 10px; font-size: 13px; }
+  .erro { border: 1px solid #b85c69; border-radius: 8px; padding: 10px 12px; color: #e8b0bc; font-size: 13px; margin-bottom: 8px; }
+  .banner { background: var(--fundo-input); border-left: 3px solid #e3c98f; padding: 8px 12px; font-size: 12px; color: var(--texto-fraco); margin-bottom: 10px; }
+  .form label { display: block; font-size: 12px; color: var(--texto-fraco); margin: 10px 0 4px; }
+  .form .campo-largo { width: 100%; background: var(--fundo-input); border: 1px solid var(--borda); border-radius: 6px; padding: 8px 10px; color: var(--texto); }
+  .form textarea.campo-largo { min-height: 80px; }
+  .vis { display: flex; gap: 8px; margin-top: 10px; }
+  .vis span { font-size: 11px; border: 1px solid var(--borda); border-radius: 6px; padding: 5px 10px; color: var(--texto-fraco); }
+  .vis span.on { border-color: var(--horror-vinho-claro); color: var(--texto); }
+  .nota-rodape { margin-top: 14px; font-size: 11px; color: var(--texto-fraco); max-width: 430px; }
+  .dupla { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } nav { display: flex; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--borda); } nav button { width: auto; white-space: nowrap; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Internet pública — protótipo de UX (#366)</h1>
+  <span class="nota">wireframe estático · dados ilustrativos · sem backend · base visual: feat/352-internet-f4@6d2e565</span>
+</header>
+<main>
+<nav id="nav">
+  <button data-t="w1" class="ativo">W1 · Início<small>busca + atalhos + destaques</small></button>
+  <button data-t="w2">W2 · Pesquisa<small>resultados por escopo</small></button>
+  <button data-t="w3">W3 · Página/Site<small>navegação interna</small></button>
+  <button data-t="w4">W4 · Notícias<small>lista → matéria</small></button>
+  <button data-t="w6">W6 · Classificados<small>lista → detalhe</small></button>
+  <button data-t="w8">W8 · Publicar<small>prévia + visibilidade</small></button>
+  <button data-t="w9">W9 · Perfil<small>presença pública</small></button>
+  <button data-t="estados">Estados<small>vazio/erro/reconexão/removido</small></button>
+</nav>
+
+<!-- W1 INÍCIO -->
+<section class="tela ativo" id="w1">
+  <div class="frame">
+    <div class="topo"><b>Rede · Explorar</b><span class="chip diegetico">diegético</span></div>
+    <div class="subabas"><span class="on">Início</span><span>Pesquisa</span><span>Notícias</span><span>Classificados</span><span>Perfil</span></div>
+    <div class="corpo">
+      <div class="busca"><div class="campo">Pesquisar na web da campanha…</div><button>Buscar</button></div>
+      <div class="cartao"><h4>Diário de bordo —</h4><div class="meta"><span>site</span><span>oficial</span></div></div>
+      <div class="cartao"><h4>Quadro de avisos do porto</h4><div class="meta"><span>site</span><span>oficial</span></div></div>
+      <h4 style="margin:14px 0 6px;font-size:12px;color:var(--texto-fraco)">NOTÍCIAS EM DESTAQUE</h4>
+      <div class="cartao"><h4>Tempestade fecha o estreito norte</h4><div class="meta"><span>Fonte: Correio das Brumas</span><span>há 2 h</span></div></div>
+      <h4 style="margin:14px 0 6px;font-size:12px;color:var(--texto-fraco)">ANÚNCIOS RECENTES</h4>
+      <div class="cartao"><h4>Vendo poções de cura (lote)</h4><div class="meta"><span>por @nix_um</span><span>ativo</span></div></div>
+    </div>
+  </div>
+  <p class="nota-rodape">Atalhos = sites/oficiais curados pelo contrato. Nenhum favorito/histórico nesta versão (adiado — ver ESPECIFICACAO §5).</p>
+</section>
+
+<!-- W2 PESQUISA -->
+<section class="tela" id="w2">
+  <div class="frame">
+    <div class="topo"><b>Pesquisa</b></div>
+    <div class="corpo">
+      <div class="busca"><div class="campo" style="color:var(--texto)">poções de cura</div><button>Buscar</button></div>
+      <div class="subabas" style="padding:0 0 10px"><span class="on">Tudo</span><span>Páginas</span><span>Notícias</span><span>Classificados</span><span>Perfis</span></div>
+      <h4 style="margin:0 0 6px;font-size:12px;color:var(--texto-fraco)">PÁGINAS</h4>
+      <div class="cartao"><h4>Farmácia Central — catálogo</h4><div class="meta"><span>site</span></div></div>
+      <h4 style="margin:10px 0 6px;font-size:12px;color:var(--texto-fraco)">CLASSIFICADOS</h4>
+      <div class="cartao"><h4>Vendo poções de cura (lote)</h4><div class="meta"><span>anúncio</span><span>@nix_um</span><span>ativo</span></div></div>
+      <h4 style="margin:10px 0 6px;font-size:12px;color:var(--texto-fraco)">PERFIS</h4>
+      <div class="cartao"><h4>@lya_um — Lya</h4><div class="meta"><span>perfil</span></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- W3 PÁGINA/SITE -->
+<section class="tela" id="w3">
+  <div class="frame">
+    <div class="topo"><b>← Diário de bordo</b></div>
+    <div class="corpo">
+      <div class="cartao"><h4 style="font-size:14px">Capítulo 12 — O porto fechado</h4>
+      <p style="color:var(--texto-fraco);font-size:13px;margin:6px 0">O capitão registrou no diário que o estreito norte…</p></div>
+      <div class="cartao"><h4 style="font-size:13px">Capítulo 13 — Reunião da guilda</h4></div>
+      <div class="cartao"><h4 style="font-size:13px">Capítulo 14 — Rastros na névoa</h4></div>
+      <p class="nota-rodape">Menu do site (contrato decide: sub-páginas ou lista) + "voltar" retorna à origem (Início ou resultado de busca), não à raiz.</p>
+    </div>
+  </div>
+</section>
+
+<!-- W4 NOTÍCIAS -->
+<section class="tela" id="w4">
+  <div class="frame">
+    <div class="topo"><b>Notícias</b></div>
+    <div class="corpo">
+      <div class="cartao"><h4>Tempestade fecha o estreito norte</h4><div class="meta"><span>Correio das Brumas</span><span>há 2 h</span><span>campanha</span></div></div>
+      <div class="cartao"><h4>Feira do outono abre no mercado central</h4><div class="meta"><span>Voz do Porto</span><span>há 5 h</span><span>campanha</span></div></div>
+      <div class="cartao"><h4>Muralha leste pede reparos após abalo</h4><div class="meta"><span>Aviso oficial</span><span>há 1 d</span><span>campanha</span></div></div>
+      <div class="cartao" style="opacity:.55"><h4>Boatos sobre o farol (não confirmado)</h4><div class="meta"><span>fonte anônima</span><span>há 2 d</span><span>campanha</span></div></div>
+    </div>
+  </div>
+  <p class="nota-rodape">Matéria (W5) = corpo + fonte + autoria + data + escopo visíveis. Quem publica notícia: dúvida D4.</p>
+</section>
+
+<!-- W6 CLASSIFICADOS -->
+<section class="tela" id="w6">
+  <div class="frame">
+    <div class="topo"><b>Classificados</b><button class="btn" style="margin-left:auto">Publicar</button></div>
+    <div class="corpo">
+      <div class="subabas"><span class="on">Todos</span><span>Itens</span><span>Serviços</span><span>Vagas*</span></div>
+      <div class="cartao"><h4>Vendo poções de cura (lote)</h4><div class="meta"><span>itens</span><span>@nix_um</span><span class="chip">ativo</span><span>expira em 6 d</span></div></div>
+      <div class="cartao"><h4>Procuro grupo para dungeon nível 3</h4><div class="meta"><span>serviços</span><span>@lya_dois</span><span class="chip">ativo</span></div></div>
+      <div class="cartao" style="opacity:.55"><h4>Alugo quarto perto do mercado</h4><div class="meta"><span>serviços</span><span>@tres_um</span><span class="chip alerta">expirado</span></div></div>
+      <p class="nota-rodape">*Vagas só se 1.1.3 entrar no corte — a spec marca como fora do escopo atual. Quadro de avisos: sem negociação integrada.</p>
+    </div>
+  </div>
+</section>
+
+<!-- W8 PUBLICAR -->
+<section class="tela" id="w8">
+  <div class="frame">
+    <div class="topo"><b>Publicar anúncio</b></div>
+    <div class="corpo form">
+      <label>Título</label><input class="campo-largo" value="Vendo poções de cura (lote)">
+      <label>Categoria</label><input class="campo-largo" value="Itens">
+      <label>Descrição</label><textarea class="campo-largo">Lote de 10 poções, preço a combinar na taverna.</textarea>
+      <label>Validade</label><input class="campo-largo" value="7 dias">
+      <label>Identidade do autor</label>
+      <div class="vis"><span class="on">Identidade real</span><span>Pseudônimo</span><span>Anônimo*</span></div>
+      <label>Visibilidade</label>
+      <div class="vis"><span class="on">Campanha</span><span>Contatos</span></div>
+      <div class="cartao" style="margin-top:12px"><h4>Prévia</h4><div class="meta"><span>como os outros verão</span></div><p style="font-size:13px;margin:6px 0 0">Vendo poções de cura (lote) — Lote de 10 poções… · público: campanha</p></div>
+      <p style="font-size:12px;color:#e3c98f">* Anônimo só em classificados/anúncios (DP-6); publicação anônima é imutável após publicar. Publicação livre — denúncia pode acionar remoção automática; contestação por administrador da plataforma.</p>
+      <div style="display:flex;gap:8px;margin-top:12px"><button class="btn">Publicar</button><button class="btn sec">Cancelar</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- W9 PERFIL -->
+<section class="tela" id="w9">
+  <div class="frame">
+    <div class="topo"><b>Perfil · @lya_um</b><span class="chip diegetico">seu perfil</span></div>
+    <div class="corpo">
+      <div class="cartao"><h4>Lya — nome público (padrão: nome do personagem)</h4><div class="meta"><span>avatar</span><span>descrição editável</span><span>3 publicações</span></div></div>
+      <h4 style="margin:10px 0 6px;font-size:12px;color:var(--texto-fraco)">PUBLICAÇÕES</h4>
+      <div class="cartao"><h4>Nota sobre o farol antigo</h4><div class="meta"><span>perfil</span><span>há 3 d</span></div></div>
+      <div class="cartao"><h4>Anúncio: troca de mapas</h4><div class="meta"><span>classificado</span><span>ativo</span></div></div>
+      <button class="btn sec" style="margin-top:8px">Editar perfil</button>
+      <p class="nota-rodape">Perfil opcional e ativação irrevogável (Quiz): sem controles de ocultar/desativar/excluir. Permanece após a morte.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ESTADOS -->
+<section class="tela" id="estados">
+  <div class="dupla">
+    <div class="frame"><div class="topo"><b>Vazio</b></div><div class="corpo"><div class="vazio">Ainda não há anúncios nesta categoria.<br><button class="btn sec" style="margin-top:10px">Publicar o primeiro</button></div></div></div>
+    <div class="frame"><div class="topo"><b>Erro + reconexão</b></div><div class="corpo"><div class="banner">Reconectando… a leitura continua; publicar fica indisponível.</div><div class="erro">Não foi possível carregar os classificados. <u>Tentar novamente</u></div></div></div>
+    <div class="frame"><div class="topo"><b>Pesquisa sem resultado</b></div><div class="corpo"><div class="vazio">Nada encontrado para “xyz123”.<br><span style="font-size:12px">Tente ampliar o escopo ou outro termo.</span></div></div></div>
+    <div class="frame"><div class="topo"><b>Removido — acesso legítimo prévio</b></div><div class="corpo"><div class="vazio">Este anúncio não está mais disponível.<br><span style="font-size:12px">Expirou em 12/11/2026. (autor/mestre veem o motivo da retirada)</span></div></div></div>
+    <div class="frame"><div class="topo"><b>Nunca visível — 404 diegético</b></div><div class="corpo"><div class="vazio">Página indisponível.<br><span style="font-size:12px">idêntico a inexistente — não revela que o conteúdo existe</span></div></div></div>
+    <div class="frame"><div class="topo"><b>Sem permissão</b></div><div class="corpo"><div class="cartao"><h4>Publicar notícia</h4><div class="meta"><span class="chip alerta">requer autorização do mestre</span></div><button class="btn" style="margin-top:8px;opacity:.5" disabled>Publicar</button></div></div></div>
+    <div class="frame"><div class="topo"><b>Loading</b></div><div class="corpo"><div class="vazio">Carregando… <span aria-hidden="true">(aria-busy)</span></div></div></div>
+    <div class="frame"><div class="topo"><b>Ativação de perfil — aviso irrevogável</b></div><div class="corpo"><div class="cartao"><h4>Ativar perfil público?</h4><div class="meta"><span class="chip alerta">irreversível</span></div><p style="font-size:12px">Uma vez ativado, seu perfil fica <b>permanentemente público</b>: não pode ser ocultado, desativado ou apagado — nem após a morte do personagem.</p><button class="btn" style="margin-top:8px">Confirmar ativação</button></div></div></div>
+    <div class="frame"><div class="topo"><b>Publicação anônima — imutável</b></div><div class="corpo"><div class="cartao"><h4>Seu anúncio</h4><div class="meta"><span>autor: anônimo</span><span class="chip alerta">imutável</span></div><p style="font-size:12px">Publicações anônimas não podem ser editadas nem apagadas após publicar.</p><button class="btn sec" style="margin-top:8px;opacity:.5" disabled>Editar</button> <button class="btn sec" style="opacity:.5" disabled>Apagar</button></div></div></div>
+    <div class="frame"><div class="topo"><b>Denúncia → remoção automática</b></div><div class="corpo"><div class="cartao"><h4>Anúncio denunciado</h4><div class="meta"><span class="chip alerta">removido pelo sistema</span></div><p style="font-size:12px">Denúncias podem acionar remoção automática. Contestação é resolvida por administrador da plataforma — não pelo Mestre.</p></div></div></div>
+    <div class="frame"><div class="topo"><b>Notícia automática de morte</b></div><div class="corpo"><div class="cartao"><h4>Falecimento de @bram_ii</h4><div class="meta"><span class="chip diegetico">automática</span><span>notícia</span></div><p style="font-size:12px">Matéria gerada pelo sistema. Jornalista elegível pode derivar matéria própria.</p></div></div></div>
+    <div class="frame"><div class="topo"><b>Contestação de remoção</b></div><div class="corpo"><div class="cartao"><h4>Seu anúncio foi removido</h4><div class="meta"><span class="chip alerta">removido pelo sistema</span></div><p style="font-size:12px">Você pode contestar até 03/12/2026. A contestação é analisada pela administração da plataforma.</p><button class="btn" style="margin-top:8px">Contestar remoção</button></div></div></div>
+    <div class="frame"><div class="topo"><b>Perfil — personagem falecido</b></div><div class="corpo"><div class="cartao"><h4>@lya_um</h4><div class="meta"><span class="chip alerta">personagem falecido</span></div><p style="font-size:12px">Perfil e publicações permanecem visíveis. Edição desabilitada — o personagem não pode mais escrever.</p></div></div></div>
+    <div class="frame"><div class="topo"><b>Avatar — upload (pipeline arquivos)</b></div><div class="corpo"><div class="cartao"><h4>Avatar do perfil</h4><div class="meta"><span>mesmo pipeline de anexos</span></div><div class="vis"><span class="on">Enviar imagem</span><span>Usar iniciais</span></div><p style="font-size:12px">Estados de upload/erro reutilizam os componentes de arquivo existentes.</p></div></div></div>
+  </div>
+</section>
+</main>
+<script>
+  const botoes = document.querySelectorAll("#nav button");
+  botoes.forEach((b) => b.addEventListener("click", () => {
+    botoes.forEach((x) => x.classList.remove("ativo"));
+    document.querySelectorAll("section.tela").forEach((s) => s.classList.remove("ativo"));
+    b.classList.add("ativo");
+    document.getElementById(b.dataset.t).classList.add("ativo");
+  }));
+</script>
+</body>
+</html>
