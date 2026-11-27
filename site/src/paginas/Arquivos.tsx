@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ArquivoBiblioteca, type CampanhaResumo, type PastaBiblioteca } from "../api";
 import { ModalConfirmar } from "../Modal";
-import { useSincronizacaoCampanha } from "../useSincronizacao";
+import { useSincronizacaoCampanha, registrarSyncOk } from "../useSincronizacao";
 
 const CATEGORIAS = ["mapas", "npcs", "locais", "documentos", "imagens", "pistas", "regras", "referencias", "jogadores", "outros"];
 const VIS_OPCOES = [
@@ -55,6 +55,7 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
       setArquivos(a.arquivos); setPastas(p.pastas);
       setJogadoresEnviam(a.config.jogadoresEnviam);
       setErro(null);
+      registrarSyncOk(campaignId, "arquivos");
     } catch (e) { if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar"); }
   }, [campaignId]);
   useEffect(() => { void carregar(); }, [carregar]);

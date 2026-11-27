@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ModalConfirmar } from "../Modal";
 import { api, type CampanhaResumo, type EstadoAtualCampanha, type HistoricoSessao, type Restauracao, type Sessao, type Snapshot } from "../api";
-import { useSincronizacaoCampanha } from "../useSincronizacao";
+import { useSincronizacaoCampanha, registrarSyncOk } from "../useSincronizacao";
 import { resumirRolagemHistorico } from "../lib/rolagensHistorico";
 
 const KIND_SNAPSHOT: Record<string, string> = { manual: "Manual", automatico: "Automático", pre_restauracao: "Pré-restauração" };
@@ -44,6 +44,7 @@ export default function Historico({ campaignId, campanha, aoAtualizar }: { campa
         setEstado(est); setRestauracoes(rests.restauracoes);
       }
       setErro(null);
+      registrarSyncOk(campaignId, "historico");
     } catch (e) { if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar"); }
   }, [campaignId, souMestre]);
 

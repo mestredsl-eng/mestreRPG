@@ -232,6 +232,56 @@ try {
   await aba(pm, "Diário");
   t("diário: conteúdo anterior preservado após troca de aba", await aparece(pm, "Nota RT pública") && await aparece(pm, "Nota RT só mestre"));
 
+  // ---------- Issue #285 — indicador de conexão + última sync ----------
+  // Cenários executados pela CI (este arquivo roda no job Navegador):
+  // indicador visível com marca; reconexão resincroniza a aba aberta;
+  // a marca é por tela ativa (sync do Diário não altera a de Informações).
+  sec("desktop — indicador de conexão e última sincronização (#285)");
+  await aba(pa, "Informações");
+  await pa.locator(".conexao").first().waitFor({ timeout: 15000 });
+  const txtInd = (await pa.locator(".conexao").first().innerText()).replace(/\s+/g, " ").trim();
+  t("indicador: Conectado + 'Atualizado às' após GET", /Conectado · Atualizado às \d{2}:\d{2}/.test(txtInd), txtInd);
+  const tsInfo0 = await pa.locator(".conexao").first().getAttribute("data-sync-ts");
+
+  // reconexão com o Diário ABERTO → GET automático, sem reload manual
+  await aba(pa, "Diário");
+  await pa.waitForResponse(
+    (r) => r.url().includes(`/api/campaigns/${campId}/anotacoes`) && r.request().method() === "GET",
+    { timeout: 15000 },
+  ).catch(() => null);
+  const getDiario = pa.waitForRequest(
+    (r) => r.url().includes(`/api/campaigns/${campId}/anotacoes`) && r.method() === "GET",
+    { timeout: 25000 },
+  ).catch(() => null);
+  await pa.evaluate(() => window.__mesaSocket?.disconnect());
+  await pa.waitForFunction(
+    () => /interrompida|Sem conexão/.test(document.querySelector(".conexao")?.textContent ?? ""),
+    { timeout: 10000 },
+  );
+  await pa.evaluate(() => window.__mesaSocket?.connect());
+  await pa.waitForFunction(
+    () => /Conectado/.test(document.querySelector(".conexao")?.textContent ?? "") && !/Reconectando/.test(document.querySelector(".conexao")?.textContent ?? ""),
+    { timeout: 15000 },
+  );
+  t("reconexão resincroniza o Diário já aberto (GET automático)", !!(await getDiario));
+
+  // marca por tela: sync do Diário não pode alterar a marca de Informações
+  await aba(pa, "Informações");
+  await sleep(400);
+  const tsInfo1 = await pa.locator(".conexao").first().getAttribute("data-sync-ts");
+  t("marca do shell avançou na reconexão", !!tsInfo0 && tsInfo1 !== tsInfo0, `${tsInfo0} → ${tsInfo1}`);
+  await aba(pa, "Diário"); // remonta → GET próprio
+  await sleep(800);
+  await req(BASE, "POST", `/campaigns/${campId}/anotacoes`, {
+    cookie: cookieMestre,
+    body: { title: "Nota sync-aba CI", content: "x", kind: "diario", visibility: "publica" },
+  });
+  await sleep(1000); // debounce 250ms + GET
+  await aba(pa, "Informações");
+  await sleep(400);
+  const tsInfo2 = await pa.locator(".conexao").first().getAttribute("data-sync-ts");
+  t("sync do Diário não altera a marca de Informações", tsInfo2 === tsInfo1, `${tsInfo1} → ${tsInfo2}`);
+
   // ---------- mobile ----------
   sec("mobile — Diário e Arquivos");
   const ctxMob = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
