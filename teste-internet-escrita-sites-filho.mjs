@@ -251,6 +251,80 @@ try {
       `antes=${JSON.stringify(antes)} depois=${JSON.stringify(depois)}`);
   }
 
+  // ---------- E4b. Atomicidade em site/página/status (VER-05) ----------
+  sec("E4b. Auditoria — falha em qualquer gravação reverte o recurso");
+  {
+    const criarTriggerFalha = (nome, acao) => comDb((db) => db.exec(`
+      CREATE TRIGGER ${nome}
+      BEFORE INSERT ON audit_logs
+      WHEN NEW.action = '${acao}'
+      BEGIN SELECT RAISE(ABORT, 'falha de auditoria simulada'); END;
+    `));
+    const removerTriggerFalha = (nome) => comDb((db) => db.exec(`DROP TRIGGER IF EXISTS ${nome}`));
+
+    // Criar site: não pode existir site sem o respectivo audit.
+    const slugAtomicSite = "audit-site-falha-" + crypto.randomUUID().slice(0, 5);
+    criarTriggerFalha("teste_falha_audit_site_w3", "internet.site_criado");
+    let rSiteAudit;
+    try {
+      rSiteAudit = await api(BASE, C.campId, J1, "POST", "/sites",
+        { slug: slugAtomicSite, nome: "Não persistir sem audit" });
+    } finally { removerTriggerFalha("teste_falha_audit_site_w3"); }
+    const siteSemAudit = comDb((db) => db.prepare("select id from internet_sites where slug=?").get(slugAtomicSite));
+    t("VER-05: falha do audit em criação de site cancela INSERT",
+      rSiteAudit?.status >= 400 && !siteSemAudit, `status=${rSiteAudit?.status} row=${!!siteSemAudit}`);
+
+    // Metadados: UPDATE e audit precisam ser a mesma transação.
+    const nomeAntes = comDb((db) => db.prepare("select nome from internet_sites where slug=?").get(siteA.slug)?.nome);
+    criarTriggerFalha("teste_falha_audit_site_patch_w3", "internet.site_atualizado");
+    let rSitePatchAudit;
+    try {
+      rSitePatchAudit = await api(BASE, C.campId, J1, "PATCH", `/sites/${siteA.slug}`,
+        { nome: "Não persistir sem audit" });
+    } finally { removerTriggerFalha("teste_falha_audit_site_patch_w3"); }
+    const nomeDepois = comDb((db) => db.prepare("select nome from internet_sites where slug=?").get(siteA.slug)?.nome);
+    t("VER-05: falha do audit em metadados reverte UPDATE",
+      rSitePatchAudit?.status >= 400 && nomeDepois === nomeAntes,
+      `status=${rSitePatchAudit?.status} nome=${nomeAntes}→${nomeDepois}`);
+
+    // Criar página: não pode sobrar linha sem trilha.
+    const slugAtomicPage = "audit-page-falha-" + crypto.randomUUID().slice(0, 5);
+    criarTriggerFalha("teste_falha_audit_page_create_w3", "internet.pagina_criada");
+    let rPageAudit;
+    try {
+      rPageAudit = await api(BASE, C.campId, J1, "POST", `/sites/${siteA.slug}/paginas`,
+        { slug: slugAtomicPage, titulo: "Não persistir sem audit", corpo: "x" });
+    } finally { removerTriggerFalha("teste_falha_audit_page_create_w3"); }
+    const pageSemAudit = comDb((db) => db.prepare("select p.id from internet_pages p join internet_sites s on s.id=p.site_id where s.slug=? and p.slug=?")
+      .get(siteA.slug, slugAtomicPage));
+    t("VER-05: falha do audit em criação de página cancela INSERT",
+      rPageAudit?.status >= 400 && !pageSemAudit, `status=${rPageAudit?.status} row=${!!pageSemAudit}`);
+
+    // Transição de status: status e versão ficam intocados se audit falhar.
+    const slugStatusAtomic = "audit-status-falha-" + crypto.randomUUID().slice(0, 5);
+    const rPageBase = await api(BASE, C.campId, J1, "POST", `/sites/${siteA.slug}/paginas`,
+      { slug: slugStatusAtomic, titulo: "Status atômico", corpo: "draft" });
+    t("VER-05 setup: página criada para testar atomicidade do status",
+      rPageBase.status === 201 || rPageBase.status === 200, `status=${rPageBase.status}`);
+    if (rPageBase.status === 201 || rPageBase.status === 200) {
+      const antesStatus = snapshotPagina(siteA.slug, slugStatusAtomic);
+      criarTriggerFalha("teste_falha_audit_status_w3", "internet.pagina_status");
+      let rStatusAudit;
+      try {
+        rStatusAudit = await api(BASE, C.campId, J1, "POST",
+          `/sites/${siteA.slug}/paginas/${slugStatusAtomic}/publicar`,
+          { expectedVersion: antesStatus.version });
+      } finally { removerTriggerFalha("teste_falha_audit_status_w3"); }
+      const depoisStatus = snapshotPagina(siteA.slug, slugStatusAtomic);
+      t("VER-05: falha do audit em transição reverte status e versão",
+        rStatusAudit?.status >= 400 &&
+        depoisStatus?.corpo === antesStatus?.corpo &&
+        depoisStatus?.status === antesStatus?.status &&
+        depoisStatus?.version === antesStatus?.version,
+        `status=${rStatusAudit?.status} antes=${JSON.stringify(antesStatus)} depois=${JSON.stringify(depoisStatus)}`);
+    }
+  }
+
   // ---------- E5. Transições de status ----------
   sec("E5. Status — expectedVersion, version+1 e audit atômica");
   {
