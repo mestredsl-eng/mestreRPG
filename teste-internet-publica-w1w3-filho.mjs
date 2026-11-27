@@ -44,8 +44,28 @@ const t = (n, c, x = "") => {
 const sec = (n) => console.log("\n== " + n + " ==");
 
 // ---------- rotas reais (PR #388 — docs/CONTRATO-INTERNET-PUBLICA-365.md) ----------
+// PR #388 @ 7ed00f0 adicionou limiteLeituraPublica (60 req/min por usuário,
+// compartilhado entre os 3 GETs → 429 + Retry-After). A suíte faz dezenas de
+// leituras por usuário em segundos; retry honesto no 429 valida que o limite
+// existe sem transformar rajada de teste em falso negativo.
+const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+async function reqComRetry429(base, metodo, path, opts = {}, tentativas = 4) {
+  for (let i = 0; ; i++) {
+    const r = await fetch(base + "/api" + path, {
+      method: metodo,
+      headers: { "content-type": "application/json", cookie: opts.cookie ?? "", ...opts.headers },
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    });
+    if (r.status !== 429 || i >= tentativas - 1)
+      return { status: r.status, json: await r.json().catch(() => null) };
+    const ra = Number(r.headers.get("retry-after") ?? "1");
+    await dormir(Math.min(Math.max(ra, 1), 65) * 1000);
+  }
+}
 const api = (base, camp, cookie, metodo, path, body) =>
-  req(base, metodo, `/campaigns/${camp}/internet${path}`, { cookie, body });
+  metodo === "GET"
+    ? reqComRetry429(base, metodo, `/campaigns/${camp}/internet${path}`, { cookie })
+    : req(base, metodo, `/campaigns/${camp}/internet${path}`, { cookie, body });
 
 // ---------- extratores tolerantes de resposta (shape a confirmar no SHA) ----------
 const itensDe = (j) =>
