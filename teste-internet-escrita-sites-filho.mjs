@@ -221,7 +221,7 @@ try {
     const rOk = await api(BASE, C.campId, J1, "PATCH", `/sites/${siteA.slug}/paginas/capitulo-1`, { corpo: "v3", expectedVersion: 2 });
     t("expectedVersion correta → 200", rOk.status === 200, `status=${rOk.status}`);
     // SITE-07: dona do site que não é autora não edita (criar página de j2 no site da j2 primeiro? usar página de j1)
-    const rNaoAutor = await api(BASE, C.campId, J2, "PATCH", `/sites/${siteA.slug}/paginas/capitulo-1`, { corpo: "sequestro" });
+    const rNaoAutor = await api(BASE, C.campId, J2, "PATCH", `/sites/${siteA.slug}/paginas/capitulo-1`, { corpo: "sequestro", expectedVersion: versionPagina(siteA.slug, "capitulo-1") });
     t("SITE-07: não-autor não edita (404 uniforme)", rNaoAutor.status === 404 || rNaoAutor.status === 403, `status=${rNaoAutor.status}`);
     // auditoria registra metadados, nunca o corpo anterior/atual.
     const au = audits("pagina_editada");
@@ -313,7 +313,11 @@ try {
     t("audit de arquivamento pelo mestre registrado", auM.length >= 1 && JSON.stringify(auM).includes('"mestre"'), `n=${auM.length}`);
     // mestre sem conta tenta criar site → negado (sem conta própria)
     const rSiteM = await api(BASE, C.campId, M, "POST", "/sites", { slug: "site-do-mestre", nome: "Mestre" });
-    t("mestre sem conta não cria site (ownership exige conta)", rSiteM.status === 403 || rSiteM.status === 404 || rSiteM.status === 401, `status=${rSiteM.status}`);
+    t("SITE-14: Mestre sem conta não cria site", rSiteM.status === 403 || rSiteM.status === 404 || rSiteM.status === 401, `status=${rSiteM.status}`);
+    const rMetaM = await api(BASE, C.campId, M, "PATCH", `/sites/${siteA.slug}`, { nome: "metadado reescrito pelo Mestre" });
+    t("SITE-14: Mestre sem conta não altera metadados do titular", rMetaM.status === 403 || rMetaM.status === 404 || rMetaM.status === 401, `status=${rMetaM.status}`);
+    const rPaginaM = await api(BASE, C.campId, M, "POST", `/sites/${siteA.slug}/paginas`, { slug: "pagina-do-mestre", titulo: "Não", corpo: "não" });
+    t("SITE-14: Mestre sem conta não cria página por privilégio administrativo", rPaginaM.status === 403 || rPaginaM.status === 404 || rPaginaM.status === 401, `status=${rPaginaM.status}`);
   }
 
   // ---------- E7. Listagem autenticada de páginas ----------
