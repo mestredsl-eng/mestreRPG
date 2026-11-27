@@ -145,7 +145,7 @@ export interface ContextoSaneamento {
 }
 
 const TIPOS_NUMERICOS = new Set(["inteiro", "decimal", "moeda"]);
-const TIPOS_XP = new Set(["concessao", "remocao", "compra", "ajuste"]);
+const TIPOS_XP = new Set(["concessao", "remocao", "compra", "ajuste", "estorno"]);
 const TIPOS_HP = new Set(["inicial", "dano", "recuperacao", "ajuste"]);
 const MAX_XP_HISTORICO = 500;
 const MAX_PONTOS_HISTORICO = 200;
@@ -198,7 +198,7 @@ function sanearAutor(e: Record<string, unknown>, ctx: ContextoSaneamento) {
 
 // ---------- __xp ----------
 
-const EVENTO_XP_KEYS = ["em", "tipo", "quantidade", "motivo", "autorId", "autorNome", "saldoResultante", "compra"];
+const EVENTO_XP_KEYS = ["em", "tipo", "quantidade", "motivo", "autorId", "autorNome", "saldoResultante", "compra", "estorno", "estornoDe", "sessaoId", "loteRequestId"];
 
 /** Objeto `compra` íntegro: kind/key/campoId identificam o elemento,
  *  a transição é exatamente um nível (nivelNovo = nivelAnterior + 1),
@@ -228,6 +228,36 @@ function eventoXpValido(e: unknown): e is Record<string, unknown> {
   if (saldo === null || saldo < 0) return false;                  // B1: saldo resultante finito e não-negativo
   if (o.motivo !== undefined && o.motivo !== null && typeof o.motivo !== "string") return false;
   if (o.tipo === "compra" && !compraValida(o.compra, qtd)) return false; // B1: compra íntegra
+  if (o.tipo === "estorno" && !estornoValido(o, qtd)) return false;    // B1: estorno íntegro
+  if (o.sessaoId !== undefined && o.sessaoId !== null && typeof o.sessaoId !== "string") return false;
+  if (o.loteRequestId !== undefined && o.loteRequestId !== null && typeof o.loteRequestId !== "string") return false;
+  return true;
+}
+
+/** Estorno auditado (#185): `estornoDe` aponta para a compra revertida
+ *  por timestamp+custo; `estorno` descreve a transição desfeita
+ *  (nivelDe→nivelPara = exatamente um nível para baixo). A quantidade
+ *  do evento é o CRÉDITO do reembolso — nunca um débito. */
+function estornoValido(o: Record<string, unknown>, quantidade: number): boolean {
+  const ed = obj(o.estornoDe);
+  if (!ed) return false;
+  if (!dataValida(ed.em)) return false;
+  const cx = num(ed.custoXp);
+  if (cx === null || cx <= 0) return false;
+  if (xpNum(quantidade) !== xpNum(cx)) return false; // estorno só credita o custo debitado
+  const est = o.estorno;
+  if (est !== undefined) {
+    const es = obj(est);
+    if (!es) return false;
+    if (typeof es.kind !== "string" || !es.kind) return false;
+    if (typeof es.key !== "string" || !es.key) return false;
+    if (typeof es.nome !== "string" || !es.nome) return false;
+    if (typeof es.campoId !== "string" || !es.campoId) return false;
+    const nd = es.nivelDe, np = es.nivelPara, ecx = num(es.custoXp);
+    if (!Number.isInteger(nd) || !Number.isInteger(np) || (nd as number) <= 0) return false;
+    if ((np as number) !== (nd as number) - 1) return false; // reversão de exatamente um nível
+    if (ecx === null || ecx <= 0 || xpNum(ecx) !== xpNum(cx)) return false;
+  }
   return true;
 }
 
@@ -290,6 +320,7 @@ function sanearXp(
     for (const k of EVENTO_XP_KEYS) {
       if (o[k] === undefined) continue;
       if (k === "compra" && o.tipo !== "compra") continue; // compra só existe em evento de compra
+      if ((k === "estorno" || k === "estornoDe") && o.tipo !== "estorno") continue; // idem para estorno
       ev[k] = o[k];
     }
     sanearAutor(ev, ctx);

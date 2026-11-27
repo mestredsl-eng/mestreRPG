@@ -73,7 +73,7 @@ const KIND_AQUISICAO_ZERO_XP = "poder";
 
 // ---------- Estado __xp ----------
 
-export type TipoEventoXp = "concessao" | "remocao" | "compra" | "ajuste";
+export type TipoEventoXp = "concessao" | "remocao" | "compra" | "ajuste" | "estorno";
 
 export interface EventoXp {
   em: string;
@@ -87,6 +87,10 @@ export interface EventoXp {
   /** requestId do lote que originou o evento (Issue #185) — ausente em
    *  concessões individuais. Opcional: pacotes antigos não têm o campo. */
   loteRequestId?: string;
+  /** Sessão de jogo que originou a concessão (Issue #185 — XP por
+   *  sessão): referência lógica, não FK — o evento permanece legível
+   *  mesmo se a sessão for removida. */
+  sessaoId?: string;
   /** Preenchido quando tipo === "compra". */
   compra?: {
     kind: string;
@@ -97,6 +101,20 @@ export interface EventoXp {
     nivelNovo: number;
     custoXp: number;
   };
+  /** Preenchido quando tipo === "estorno": transição revertida
+   *  (nivelDe = nível removido, nivelPara = nível restaurado). */
+  estorno?: {
+    kind: string;
+    key: string;
+    nome: string;
+    campoId: string;
+    nivelDe: number;
+    nivelPara: number;
+    custoXp: number;
+  };
+  /** Rastreio da compra revertida: `em` (timestamp imune a reordenação
+   *  do histórico truncado) + custo debitado originalmente. */
+  estornoDe?: { em: string; custoXp: number };
 }
 
 export interface EstadoXp {
@@ -172,7 +190,11 @@ export function saldoXp(dados: Record<string, unknown>): number {
 export function aplicarXp(
   dados: Record<string, unknown>,
   delta: number,
-  evento: { tipo: TipoEventoXp; motivo?: string | null; autorId: string | null; autorNome: string | null; loteRequestId?: string | null },
+  evento: {
+    tipo: TipoEventoXp; motivo?: string | null; autorId: string | null; autorNome: string | null;
+    loteRequestId?: string | null; sessaoId?: string | null;
+    estorno?: EventoXp["estorno"]; estornoDe?: EventoXp["estornoDe"];
+  },
 ): { dados: Record<string, unknown>; estado: EstadoXp } {
   const estado = lerXp(dados);
   const saldo = xpNum(estado.saldo + delta);
@@ -187,6 +209,9 @@ export function aplicarXp(
       autorNome: evento.autorNome,
       saldoResultante: saldo,
       ...(evento.loteRequestId ? { loteRequestId: evento.loteRequestId } : {}),
+      ...(evento.sessaoId ? { sessaoId: evento.sessaoId } : {}),
+      ...(evento.estorno ? { estorno: evento.estorno } : {}),
+      ...(evento.estornoDe ? { estornoDe: evento.estornoDe } : {}),
     },
   ];
   const truncado = historicoNovo.length > MAX_HISTORICO;
@@ -922,5 +947,144 @@ export function simularCompraNivel(
     dados: dadosNovos,
     estadoXp: lerXp(dadosNovos),
     compra: ultimo?.compra,
+  };
+}
+
+// ---------- Estorno auditado de compra de nível (Issue #185 item 1) ----------
+
+export interface ResultadoEstorno {
+  ok: boolean;
+  erro?: string;
+  codigo?: string;
+  detalhes?: unknown;
+  dados?: Record<string, unknown>;
+  estadoXp?: EstadoXp;
+  estorno?: NonNullable<EventoXp["estorno"]>;
+  compraEstornada?: { em: string; custoXp: number };
+}
+
+/**
+ * Núcleo do estorno — função PURA e síncrona para rodar DENTRO da
+ * transação do endpoint (dados relidos na hora). Reverte a ÚLTIMA
+ * compra vigente do elemento (kind:key): a compra cujo `em` não é
+ * referenciado por nenhum evento `estorno.estornoDe.em` anterior.
+ *
+ * "Vigente" exige coerência de estado: o nível atual do elemento deve
+ * ser exatamente o `nivelNovo` da compra — se o campo foi alterado por
+ * outro caminho depois da compra, o estorno é recusado (nunca reverte
+ * cego). `nivelAlvo` opcional é trava otimista do cliente: quando
+ * informado, deve igualar o nivelNovo da compra vigente.
+ *
+ * O resultado passa por `validarRegras` completo — se outra compra
+ * posterior usa o nível estornado como pré-requisito, o motor rejeita
+ * (409 no endpoint). Cascata de estornos fica fora do escopo.
+ */
+export function simularEstornoNivel(
+  estrutura: EstruturaFicha,
+  dados: Record<string, unknown>,
+  regras: RegrasCampanha,
+  kind: string,
+  key: string,
+  nivelAlvo: number | undefined,
+  autor: { id: string | null; nome: string | null },
+  sessaoId?: string | null,
+): ResultadoEstorno {
+  const elemento = regras.elementos.get(`${kind}:${key}`);
+  if (!elemento) {
+    return { ok: false, erro: `Elemento ${kind}:${key} não existe nas regras da campanha`, codigo: "elemento_inexistente" };
+  }
+
+  const xp = lerXp(dados);
+  const estornados = new Set(
+    xp.historico
+      .filter((e) => e.tipo === "estorno" && typeof e.estornoDe?.em === "string")
+      .map((e) => e.estornoDe!.em),
+  );
+  // Última compra do elemento ainda vigente (não referenciada por estorno).
+  let compraAlvo: { em: string; compra: NonNullable<EventoXp["compra"]> } | null = null;
+  for (const e of xp.historico) {
+    if (e.tipo !== "compra" || !e.compra) continue;
+    if (e.compra.kind !== kind || e.compra.key !== key) continue;
+    if (estornados.has(e.em)) continue;
+    compraAlvo = { em: e.em, compra: e.compra };
+  }
+  if (!compraAlvo) {
+    return { ok: false, erro: "Nenhuma compra vigente deste elemento para estornar", codigo: "sem_compra_vigente" };
+  }
+  const cp = compraAlvo.compra;
+
+  if (nivelAlvo !== undefined && nivelAlvo !== cp.nivelNovo) {
+    return {
+      ok: false,
+      erro: `O nível alvo informado (${nivelAlvo}) não corresponde à compra vigente (nível ${cp.nivelNovo})`,
+      codigo: "nivel_alvo_divergente",
+      detalhes: { nivelCompra: cp.nivelNovo, nivelAlvo },
+    };
+  }
+
+  const nivelAtual = nivelAtualElemento(estrutura, dados, regras, kind, key);
+  if (nivelAtual !== cp.nivelNovo) {
+    return {
+      ok: false,
+      erro: `O nível atual do elemento (${nivelAtual}) diverge da compra a estornar (${cp.nivelNovo}) — o campo pode ter sido alterado por outro caminho`,
+      codigo: "nivel_divergente",
+      detalhes: { nivelAtual, nivelCompra: cp.nivelNovo },
+    };
+  }
+
+  const vinculo = escolherVinculo(estrutura, dados, kind, key, cp.nivelNovo);
+  if (!vinculo || vinculo.campo.id !== cp.campoId) {
+    return { ok: false, erro: "Não foi possível localizar o campo vinculado da compra", codigo: "sem_vinculo" };
+  }
+
+  // Reverte o nível e reconcilia `financiado` pelo MESMO caminho das
+  // escritas não-XP: a transição nivelAnterior→nivelNovo deixa de
+  // existir, então seu índice sai do financiado — a compra original
+  // permanece no ledger, mas o XP pode ser gasto de novo (foi
+  // reembolsado no mesmo evento de estorno).
+  let dadosNovos = aplicarNivelDados(dados, vinculo, key, cp.nivelAnterior);
+  if (vinculo.modo === "nivel") {
+    dadosNovos = reconciliarFinanciadoXp(dados, dadosNovos);
+  }
+
+  const validacao = validarRegras(estrutura, dadosNovos, regras);
+  const errosRegras = validacao.erros.filter((e) => e.codigo !== "pontos");
+  if (errosRegras.length > 0) {
+    return {
+      ok: false,
+      erro: "O estorno viola as regras da campanha",
+      codigo: "regras",
+      detalhes: { erros: errosRegras },
+    };
+  }
+
+  // Reembolso = custoXp debitado na compra original — nunca o custo
+  // atual (que pode ter mudado com as regras). Crédito viaja no MESMO
+  // evento estorno: quantidade positiva, saldo coerente.
+  const estornoDetalhe: NonNullable<EventoXp["estorno"]> = {
+    kind,
+    key,
+    nome: elemento.name,
+    campoId: vinculo.campo.id,
+    nivelDe: cp.nivelNovo,
+    nivelPara: cp.nivelAnterior,
+    custoXp: cp.custoXp,
+  };
+  const aplicado = aplicarXp(dadosNovos, cp.custoXp, {
+    tipo: "estorno",
+    motivo: `Estorno de nível: ${elemento.name} ${cp.nivelNovo} → ${cp.nivelAnterior}`,
+    autorId: autor.id,
+    autorNome: autor.nome,
+    ...(sessaoId ? { sessaoId } : {}),
+    estorno: estornoDetalhe,
+    estornoDe: { em: compraAlvo.em, custoXp: cp.custoXp },
+  });
+
+  return {
+    ok: true,
+    dados: aplicado.dados,
+    estadoXp: aplicado.estado,
+    estorno: estornoDetalhe,
+    compraEstornada: { em: compraAlvo.em, custoXp: cp.custoXp },
   };
 }

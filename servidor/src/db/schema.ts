@@ -475,6 +475,24 @@ export const xpLotes = sqliteTable("xp_lotes", {
   uniqueIndex("xp_lote_request_idx").on(t.campaignId, t.requestId),
 ]);
 
+// Estornos auditados de XP (Issue #185 item 1): idempotência por
+// (characterId, requestId) — mesmo padrão de xp_lotes, escopo
+// personagem. `resultado` guarda o que foi efetivado (nível revertido,
+// XP creditado, saldo) para retry idêntico devolver o gravado sem
+// duplicar evento; `payloadHash` distingue retry de requestId
+// reutilizado com payload divergente (409).
+export const xpEstornos = sqliteTable("xp_estornos", {
+  id: id(),
+  characterId: text("character_id").notNull().references(() => characters.id, { onDelete: "cascade" }),
+  requestId: text("request_id").notNull(),
+  payloadHash: text("payload_hash").notNull(),
+  resultado: text("resultado", { mode: "json" }).notNull(),
+  createdBy: text("created_by").references(() => users.id),
+  createdAt: createdAt(),
+}, (t) => [
+  uniqueIndex("xp_estorno_request_idx").on(t.characterId, t.requestId),
+]);
+
 // Sessões de jogo (spec §20)
 export const sessions = sqliteTable("sessions", {
   id: id(),

@@ -47,15 +47,32 @@ export interface CompraXp {
   custoXp: number;
 }
 
+export interface EstornoXp {
+  kind: string;
+  key: string;
+  nome: string;
+  campoId: string;
+  /** Nível removido pela reversão (= nivelNovo da compra revertida). */
+  nivelDe: number;
+  /** Nível restaurado (= nivelAnterior da compra revertida). */
+  nivelPara: number;
+  custoXp: number;
+}
+
 export interface EventoXp {
   em: string;
-  tipo: "concessao" | "remocao" | "compra" | "ajuste";
+  tipo: "concessao" | "remocao" | "compra" | "ajuste" | "estorno";
   quantidade: number;
   motivo: string | null;
   autorId: string | null;
   autorNome: string | null;
   saldoResultante: number;
   compra?: CompraXp;
+  estorno?: EstornoXp;
+  /** Referência à compra revertida (timestamp + custo debitado). */
+  estornoDe?: { em: string; custoXp: number };
+  /** Sessão de jogo que originou a concessão (XP por sessão, #185). */
+  sessaoId?: string;
 }
 
 export interface ElementoDisponivel {
@@ -88,7 +105,7 @@ export const apiProgressao = {
   obter: (characterId: string) =>
     requisicao<Progressao>(`/characters/${characterId}/progressao`),
 
-  concederXp: (characterId: string, dados: { acao: "conceder" | "remover"; quantidade: number; motivo: string }) =>
+  concederXp: (characterId: string, dados: { acao: "conceder" | "remover"; quantidade: number; motivo: string; sessaoId?: string }) =>
     requisicao<{ ok: boolean; xp: { saldo: number; historico: EventoXp[] } }>(`/characters/${characterId}/xp`, {
       method: "POST",
       body: JSON.stringify(dados),
@@ -100,9 +117,17 @@ export const apiProgressao = {
       body: JSON.stringify(dados),
     }),
 
+  // Issue #185 item 1: estorno auditado de compra de nível (mestre-only,
+  // idempotente por requestId no escopo do personagem).
+  estornarNivel: (characterId: string, dados: { kind: string; key: string; nivelAlvo?: number; motivo: string; requestId?: string }) =>
+    requisicao<{ ok: boolean; repetido?: boolean; estorno: EstornoXp; xp: { saldo: number }; compraEstornada: { em: string; custoXp: number } }>(`/characters/${characterId}/estorno-nivel`, {
+      method: "POST",
+      body: JSON.stringify(dados),
+    }),
+
   // Issue #185 item 3: concessão de XP em lote (mestre-only, tudo-ou-nada,
   // idempotente por requestId no escopo da campanha).
-  concederXpLote: (campaignId: string, dados: { requestId: string; motivo: string; itens: { characterId: string; quantidade: number }[] }) =>
+  concederXpLote: (campaignId: string, dados: { requestId: string; motivo: string; sessaoId?: string; itens: { characterId: string; quantidade: number }[] }) =>
     requisicao<{
       ok: boolean;
       repetido: boolean;

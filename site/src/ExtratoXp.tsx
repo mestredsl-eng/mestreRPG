@@ -25,6 +25,7 @@ const ROTULO_TIPO: Record<string, string> = {
   remocao: "XP removido",
   compra: "Compra",
   ajuste: "Ajuste",
+  estorno: "Estorno",
 };
 
 export default function ExtratoXp({ characterId }: { characterId: string }) {
@@ -100,7 +101,8 @@ export default function ExtratoXp({ characterId }: { characterId: string }) {
                   <li key={`${ev.em}-${i}`} className="extrato-xp-evento">
                     <strong>{ROTULO_TIPO[ev.tipo] ?? ev.tipo}</strong>
                     {ev.compra && <> — {ev.compra.nome} nv.{ev.compra.nivelAnterior}→{ev.compra.nivelNovo} (<span className="extrato-xp-qtd negativo">−{ev.compra.custoXp} XP</span>)</>}
-                    {!ev.compra && <> <span className={`extrato-xp-qtd ${ev.quantidade >= 0 ? "positivo" : "negativo"}`}>{ev.quantidade > 0 ? "+" : ""}{ev.quantidade} XP</span></>}
+                    {ev.estorno && <> — {ev.estorno.nome} nv.{ev.estorno.nivelDe}→{ev.estorno.nivelPara} (<span className="extrato-xp-qtd positivo">+{ev.estorno.custoXp} XP</span>)</>}
+                    {!ev.compra && !ev.estorno && <> <span className={`extrato-xp-qtd ${ev.quantidade >= 0 ? "positivo" : "negativo"}`}>{ev.quantidade > 0 ? "+" : ""}{ev.quantidade} XP</span></>}
                     <span className="meta">
                       {" "}· {new Date(ev.em).toLocaleString("pt-BR")}
                       {ev.autorNome ? ` · ${ev.autorNome}` : ""}
