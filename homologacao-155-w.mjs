@@ -11,6 +11,7 @@ import { join, resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
 import { createServer } from "node:net";
+import { randomUUID } from "node:crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RAIZ = __dirname;
@@ -553,10 +554,10 @@ async function executarBatE2E(w, cenario) {
       // (mutacao remota temporaria). Sem a flag, o cenario se declara
       // bloqueado em vez de produzir falso negativo.
       if (process.env.HOMOLOG_W_REMOTO_GITHUB !== "1") {
-        res.bloqueio = "auto-update exige origin oficial; pull E2E requer branch efemera autorizada no GitHub (HOMOLOG_W_REMOTO_GITHUB=1)";
+        res.bloqueio = "auto-update exige origin oficial; pull E2E requer branch efemera autorizada no GitHub (HOMOLOG_W_REMOTO_GITHUB=1) — implementado em executarW0RemotoEfemero";
         return res;
       }
-      throw new Error("modo remoto GitHub efemero ainda nao implementado — requer autorizacao e branch unica sem force");
+      throw new Error("W0 remoto efemero deve passar por casos.w0 → executarW0RemotoEfemero, nao por executarBatE2E");
     } else if (cenario === "w9" || cenario === "w10") {
       const ponto = cenario === "w9" ? "migrate" : "start";
       const stub = prepararStubNpm(tmp);
@@ -670,18 +671,169 @@ async function rodarBatParado(cloneDir, logFile, barDir, ponto, env, porta = 300
   return { exitCmd: codigo, estado, log: out.join(""), buf: out.join("") };
 }
 
+// ---------- W0 remoto efemero (autorizacao unica do proprietario) ----------
+// Modo explicito: HOMOLOG_W_REMOTO_GITHUB=1. Cria UMA branch descartavel
+// no GitHub oficial, prova o self-update do .bat legado N-1 contra o
+// remoto real e remove a ref no finally — somente se ela ainda apontar
+// para o SHA que este run publicou. Sem force, sem main, sem tags, sem
+// reutilizacao de refs. Nao imprimir credenciais: as operacoes remotas
+// usam GIT_TERMINAL_PROMPT=0 e a URL https oficial sem segredo embutido.
+const REMOTO_OFICIAL_W0 = "https://github.com/mestredsl-eng/mestreRPG";
+
+function gitRemoto(args, cwd) {
+  const r = gitRemotoOpcional(args, cwd);
+  if (r.code !== 0) throw new Error(`git ${args[0]} falhou (${r.code}): ${r.stderr.slice(0, 300)}`);
+  return r.stdout;
+}
+function gitRemotoOpcional(args, cwd) {
+  const r = spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+  return { code: r.status ?? -1, stdout: String(r.stdout ?? "").trim(), stderr: String(r.stderr ?? "").trim() };
+}
+function lsRemoteRef(ref) {
+  const r = gitRemotoOpcional(["ls-remote", REMOTO_OFICIAL_W0, ref], RAIZ);
+  if (r.code !== 0) throw new Error(`ls-remote falhou (${r.code}): ${r.stderr.slice(0, 200)}`);
+  const m = r.stdout.match(/^([0-9a-f]{40})\s/);
+  return m ? m[1] : null;
+}
+
+async function executarW0RemotoEfemero() {
+  const res = { execucoes: [], logsPreservados: [], w0remoto: {} };
+  const wr = res.w0remoto;
+  const logsDir = mkfixture("w0-remoto-logs");
+  const tmp = mkfixture("w0-remoto");
+  res.tmp = tmp;
+  const nome = `homolog/w0-e2e-${new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 14)}-${randomUUID().slice(0, 8)}`;
+  wr.branch = nome;
+  let shaFixture = null;
+  let cloneDir = null;
+  const cleanupRemoto = () => {
+    // finally remoto: exclui a ref SOMENTE se ela ainda apontar para o
+    // SHA publicado por este run. SHA divergente => intervencao manual.
+    try {
+      const atual = lsRemoteRef(`refs/heads/${nome}`);
+      wr.refShaApos = atual;
+      if (atual === null) { wr.refExcluida = wr.pushOk === true ? true : null; wr.refAusenteDepois = true; return; }
+      if (shaFixture && atual === shaFixture) {
+        gitRemoto(["push", REMOTO_OFICIAL_W0, `--delete`, `refs/heads/${nome}`], RAIZ);
+        wr.refExcluida = true;
+        wr.refAusenteDepois = lsRemoteRef(`refs/heads/${nome}`) === null;
+      } else {
+        wr.refExcluida = false;
+        wr.refAusenteDepois = false;
+        wr.cleanupIntervencao = `ref aponta para ${atual} (esperado ${shaFixture}) — NAO excluida`;
+      }
+    } catch (e) {
+      wr.refExcluida = false; wr.refAusenteDepois = false;
+      wr.cleanupErro = String(e.message ?? e).slice(0, 300);
+    }
+  };
+  try {
+    // pre-flight: porta 3001 e o pre-voo hardcoded do .bat legado N-1
+    if (await porta3001Ocupada()) {
+      res.bloqueio = "porta 3001 ocupada — o .bat legado (SHA_N1) aborta no pre-voo; abortando sem tocar em nada";
+      return res;
+    }
+    // prova de ausencia da ref antes de qualquer mutacao
+    const pre = lsRemoteRef(`refs/heads/${nome}`);
+    if (pre !== null) { res.bloqueio = `ref ${nome} ja existe (${pre}) — abortando`; return res; }
+    wr.mainAntes = lsRemoteRef("refs/heads/main");
+    wr.refsHomologAntes = gitRemotoOpcional(["ls-remote", REMOTO_OFICIAL_W0, "refs/heads/homolog/*"], RAIZ).stdout.split("\n").filter(Boolean).length;
+    // commit fixture em clone descartavel (nunca na arvore de trabalho)
+    const pub = join(tmp, "pub");
+    sh(`git clone --no-hardlinks "${RAIZ}" "${pub}"`, {});
+    git(`checkout -B ${nome} ${SHA_N1}`, pub);
+    const batPath = join(pub, "iniciar-mestre-rpg.bat");
+    const bat = readFileSync(batPath, "utf8");
+    const re = /^:sem_auto_update[ \t]*$/m;
+    if (!re.test(bat)) throw new Error("rotulo :sem_auto_update nao encontrado no .bat N-1");
+    writeFileSync(batPath, bat.replace(re, `:sem_auto_update\r\necho [HOMOLOG-W0] marcador-pos-update: .bat novo em execucao`));
+    git(`add iniciar-mestre-rpg.bat`, pub);
+    git(`-c user.name=homolog -c user.email=homolog@local commit -m "homolog: W0 self-update .bat efemero"`, pub);
+    shaFixture = git(`rev-parse HEAD`, pub);
+    wr.shaFixture = shaFixture;
+    // push de CRIACAO apenas — sem force, refspec explicito, sem main/tags
+    gitRemoto(["push", REMOTO_OFICIAL_W0, `${shaFixture}:refs/heads/${nome}`], pub);
+    wr.pushOk = true;
+    // clone de teste com origin OFICIAL real; upstream = origin/<nome>
+    cloneDir = join(tmp, "install");
+    sh(`git clone --no-hardlinks "${RAIZ}" "${cloneDir}"`, {});
+    gitRemoto(["remote", "set-url", "origin", REMOTO_OFICIAL_W0], cloneDir);
+    gitRemoto(["fetch", "origin", `${nome}:refs/remotes/origin/${nome}`], cloneDir);
+    git(`checkout -B ${nome} ${SHA_N1}`, cloneDir);
+    git(`branch --set-upstream-to=origin/${nome}`, cloneDir);
+    wr.headAntes = git(`rev-parse HEAD`, cloneDir);
+    try { symlinkSync(join(RAIZ, "node_modules"), join(cloneDir, "node_modules"), "junction"); } catch (e) { log("junction node_modules falhou:", e.message); }
+    // boot real: .bat N-1 → updater real → pull ff-only → self-update →
+    // marcador → build/migrate/start reais → health 200 → kill da arvore.
+    // envBatFilho confina MESTRE_* ao tmp descartavel (contrato item 5);
+    // sem MESTRE_PORTA — o legado usa a porta fixa 3001.
+    const r = await rodarBat(cloneDir, join(tmp, "w0-remoto-run.log"), { env: envBatFilho(tmp), porta: 3001 });
+    res.execucoes.push({ fase: "boot-self-update", ...r.estado, exitCmd: r.exitCmd });
+    res.buf = r.buf; res.log = r.log;
+    res.marcador = /marcador-pos-update/.test(r.buf);
+    res.headFinal = git(`rev-parse HEAD`, cloneDir);
+    res.shaN = shaFixture; // compatibilidade com o consumidor em casos.w0
+    wr.mainDepois = lsRemoteRef("refs/heads/main");
+    wr.refsHomologDepois = gitRemotoOpcional(["ls-remote", REMOTO_OFICIAL_W0, "refs/heads/homolog/*"], RAIZ).stdout.split("\n").filter(Boolean).length;
+    wr.headFinal = res.headFinal;
+    wr.marcador = res.marcador;
+    // relatorio sanitizado preservado fora do tmp removido
+    writeFileSync(join(logsDir, "w0-remoto-resumo.json"), JSON.stringify({
+      branch: nome, shaN1: SHA_N1, shaFixture, headAntes: wr.headAntes, pushOk: wr.pushOk,
+      headFinal: res.headFinal, marcador: res.marcador,
+      execucao: res.execucoes[0], mainAntes: wr.mainAntes, mainDepois: wr.mainDepois,
+      refsHomologAntes: wr.refsHomologAntes, refsHomologDepois: wr.refsHomologDepois,
+      cleanup: null, // preenchido apos cleanupRemoto
+    }, null, 2));
+    res.logsPreservados.push(logsDir);
+  } catch (e) {
+    res.erro = String(e?.message ?? e).slice(0, 500);
+  } finally {
+    cleanupRemoto();
+    try {
+      const resumoPath = join(logsDir, "w0-remoto-resumo.json");
+      const resumo = JSON.parse(readFileSync(resumoPath, "utf8"));
+      resumo.cleanup = { refExcluida: wr.refExcluida, refAusenteDepois: wr.refAusenteDepois, refShaApos: wr.refShaApos, cleanupIntervencao: wr.cleanupIntervencao ?? null, cleanupErro: wr.cleanupErro ?? null };
+      writeFileSync(resumoPath, JSON.stringify(resumo, null, 2));
+    } catch { /* resumo pode nao existir se falhou antes */ }
+    try { for (const f of readdirSync(tmp)) { if (f.endsWith(".log")) { cpSync(join(tmp, f), join(logsDir, f)); res.logsPreservados.push(join(logsDir, f)); } } } catch { /* tmp pode ter saido */ }
+    rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+    res.tmpRemovido = true;
+  }
+  return res;
+}
+
 const casos = {
   w14: () => w14(),
   w8: () => w8(),
   w6: () => w6(),
   w16: () => w16(),
-  w0: () => executarBatE2E(0, "w0").then((r) => {
-    if (r.bloqueio) { reg("W0", "bloqueado", r.bloqueio, r.logsPreservados); return; }
-    const headOk = r.headFinal === r.shaN;
-    reg("W0", headOk ? "aprovado" : "reprovado",
-      `bat legado extraido executado via .bat real; pull trouxe commit ${r.shaN.slice(0, 12)} que altera o proprio .bat no meio da execucao; headFinal=${r.headFinal.slice(0, 12)} (esperado ${r.shaN.slice(0, 12)}); marcador-pos-update no log=${r.marcador}; execucoes=${JSON.stringify(r.execucoes)}; logs em ${r.logsPreservados.join(", ") || r.tmp}`,
-      r.logsPreservados.length ? r.logsPreservados : [`${r.tmp}/w0-run1.log`]);
-  }),
+  w0: () => {
+    if (process.env.HOMOLOG_W_REMOTO_GITHUB === "1") {
+      // Modo remoto efemero autorizado (ver executarW0RemotoEfemero):
+      // branch unica no GitHub oficial, self-update real do .bat N-1,
+      // cleanup fail-closed da ref no finally.
+      return executarW0RemotoEfemero().then((r) => {
+        if (r.bloqueio) { reg("W0", "bloqueado", r.bloqueio, r.logsPreservados); return; }
+        const w = r.w0remoto;
+        const headOk = r.headFinal === w.shaFixture;
+        const limpezaOk = w.refExcluida === true && w.refAusenteDepois === true;
+        const mainOk = !!w.mainAntes && w.mainAntes === w.mainDepois;
+        const healthOk = r.execucoes[0]?.health === 200;
+        const ok = r.marcador === true && headOk && healthOk && limpezaOk && mainOk;
+        reg("W0", ok ? "aprovado" : "reprovado",
+          `W0 remoto efemero: branch=${w.branch} shaN1=${SHA_N1.slice(0, 12)} shaFixture=${(w.shaFixture ?? "").slice(0, 12)} headFinal=${(r.headFinal ?? "").slice(0, 12)} marcador=${r.marcador} health=${r.execucoes[0]?.health} exitCmd=${r.execucoes[0]?.exitCmd}; mainAntes=${(w.mainAntes ?? "").slice(0, 12)} mainDepois=${(w.mainDepois ?? "").slice(0, 12)} mainIntacta=${mainOk}; refExcluida=${w.refExcluida} refAusenteDepois=${w.refAusenteDepois}${w.cleanupIntervencao ? " INTERVENCAO: " + w.cleanupIntervencao : ""}${r.erro ? " erro=" + r.erro : ""}; resumo em ${r.logsPreservados.join(", ") || "n/a"}`,
+          r.logsPreservados);
+      });
+    }
+    return executarBatE2E(0, "w0").then((r) => {
+      if (r.bloqueio) { reg("W0", "bloqueado", r.bloqueio, r.logsPreservados); return; }
+      const headOk = r.headFinal === r.shaN;
+      reg("W0", headOk ? "aprovado" : "reprovado",
+        `bat legado extraido executado via .bat real; pull trouxe commit ${r.shaN.slice(0, 12)} que altera o proprio .bat no meio da execucao; headFinal=${r.headFinal.slice(0, 12)} (esperado ${r.shaN.slice(0, 12)}); marcador-pos-update no log=${r.marcador}; execucoes=${JSON.stringify(r.execucoes)}; logs em ${r.logsPreservados.join(", ") || r.tmp}`,
+        r.logsPreservados.length ? r.logsPreservados : [`${r.tmp}/w0-run1.log`]);
+    });
+  },
   w9: () => executarBatE2E(9, "w9").then((r) => {
     if (r.bloqueado) return;
     const subiu = r.execucoes[1]?.health === 200;
