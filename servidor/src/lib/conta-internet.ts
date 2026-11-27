@@ -68,6 +68,46 @@ export async function contaAutorizadaPara(
   return { conta, personagem, membership, papel: membership.role as "mestre" | "jogador" };
 }
 
+/** Titularidade atual SEM o gate de elegibilidade (P5): replica os
+ *  passos 1–4 de contaAutorizadaPara — conta ativa, personagem válido,
+ *  membership ativa do usuário e personagem pertencente ao usuário —
+ *  mas não exige gateInternetDoPersonagem. Uso: distinguir "titular
+ *  cujo gate foi revogado" (negação honesta → 403) de "não-titular"
+ *  (anti-oráculo → 404) nas rotas de escrita da Internet pública. */
+export async function titularAtualDaConta(contaId: string, userId: string): Promise<boolean> {
+  const [conta] = await db.select({
+    characterId: internetAccounts.characterId,
+    campaignId: internetAccounts.campaignId,
+    status: internetAccounts.status,
+  }).from(internetAccounts).where(eq(internetAccounts.id, contaId)).limit(1);
+  if (!conta || conta.status !== "ativa") return false;
+
+  const [personagem] = await db.select({
+    membershipId: characters.membershipId,
+    status: characters.status,
+  }).from(characters)
+    .where(and(eq(characters.id, conta.characterId), eq(characters.campaignId, conta.campaignId)))
+    .limit(1);
+  if (!personagem || personagem.status === "arquivado") return false;
+
+  const [membership] = await db.select({ role: memberships.role }).from(memberships)
+    .where(and(
+      eq(memberships.campaignId, conta.campaignId),
+      eq(memberships.userId, userId),
+      eq(memberships.status, "ativo"),
+    ))
+    .limit(1);
+  if (!membership || (membership.role !== "mestre" && membership.role !== "jogador")) return false;
+
+  const [dono] = await db.select({ userId: memberships.userId, status: memberships.status }).from(memberships)
+    .where(and(
+      eq(memberships.id, personagem.membershipId),
+      eq(memberships.campaignId, conta.campaignId),
+    ))
+    .limit(1);
+  return !!dono && dono.status === "ativo" && dono.userId === userId;
+}
+
 /** P10 — leitura privilegiada do mestre: membership ativa com papel
  *  "mestre" NA CAMPANHA da conversa. Somente leitura; nunca concede
  *  envio/gestão. ADMIN global não herda (não consulta is_admin). */

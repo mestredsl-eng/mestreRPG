@@ -199,26 +199,58 @@ internetPublicaRouter.get("/sites/:slug/paginas/:pageSlug", requirePapel("mestre
     )).limit(1);
   if (!site) { erroHttp(res, 404, "Site não encontrado"); return; }
 
+  // Sem filtro de status na query: a página pode estar em qualquer
+  // estado e a decisão de visibilidade é por ator (W3-escrita).
   const [pagina] = await db.select().from(internetPages)
     .where(and(
       eq(internetPages.siteId, site.id),
       eq(internetPages.campaignId, cid),
       eq(internetPages.slug, req.params.pageSlug),
-      eq(internetPages.status, "publicado"),
     )).limit(1);
   if (!pagina) { erroHttp(res, 404, "Página não encontrada"); return; }
 
+  // Visão pública: somente `publicado`. Visão estendida (autor da
+  // página via contaAutorizadaPara ou mestre) enxerga qualquer status
+  // com version/status/autorContaId — prévia do editor. Não-privilegiado
+  // recebe 404 IDÊNTICO ao inexistente (zero oráculo de rascunho).
+  const souAutor = await contaAutorizadaPara(pagina.autorContaId, req.usuario!.id);
+  const ehMestre = souAutor ? false : await mestreLeitorDaCampanha(cid, req.usuario!.id);
+  const privilegiado = !!souAutor || ehMestre;
+  if (pagina.status !== "publicado" && !privilegiado) {
+    erroHttp(res, 404, "Página não encontrada");
+    return;
+  }
+
   const [autor] = await db.select().from(internetAccounts)
     .where(eq(internetAccounts.id, pagina.autorContaId)).limit(1);
+
+  if (!privilegiado) {
+    res.json({
+      pagina: {
+        slug: pagina.slug,
+        titulo: pagina.titulo,
+        corpo: pagina.corpo,
+        formato: pagina.formato === "markdown-subset" ? "texto" : pagina.formato,
+        version: pagina.version,
+        publicadoEm: pagina.publishedAt,
+        autor: autor ? contaPublica(autor) : null,
+      },
+      site: { slug: site.slug, nome: site.nome },
+    });
+    return;
+  }
 
   res.json({
     pagina: {
       slug: pagina.slug,
       titulo: pagina.titulo,
       corpo: pagina.corpo,
-      formato: pagina.formato === "markdown-subset" ? "texto" : pagina.formato,
+      formato: pagina.formato,
+      status: pagina.status,
       version: pagina.version,
+      autorContaId: pagina.autorContaId,
       publicadoEm: pagina.publishedAt,
+      atualizadoEm: pagina.updatedAt,
       autor: autor ? contaPublica(autor) : null,
     },
     site: { slug: site.slug, nome: site.nome },
