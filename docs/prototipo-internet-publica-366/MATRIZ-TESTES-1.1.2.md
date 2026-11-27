@@ -49,8 +49,9 @@ W1/W3 incluídos: gate de leitura; diretório de sites da campanha; paginação 
 | SITE-06 | Autor edita sua própria página | Permitido; versão incrementa exatamente uma vez; auditoria registra personagem/ator/horário/versão |
 | SITE-07 | Dono do site tenta editar página escrita por outro autor | Negado; ownership do site não transfere autoria de página |
 | SITE-08 | Mestre modera ou arquiva site/conteúdo alheio | Permitido de acordo com escopo de moderação; nunca recebe operação para reescrever o conteúdo alheio |
-| SITE-09 | Transferência P7 do personagem | Ownership e autoria continuam vinculados ao personagem; titular novo recebe as permissões derivadas do personagem; titular anterior não conserva autoridade |
-| SITE-10 | Duas edições concorrentes ou retry da mesma edição | Sem sobrescrita silenciosa; versão/auditoria consistentes; retry não incrementa duas vezes |
+| SITE-09 | Transferência P7 do personagem | `internet_accounts.character_id`/IDs owner+author permanecem; `characters.membershipId` muda; titular novo recebe administração/edição derivada do personagem; titular anterior perde autoridade no mesmo aceite |
+| SITE-10 | Titular anterior tenta gravar após aceite P7 | Negado pela revalidação da titularidade atual; não basta possuir a conta Internet/personagem historicamente |
+| SITE-11 | Duas edições concorrentes ou retry da mesma edição | Sem sobrescrita silenciosa; versão/auditoria consistentes; retry não incrementa duas vezes |
 | VER-01 | Edição válida após versão N | Resultado N+1 e evento de auditoria correspondente |
 | VER-02 | Tentar consultar versões antigas, restaurar versão ou fazer rollback | Não existe histórico recuperável, endpoint, UI ou rollback de conteúdo (D3=A) |
 | VER-03 | Examinar auditoria | Contém trilha necessária, mas não funciona como cópia oculta recuperável do corpo anterior |
@@ -100,7 +101,7 @@ W1/W3 incluídos: gate de leitura; diretório de sites da campanha; paginação 
 | PROF-03 | Após ativação tenta ocultar/desativar/excluir perfil | Não oferecer nem aceitar tais operações (D10) |
 | PROF-04 | Perfil ativo | Exibe apenas nome público, avatar e descrição conforme decisões aceitas |
 | PROF-05 | Pesquisa perfil | Localização por `handle`; não indexar `displayName` (D12) |
-| PROF-06 | Transferência P7 | Perfil acompanha `characterId`; novo titular autorizado administra o perfil |
+| PROF-06 | Transferência P7 | Perfil/conta continuam vinculados ao `characterId`; novo titular autorizado administra; titular anterior perde a escrita |
 | PROF-07 | Personagem com morte ativa | Perfil permanece acessível em leitura, somente-leitura na escrita (DP-5) |
 | PROF-08 | Ressurreição mestre auditada | Escrita reabre segundo DP-8; notícia anterior permanece |
 | PROF-09 | Avatar atualizado | Usa pipeline `arquivos` existente; sem storage ou upload paralelo |
