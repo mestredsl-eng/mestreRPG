@@ -121,25 +121,22 @@ leitura — mutações são mais caras; enumeração de slugs continua cara).
 
 ### Páginas
 
-`POST /sites/:slug/paginas` — criar página
+POST /sites/:slug/paginas` — criar página
 
 - Body: `{ slug, titulo, corpo, formato?, statusInicial? }`
 - `formato`: `"texto" | "markdown-subset"` (default `texto`)
-- `statusInicial`: `"rascunho" | "publicado"` (default `rascunho`)
-- **Somente o dono do site cria páginas** (SITE-12): conta do
-  requisitante precisa ser `ownerContaId` do site → não-dono recebe
-  `403` (site é público por D2 — 404 não agregaria sigilo).
-- Toda criação exige conta ativa, titularidade atual e gate P5 elegível,
-  inclusive quando `statusInicial="rascunho"`.
-- Site precisa existir e estar `ativo` → `404`/`409 estado_invalido`
-- Qualquer `statusInicial` exige gate P5 elegível; não existe exceção
-  para rascunho → `403 internet_elegibilidade_revogada`.
-- `autorContaId` = conta do requisitante; `campaignId` desnormalizado =
-  `site.campaignId`; `version=1`; `publishedAt` preenchido só se já
-  publicado
-- Slug único por site → `409 slug_em_uso`
-- Audit `internet.pagina_criada` `{ pageId, siteId, slug, autorContaId,
-  version: 1, status }`
+- `statusInicial`: `"rascunho" | "publicado"` (default `"rascunho"`)
+- Somente o dono do site cria páginas (SITE-12); não-dono recebe
+  `403 nao_autorizado`.
+- Site precisa existir e estar `ativo` → `404`/`409 estado_invalido`.
+- Toda criação, inclusive como rascunho, exige conta ativa,
+  titularidade atual e gate P5 elegível → `403
+  internet_elegibilidade_revogada`.
+- `autorContaId` = conta do requisitante; `campaignId` = campanha do
+  site; `version=1`; `publishedAt` preenchido somente se publicado.
+- Slug único por site → `409 slug_em_uso`.
+- Audit `internet.pagina_criada` na mesma transação:
+  `{ pageId, siteId, slug, autorContaId, version: 1, status }`.
 
 `PATCH /sites/:slug/paginas/:pageSlug` — editar conteúdo
 
@@ -160,34 +157,44 @@ leitura — mutações são mais caras; enumeração de slugs continua cara).
   do `audit()`; `autorContaId` identifica o personagem diegético
 - Editar página `arquivada` → `409 estado_invalido`
 
-`POST /sites/:slug/paginas/:pageSlug/publicar`
+POST /sites/:slug/paginas/:pageSlug/publicar
 
-- Autor only; transição `rascunho → publicado` (ou re-publicar
-  `retirado → publicado`)
-- Revalida **gate P5** no ato → `403 internet_elegibilidade_revogada`
-- `publishedAt` = agora na primeira publicação; em re-publicação,
-  mantém o original? **Decisão**: `publishedAt` registra a PRIMEIRA
-  publicação (histórico); `updatedAt` cobre as demais
-- Audit `internet.pagina_status` `{ de, para, version }`
+- Autor only; transição `rascunho → publicado` ou
+  `retirado → publicado`.
+- Revalida conta, titularidade atual e gate P5 em toda operação.
+- Body exige `{ expectedVersion }`; versão divergente → `409
+  versao_desatualizada` com `{ versionAtual }`.
+- Ao aceitar, incrementa `version` exatamente uma vez e grava
+  `internet.pagina_status` na mesma transação da publicação.
+- `publishedAt` registra a primeira publicação; re-publicar mantém
+  a data original e `updatedAt` registra a alteração posterior.
 
 `POST /sites/:slug/paginas/:pageSlug/retirar`
 
-- Autor only; `publicado → retirado` (despublica sem apagar — distinto
-  de arquivar: retirado pode voltar por `publicar`)
-- Audit `internet.pagina_status`
+- Autor only; `publicado → retirado` (despublica sem apagar; pode
+  voltar por `publicar`).
+- Body exige `{ expectedVersion }`; revalida conta, titularidade e
+  gate P5. Versão divergente → `409 versao_desatualizada`.
+- Ao aceitar, incrementa `version` exatamente uma vez e grava
+  `internet.pagina_status` atomicamente com a transição.
 
-`POST /sites/:slug/paginas/:pageSlug/arquivar` e `.../restaurar`
+`POST /sites/:slug/paginas/:pageSlug/arquivar` e
+`POST /sites/:slug/paginas/:pageSlug/restaurar`
 
-- Autor da página **ou mestre**; `qualquer-status → arquivado`
-- `restaurar`: arquivado → `publicado` se `publishedAt` existe, senão
-  `rascunho` (regra derivável do estado persistido — sem tabela extra)
-- Mestre nunca passa por este caminho para editar conteúdo — arquivar/
-  restaurar é moderação, auditada com `papel: "mestre"` quando for o caso
-- Audit `internet.pagina_arquivada` / `internet.pagina_restaurada` com
-  `{ de, para, por }`
+- Autor da página ou Mestre; Mestre pode somente moderar, nunca
+  reescrever conteúdo. Ambos revalidam autorização/gate P5.
+- Body exige `{ expectedVersion }`; versão divergente →
+  `409 versao_desatualizada`.
+- Arquivar: qualquer estado permitido → `arquivado`. Restaurar:
+  `arquivado → publicado` se `publishedAt` existir; caso contrário,
+  `arquivado → rascunho`.
+- Ao aceitar, incrementa `version` exatamente uma vez e grava
+  `internet.pagina_arquivada` ou `internet.pagina_restaurada`
+  na mesma transação.
+- Auditoria registra `{ de, para, por, version }`, sem snapshots.
 
-Regra transversal às quatro transições acima: site `arquivado` congela
-status de suas páginas → `409 estado_invalido` (mesma regra do PATCH).
+Regra transversal às transições: site `arquivado` congela o status
+de suas páginas → `409 estado_invalido` (mesma regra do PATCH).
 
 `GET /sites/:slug/paginas` — listagem autenticada
 
