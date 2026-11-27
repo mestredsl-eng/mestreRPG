@@ -296,7 +296,27 @@ try {
     writeFileSync(join(arqPath(r3), "doc_vivo.txt"), "vivo");
     mkdirSync(join(r3, "configuracao"), { recursive: true });
     writeFileSync(cfgPath(r3), JSON.stringify({ atual: true }));
-    const bk = fazerBackup(r3, "bk_antigo", { rebaixar: true });
+    // Issue #380: o "backup antigo" precisa ser CANÔNICO — produzido pelo
+    // replay real do prefixo (journal reduzido às entries idx<17), não por
+    // reversão cirúrgica que deixa resíduo estrutural rejeitado pelo gate
+    // (journal verdadeiro + objetos divergentes ⇒ estrutura-divergente).
+    const migAntiga = join(RAIZ, "migrations-prefixo-antigo");
+    cpSync(join(RAIZ_REPO, "servidor", "migrations"), migAntiga, { recursive: true });
+    const jpAntiga = join(migAntiga, "meta", "_journal.json");
+    const jAntiga = JSON.parse(readFileSync(jpAntiga, "utf8"));
+    jAntiga.entries = jAntiga.entries.filter((e) => e.idx < IDX_FRONTEIRA);
+    writeFileSync(jpAntiga, JSON.stringify(jAntiga));
+    const r3b = join(RAIZ, "antigo-src");
+    mkdirSync(join(r3b, "banco"), { recursive: true });
+    const mAntigo = migrar(r3b, envRaiz(r3b, { MESTRE_MIGRATIONS_FOLDER: migAntiga }));
+    t("fonte do backup: prefixo antigo migrado", mAntigo.code === 0, mAntigo.saida.slice(-200));
+    const bk = join(r3, "backups", "bk_antigo");
+    mkdirSync(bk, { recursive: true });
+    mkdirSync(join(bk, "arquivos"), { recursive: true });
+    writeFileSync(join(bk, "arquivos", "doc_bk.txt"), "conteudo-do-backup");
+    mkdirSync(join(bk, "configuracao"), { recursive: true });
+    writeFileSync(join(bk, "configuracao", "servidor.json"), JSON.stringify({ backup: true }));
+    copyFileSync(dbPath(r3b), join(bk, "mestre-rpg.db"));
     {
       const d = abrirDb(join(bk, "mestre-rpg.db"));
       const ok = !d.prepare("select name from sqlite_master where type='table' and name=?").get(TABELA_NOVA);
