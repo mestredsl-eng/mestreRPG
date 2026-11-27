@@ -45,12 +45,13 @@ W1/W3 incluídos: gate de leitura; diretório de sites da campanha; paginação 
 | SITE-02 | Personagem não elegível ou sem dispositivo tenta criar site | Negado pelo gate canônico; nenhum registro parcial |
 | SITE-03 | Dono administra metadados do próprio site | Permitido somente nas propriedades de administração do site autorizadas pelo contrato |
 | SITE-04 | Outro personagem tenta administrar site alheio | Negado; não alterar metadados nem ownership |
-| SITE-05 | Autor cria página em site que pode administrar | Autoria registrada como o personagem autenticado; autor não pode ser escolhido pelo body |
+| SITE-05 | Personagem cria página em site próprio | Permitido somente quando o site pertence à conta/personagem atual; autoria derivada no servidor |
 | SITE-06 | Autor edita sua própria página | Permitido; versão incrementa exatamente uma vez; auditoria registra personagem/ator/horário/versão |
 | SITE-07 | Dono do site tenta editar página escrita por outro autor | Negado; ownership do site não transfere autoria de página |
 | SITE-08 | Mestre modera ou arquiva site/conteúdo alheio | Permitido de acordo com escopo de moderação; nunca recebe operação para reescrever o conteúdo alheio |
 | SITE-09 | Transferência P7 do personagem | `internet_accounts.character_id`/IDs owner+author permanecem; `characters.membershipId` muda; titular novo recebe administração/edição derivada do personagem; titular anterior perde autoridade no mesmo aceite |
 | SITE-10 | Titular anterior tenta gravar após aceite P7 | Negado pela revalidação da titularidade atual; não basta possuir a conta Internet/personagem historicamente |
+| SITE-12 | Personagem tenta criar página em site alheio ou usar convite/colaboração não suportado | 4xx; nenhum registro parcial nem mudança de autor/owner (corte 1.1.2 sem colaboração) |
 | SITE-11 | Duas edições concorrentes ou retry da mesma edição | Sem sobrescrita silenciosa; versão/auditoria consistentes; retry não incrementa duas vezes |
 | VER-01 | Edição válida após versão N | Resultado N+1 e evento de auditoria correspondente |
 | VER-02 | Tentar consultar versões antigas, restaurar versão ou fazer rollback | Não existe histórico recuperável, endpoint, UI ou rollback de conteúdo (D3=A) |
@@ -62,6 +63,7 @@ W1/W3 incluídos: gate de leitura; diretório de sites da campanha; paginação 
 |---|---|---|
 | PUB-01 | Personagem cria post de perfil permitido | Publicação associada ao personagem; anonimato não aparece para `post_perfil` (DP-6) |
 | PUB-02 | Usuário envia autor/handle/characterId alheio | Identidade é derivada no servidor; escrita alheia rejeitada |
+| PUB-03 | Cliente força `identidade: "anonima"` em `noticia`, `post_perfil`, `site` ou `pagina` | API rejeita com 4xx antes de persistir; anonimato só é aceito em `anuncio`/`classificado` (DP-6) |
 | NEWS-01 | Personagem sem `profissao:jornalista` ativa no campo Profissão do ruleset da campanha tenta publicar matéria | Negado sem criar publicação |
 | NEWS-02 | Personagem com a chave estável `jornalista` no campo Profissão e definição `profissao:jornalista` ativa publica matéria | Permitido e autoria registrada |
 | NEWS-03 | Mestre publica matéria/notícia | Permitido, com proveniência/autoria/auditoria preservadas |
@@ -70,9 +72,9 @@ W1/W3 incluídos: gate de leitura; diretório de sites da campanha; paginação 
 | NEWS-06 | Requisito tenta introduzir classe/perícia/habilidade/atributo paralelo "jornalista" | Teste/inspeção confirma que não foi criado sistema paralelo |
 | NEWS-07 | Mestre publica matéria sem profissão jornalística no personagem | Permitido conforme exceção decidida |
 | NEWS-08 | Investigar matéria sem elegibilidade jornalística | Negado conforme regra D8 |
-| NEWS-06 | Morte ativa gera notícia automática | Uma publicação por ocorrência/evento; deduplicação por personagem/época; selo automático |
-| NEWS-07 | Ressurreição auditada e nova morte | Notícia antiga permanece; nova ocorrência pode gerar nova notícia, sem sobrescrever a anterior (DP-8/DP-9) |
-| NEWS-08 | Corrigir causa da morte publicada | Nova publicação complementar; nunca alterar retroativamente a notícia automática ou `__morte.causa` |
+| NEWS-09 | Morte ativa gera notícia automática | Uma publicação por ocorrência/evento; deduplicação por personagem/época; selo automático |
+| NEWS-10 | Ressurreição auditada e nova morte | Notícia antiga permanece; nova ocorrência pode gerar nova notícia, sem sobrescrever a anterior (DP-8/DP-9) |
+| NEWS-11 | Corrigir causa da morte publicada | Nova publicação complementar; nunca alterar retroativamente a notícia automática ou `__morte.causa` |
 
 **Base concreta D8 já localizada:** a biblioteca inicial em `servidor/src/lib/seed-regras.ts` registra `profissao:jornalista`; `profissao` é um `TipoRegra` válido; a ficha de referência tem campo Profissão com `regraKind: "profissao"`; e `site/src/FichaForm.tsx` salva `o.key` como valor, mantendo `o.name` só como rótulo. O gate usa a chave estável `jornalista` no ruleset ativo, server-side. O Mestre pode remover/editar a biblioteca: não recriar automaticamente a profissão apagada. `profissao:investigador` também existe, mas não dá permissão jornalística por si só.
 
@@ -130,11 +132,13 @@ W1/W3 incluídos: gate de leitura; diretório de sites da campanha; paginação 
 | EXP-03 | Export com conteúdo de visibilidade restrita | Preserva a regra de visibilidade sem promover conteúdo privado/restrito a público |
 | EXP-04 | Export com denúncias e contestação | Preserva estado e metadados necessários à continuidade do ciclo de moderação |
 | EXP-05 | Mensagens/conversas privadas existem na campanha | Não são incluídas no export/import da campanha |
-| EXP-06 | Conteúdo anônimo existe | Export da campanha não revela vínculo da identidade real do autor; anonimato e DP-1/DP-6 continuam preservados |
+| EXP-06 | Conteúdo anônimo existe | Export contém referência opaca aleatória, não reversível e sem FK/handle/ID humano; identidade real não viaja no pacote |
 | EXP-07 | Importar em campanha de destino | Remapeia IDs/foreign keys sem colisão; nenhum vínculo com a campanha de origem permanece |
 | EXP-08 | Import com personagem/autor inexistente no destino | Falha controlada ou mapeamento explicitamente definido; nunca cria titular/autor falso |
 | EXP-09 | Reexport após importar | Equivalência semântica do domínio público, excluindo os dados privados por regra |
 | EXP-10 | Backup integral do servidor | Separado do export de campanha; restaura o banco completo conforme contrato de backup, sem confundir os dois formatos |
+| EXP-11 | Inspecionar pacote com publicação anônima e denúncia/contestação | Nenhum `characterId`, `autor_conta_id`, `userId`, membership, handle ou vínculo desanonimizado aparece; só referência opaca aleatória e dados mínimos do ciclo |
+| EXP-12 | Importar e reexportar conteúdo anônimo | Referência continua não resolvível e não concede titularidade/escrita; conteúdo/estado histórico se preservam sem restaurar identidade real |
 
 ## 9. Investigação jornalística — W11
 
