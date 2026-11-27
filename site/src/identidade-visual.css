@@ -296,6 +296,72 @@ textarea:focus {
   }
 }
 
+/* ---------- Microinterações temáticas (incremento #132) ----------
+   Entradas e realces leves sobre fluxos já existentes: troca de painéis,
+   modais, novas rolagens, mudança de turno e variação de HP/vitalidade
+   nos tokens. Tudo é CSS-only — a repetição é obtida por remontagem de
+   DOM (troca de aba, key por valor) e a camada inteira é neutralizada
+   por [data-movimento-efetivo="reduzido"] (preferência do app) e pelo
+   guarda global prefers-reduced-motion abaixo. Sem JS extra, sem
+   dependências, sem custo quando o movimento está reduzido. */
+
+@keyframes micro-entra-cima {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes micro-entra-modal {
+  from { opacity: 0; transform: translateY(-10px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes micro-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes micro-item-entra {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes micro-tag-turno {
+  0% { box-shadow: 0 0 0 0 var(--horror-destaque-suave, rgba(141, 61, 75, .45)); }
+  100% { box-shadow: 0 0 0 7px transparent; }
+}
+@keyframes micro-vida-muda {
+  0% { filter: brightness(1.8) saturate(1.3); }
+  100% { filter: none; }
+}
+
+/* Painéis das abas da Campanha: remontam a cada troca (render condicional)
+   — a animação de entrada reexecuta naturalmente a cada aba. */
+[role="tabpanel"] {
+  animation: micro-entra-cima .26s ease-out;
+}
+
+/* Modais: .modal-fundo é o backdrop compartilhado por todas as telas. */
+.modal-fundo {
+  animation: micro-fade .18s ease-out;
+}
+.modal {
+  animation: micro-entra-modal .22s ease-out;
+}
+
+/* Rolagens: itens novos entram pela esquerda; os já montados não repetem. */
+.rolagem-item {
+  animation: micro-item-entra .3s ease-out;
+}
+
+/* Turno atual: pulso único ao se tornar atual — Mesa.tsx remonta o span
+   via key quando turnos.atual muda, então a animação dispara só na troca. */
+.tag-atual {
+  animation: micro-tag-turno .7s ease-out;
+}
+
+/* HP/vitalidade do token: Mesa.tsx usa key por valor — o span remonta
+   somente quando o número muda de fato, disparando um flash único. */
+.vtt-token-hp,
+.vtt-token-vit {
+  animation: micro-vida-muda .6s ease-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
