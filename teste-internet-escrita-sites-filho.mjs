@@ -46,8 +46,16 @@ const comDb = (fn) => {
   const db = abrirDb(BANCO);
   try { return fn(db); } finally { db.close(); }
 };
+// detail é TEXT JSON — better-sqlite3 devolve string crua; JSON.stringify
+// da row escapa as aspas internas (\"version\"), então parseamos antes
+// de inspecionar os campos do contrato de auditoria.
 const audits = (actionLike) => comDb((db) =>
-  db.prepare("select * from audit_logs where action like ? order by created_at").all(`%${actionLike}%`));
+  db.prepare("select * from audit_logs where action like ? order by created_at").all(`%${actionLike}%`)
+    .map((a) => {
+      let d = a.detail;
+      if (typeof d === "string") { try { d = JSON.parse(d); } catch { /* mantém string */ } }
+      return { ...a, detail: d };
+    }));
 const snapshotPagina = (siteSlug, pageSlug) => comDb((db) =>
   db.prepare("select p.corpo,p.version,p.status from internet_pages p join internet_sites s on s.id=p.site_id where s.slug=? and p.slug=?")
     .get(siteSlug, pageSlug));
