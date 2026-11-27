@@ -182,7 +182,7 @@ na busca" fundidas em **D10**; "moderação" + "motivo ao autor" fundidas em
 | D5 | PAI #365 | Gate para leitura pública | a) gate em tudo b) descoberta aberta | **DECIDIDO/IMPLEMENTADO: A — leitura de jogador exige conta Internet elegível + dispositivo reconhecido, revalidados no servidor; Mestre mantém a leitura privilegiada da campanha pela autorização existente** | Explorar não é anônimo nem aberto a espectadores/externos; exceção de Mestre exige membership/papel ativo, sem criar identidade paralela | — (decidido; W1/W3 implementados) |
 | D6 | PAI #365 | Exportação/importação da campanha inclui conteúdo público? | a) domínio público completo b) só publicado c) não exportar | **DECIDIDO 27/11/2026: A — exportar/importar o domínio público integral, inclusive rascunhos, visibilidade e moderação; excluir Mensagens/conversas privadas** | Preservar conteúdo e estados sem expor identidade protegida de publicação anônima (DP-1/DP-6) | — (decidido) |
 | D7 | UX | ~~Moderação~~ **DECIDIDO (Quiz): publicação livre + denúncia → remoção automática pelo sistema; contestação resolvida por administrador da plataforma — NÃO pelo Mestre.** Só admin da plataforma consulta identidade anônima em moderação excepcional (sem justificativa obrigatória, sem trilha de auditoria — escolha do proprietário) | — | — | W8 publica direto; ação "Denunciar" em conteúdos; estado removido; **sem** fila de aprovação, **sem** papel do mestre na contestação | Fluxo de denúncia/contestação |
-| D8 | UX | Quem pode publicar notícias e conteúdo jornalístico? | a) todo elegível b) só Mestre c) elegibilidade baseada nas regras/habilidades existentes | **DECIDIDO 27/11/2026: C — jornalista precisa cumprir elegibilidade derivada de Caçadores & Caçados; nenhuma classe/perícia/habilidade nova; Mestre também pode publicar** | W4/W5/W11 aplicam autorização jornalística; PAI deve identificar a regra existente exata antes de codificar | — (decidido; mapeamento técnico em andamento) |
+| D8 | UX | Quem pode publicar notícias e conteúdo jornalístico? | a) todo elegível b) só Mestre c) elegibilidade baseada nas regras/habilidades existentes | **DECIDIDO 27/11/2026: C — usar a profissão existente `profissao:jornalista` no ruleset ativo; Mestre também pode publicar; nenhuma classe/perícia/habilidade nova** | W4/W5/W11 autorizam pelo valor canônico do campo de Profissão (regraKind=`profissao`), não pelo texto livre/label; ver contrato #365 | — (decidido; fonte existente identificada) |
 | D9 | UX | Anúncio permite contato? | a) fluxo existente b) sem contato c) chat paralelo | **DECIDIDO 27/11/2026: A — solicitação/aceite de contato existente; conversa abre após aceite** | W7 reutiliza contato e Mensagens; respeita bloqueio bilateral; não cria chat paralelo | — (decidido) |
 | D10 | UX | ~~O que o perfil público exibe?~~ **DECIDIDO (Quiz): perfil OPCIONAL; exibe só nome público + avatar + descrição; nome do personagem é padrão, alternativo permitido; edição livre; ativação IRREVERSÍVEL (aviso inequívoco, sem ocultar/desativar/excluir); permanece após morte; utilizável sem perfil** | — | — | W9/W10 conforme §3; W2 indexa perfil só se ativado | — (decidido) |
 | D11 | UX | Anúncio tem prazo? | a) opcional pelo autor b) prazo fixo c) sem expiração | **DECIDIDO 27/11/2026: A — `expiresAt` opcional; sem data = permanente; expiração derivada na leitura, sem job** | W8 oferece validade opcional; W6/W7 derivam ativo/expirado em leitura | — (decidido) |
@@ -289,7 +289,7 @@ registro complementa a matriz e não altera decisões anteriores.
 | Ownership de sites/páginas (D14) | A | Personagem elegível cria o próprio site; dono administra o site; cada autor edita suas páginas; Mestre pode moderar/arquivar, mas não reescrever conteúdo alheio. Ownership acompanha o personagem conforme P7. |
 | D3 — versões | A | `version` incremental + auditoria; sem histórico recuperável, tabela de revisões ou rollback. |
 | D6 — export/import | A | Incluir todo o domínio público da campanha, inclusive rascunhos, visibilidade e moderação; excluir Mensagens/conversas privadas. A anonimidade e o sigilo de autoria permanecem protegidos (DP-1/DP-6). |
-| D8 — jornalismo | C | Elegibilidade baseada em regras/habilidades já existentes de Caçadores & Caçados; não criar classe/perícia/habilidade nova. Mestre também pode publicar. |
+| D8 — jornalismo | C | Usar `profissao:jornalista`, já existente na biblioteca inicial de regras; Mestre também pode publicar. Não criar classe/perícia/habilidade nova. |
 | D9 — contato | A | Usar solicitação/aceite de contato existente; abrir a conversa existente somente após aceite; respeitar bloqueios. |
 | D11 — validade | A | `expiresAt` opcional definido pelo autor; ausência significa permanente; expiração calculada na leitura, sem job de fundo. |
 | D12 — pesquisa | A | Indexar sites, páginas, notícias, anúncios/classificados e perfis por `handle`; não indexar `displayName`; visibilidade filtrada antes de qualquer resultado/metadado. |
@@ -304,3 +304,17 @@ Explorar concentra sites, páginas, pesquisa, notícias, perfis, posts e
 classificados; Mensagens reutiliza o mensageiro existente; Lojas/Vender/
 Pedidos reutilizam o comércio existente. Não construir app separado,
 segundo login, segundo chat, segundo checkout ou banco paralelo.
+
+
+**Mapeamento canônico de D8:** o código já registra `profissao:jornalista`
+em `servidor/src/lib/seed-regras.ts` (biblioteca inicial de Caçadores &
+Caçados); `profissao` é um `TipoRegra` válido em
+`servidor/src/lib/regras.ts`; a estrutura de ficha de referência contém
+o campo **Profissão** com `regraKind: "profissao"`
+(`fixtures/estrutura-cacadores-dump.json`). A elegibilidade do jogador deve
+consultar o valor/chave estável desse campo no ruleset ativo da campanha.
+Não comparar rótulo exibido, não aceitar valor enviado pelo cliente, não
+semear/reativar profissão automaticamente se a campanha a removeu.
+`profissao:investigador` também existe na biblioteca, mas não concede
+automaticamente permissão jornalística; D8 aponta especificamente para
+`profissao:jornalista`. O Mestre mantém a exceção de publicação decidida.
