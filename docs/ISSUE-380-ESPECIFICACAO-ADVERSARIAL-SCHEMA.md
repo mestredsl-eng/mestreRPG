@@ -134,49 +134,61 @@ Um banco legado **sem id** combinado com recibo legado **sem id** não permite p
 
 ### Restauração de backups e identidade
 
-O fluxo oficial `aplicar-restauracao` é o **único** caminho autorizado a reatribuir identidade; substituição manual de arquivo nunca invoca TOFU fora do verify-once de transição. A ordem de gravação e a recuperação de crash desse fluxo estão em §Recuperação de crash (C4a–C5).
+O fluxo oficial `aplicar-restauracao` é o **único** caminho autorizado a reatribuir identidade; substituição manual de arquivo nunca invoca TOFU fora do verify-once de transição. A ordem de gravação e a recuperação de crash desse fluxo estão em §Recuperação de crash (R0–R4b).
 
 - **Backup pós-ID** (criado após a primeira vinculação): o `instalacaoIdBanco` viaja dentro do `.db` — restaurar preserva o id automaticamente, sem passo extra.
-- **Backup pré-ID da mesma instalação, restaurado pelo fluxo oficial:** antes de trocar o arquivo, o fluxo captura o id vigente do banco corrente (já conferido com o recibo) e grava um **recibo de restauração** fora do banco contendo `{ idVigente, sha256BancoSubstituido, sha256BackupRestaurado, manifestoBackup, timestamp }`. Após a troca, se o banco restaurado não contém id, o fluxo grava a linha `protocolo.instalacaoIdBanco` com o id vigente — a prova é a **captura pré-troca pelo fluxo oficial**, não TOFU. Se o banco restaurado contém id divergente do vigente ⇒ `banco-nao-pertence-a-esta-instalacao`, sem reatribuição.
+- **Backup pré-ID da mesma instalação, restaurado pelo fluxo oficial:** antes de trocar o arquivo, o fluxo captura o id vigente do banco corrente (já conferido com o recibo) e grava um **recibo de restauração** fora do banco com `fase` e hashes pré/pós-mutação (detalhes em §Recuperação de crash, R0–R4b). Após a troca e a reatribuição, o banco restaurado recebe o id vigente — a prova é a **captura pré-troca pelo fluxo oficial**, não TOFU. Se o banco restaurado contém id divergente do vigente ⇒ `banco-nao-pertence-a-esta-instalacao`, sem reatribuição.
 - **Substituição manual** (arquivo copiado por fora do fluxo) de banco sem id quando o recibo já exige id ⇒ **bloqueio** `banco-nao-pertence-a-esta-instalacao`. Não existe verify-once fora da transição legado→vinculado.
 - **Prova de proveniência do backup:** o manifesto do backup (gravado pelo sistema no diretório de backups da instalação) registra `sha256` do arquivo, data e — quando existir — o id do banco de origem. Backup pré-ID não carrega id de origem; nesse caso a prova de linhagem é a posse do arquivo dentro do diretório de backups gerenciado pela instalação **mais** a confirmação explícita do operador no fluxo de restauração. Um backup pré-ID de **outra** instalação restaurado pelo fluxo oficial é indistinguível de um legítimo pré-ID — risco residual declarado, mitigável apenas por decisão humana; **não** é apresentado como detectável.
 
 ### Recuperação de crash — matriz SQLite × recibo
 
-**Não há transação atômica entre SQLite e filesystem.** Este protocolo usa ordem canônica de gravação + recuperação idempotente + provas revalidadas a cada boot. Onde o código conhecido ainda não garante o mecanismo, o item está marcado como **requisito de implementação / risco aberto** — não como propriedade existente.
+**Não há transação atômica entre SQLite e filesystem.** Este protocolo usa ordem canônica de gravação + artefatos de intenção duráveis + recuperação idempotente. Onde o código conhecido ainda não garante o mecanismo, o item está marcado como **requisito de implementação / risco aberto** — não como propriedade existente.
 
-### Ordem canônica
+**Correção de proveniência (achado do Dono):** `ASSINATURA_DB`/`assinaturaSchema` provam **estrutura**, não linhagem — dois bancos autênticos do mesmo schema têm a mesma assinatura, e a linha de id no SQLite pode ser escrita por edição direta do arquivo. A prova de linhagem vem de **artefatos de intenção externos gravados antes da mutação**, nunca da assinatura nem da leitura da linha isolada.
 
-1. **Vinculação inicial:** grava `instalacaoIdBanco` no banco → só então atualiza o recibo externo. O banco é a âncora primária; o recibo é a cópia secundária.
-2. **Restauração pré-ID:** grava recibo de restauração (tmp+rename, validado) → troca o arquivo do banco → reatribui o id → grava marcador `concluida` no recibo de restauração. O banco substituído é preservado (movido, não apagado) até a conclusão.
+### Artefatos de intenção (requisitos de implementação)
 
-### Matriz de estados
+- **`vinculacao-pendente.json`** — gravado atomicamente (tmp+rename) **antes** de qualquer mutação do banco na vinculação inicial/verificação única. Conteúdo: `{ uuidEsperado, criadoEm, fase }`. É a prova externa durável de intenção; substitui a prova circular anterior.
+- **Recibo de restauração** ganha campo `fase` (`iniciado` → `arquivo-trocado` → `reatribuindo` → `concluida`), `sha256BackupRestaurado` (imagem **pré-mutação**) e `sha256PosReatribuicao` (evidência **pós-escrita**, gravada junto com `concluida`). Os dois hashes são distintos por construção: a escrita do id altera os bytes do banco.
 
-| # | Estado no crash | Estado resultante | Recuperação |
-|---|---|---|---|
-| C1 | Antes da gravação do ID | DB sem id; recibo legado sem id | Estado pré-transição legítimo — verify-once autorizado no próximo boot, idempotente |
-| C2 | Depois do ID no DB, antes do recibo | DB tem X; recibo sem id | **Forward recovery:** completar o recibo com X somente se a prova abaixo existir; caso contrário bloquear **sem** emitir recibo positivo |
-| C3 | Depois do recibo atualizado | DB=X; recibo=X | Boot normal — estado convergido |
-| C4a | Restore pré-ID: crash antes da troca | Banco corrente intacto; recibo de restauração válido ou ausente | Ausente/inválido ⇒ restore não iniciado, ignorar. Válido sem evidência de troca ⇒ abortar restore (operador repete) |
-| C4b | Restore pré-ID: crash após troca, antes da reatribuição | Banco restaurado sem id no lugar; recibo de restauração registra `idVigente`+`sha256BackupRestaurado`; banco substituído preservado | **Fonte autoritativa = recibo de restauração.** Recomputar sha256 do arquivo presente: se ≠ `sha256BackupRestaurado`, o arquivo não é o backup confirmado ⇒ **bloquear, não aceitar**. Se confere e passa L1–L3+integridade ⇒ reatribuir `idVigente` |
-| C4c | Restore pré-ID: crash durante a reatribuição (id parcialmente gravado) | Linha de id ausente ou malformada no restaurado | Tratar como C4b: recibo de restauração autoriza completar; id malformado ⇒ reescrever com `idVigente` somente após revalidar sha256+L1–L3 |
-| C5 | Restore pré-ID: crash após reatribuição, antes do marcador `concluida` | DB restaurado com id=idVigente; recibo de restauração sem marcador | Idempotente: verificar `id==idVigente` e sha256 do arquivo ⇒ gravar marcador `concluida`, encerrar. Sem duplicar identidade nem trocar id |
+### Ordem canônica — vinculação (V)
 
-### Prova que autoriza o forward recovery de C2
+`V1` gravar `vinculacao-pendente` `{uuidEsperado, fase:"pendente"}` → `V2` gravar linha de id no DB → `V3` atualizar recibo externo `{instalacaoIdBanco, assinaturaSchema}` → `V4` marcar pending `fase:"concluida"` (ou removê-lo). O banco é âncora primária; pending e recibo são evidências externas.
 
-Completar o recibo com o id X do banco exige **todas**:
+### Ordem canônica — restauração pré-ID (R)
 
-1. L1–L3 + `integrity_check`/`foreign_key_check` passam no banco candidato (é um schema legítimo reconhecido);
-2. a linha `protocolo.instalacaoIdBanco` é bem-formada e foi escrita por módulo do protocolo (chave protegida — não gravável via API de settings);
-3. o recibo externo é **legado** (sem campo `instalacaoIdBanco`) — janela de transição, não estado arbitrário;
-4. `assinaturaSchema` do recibo confere com a `REFERENCIA(k)` corrente — prova de que o banco presente é o adotado, não um intruso.
+`R1` gravar recibo de restauração `{idVigente, sha256BancoSubstituido, sha256BackupRestaurado, fase:"iniciado"}` (tmp+rename, validado) → preservar banco substituído (mover, não apagar) → trocar arquivo → `R2` fase `"arquivo-trocado"` → verificar `sha256(arquivo presente) == sha256BackupRestaurado` e L1–L3+integridade → `R3` fase `"reatribuindo"` → gravar id (statement único — atomicidade SQLite por statement) → `R4` fase `"concluida"` + `sha256PosReatribuicao` numa única escrita atômica.
 
-Sem as 4 condições ⇒ bloquear com `banco-nao-pertence-a-esta-instalacao`-equivalente e **não** gravar recibo positivo. A gravação do recibo deve ser atômica por arquivo (tmp+rename) — **requisito de implementação**; o formato atual do recibo não garante isso e deve ser verificado no código antes de declarar a propriedade.
+### Matriz de estados — vinculação
+
+| # | Crash em | Estado resultante | Fonte autoritativa | Recuperação |
+|---|---|---|---|---|
+| V1 | após pending, antes do id no DB | pending=`pendente`; DB sem id; recibo legado | pending (intenção registrada antes de qualquer mutação) | **Completar forward:** gravar `uuidEsperado` no DB → recibo → `concluida`. Idempotente: se DB já tem id==uuidEsperado, pular V2 |
+| V2 | após id no DB, antes do recibo | pending=`pendente`; DB id=X; recibo sem id | pending + linha DB | Se `id_DB == uuidEsperado` e L1–L3+integridade passam ⇒ completar V3/V4. Se `id_DB ≠ uuidEsperado` ⇒ banco trocado na janela ⇒ **bloquear** `banco-nao-pertence-a-esta-instalacao`, sem recibo positivo |
+| V3 | após recibo, antes de concluir pending | DB=X; recibo=X; pending=`pendente` | recibo+DB convergidos | Marcar pending `concluida`; boot normal |
+| V4 | pending ausente/concluída, estados convergidos | — | — | Boot normal |
+
+Estado ambíguo não coberto (pending existe mas DB tem id≠uuidEsperado, ou recibo já tem id≠pending) ⇒ **bloqueio fail-closed**, decisão do operador. Pending malformado/ilegível é tratado como ausente somente se DB e recibo já convergiram; caso contrário bloqueia.
+
+### Matriz de estados — restauração pré-ID
+
+| # | Crash em | Estado resultante | Fonte autoritativa | Recuperação |
+|---|---|---|---|---|
+| R0 | antes de R1 ou receipt-restauração ausente/inválido | Restore não iniciado | — | Ignorar/abortar; operador repete o fluxo |
+| R1–R2a | após troca, antes de fase `arquivo-trocado` ou antes da verificação | Arquivo restaurado no lugar; fase ∈ {`iniciado`} ou sem evidência de verificação | recibo de restauração | Recomputar `sha256(arquivo)`: ==`sha256BackupRestaurado` + L1–L3 ⇒ avançar para R3. Divergente ⇒ **não aceitar**, bloquear |
+| R2b | fase=`arquivo-trocado`, arquivo conferido, antes de `reatribuindo` | Idem, verificação já registrada | recibo de restauração (`fase` durável) | Idempotente: revalidar sha256+L1–L3 (barato) ⇒ gravar fase `reatribuindo` |
+| R3 | fase=`reatribuindo`, crash antes/durante a escrita do id | DB restaurado possivelmente sem id ou com id parcial | fase `reatribuindo` = protocolo autorizou a mutação | **Statement único ⇒ sem linha parcial** (atomicidade SQLite). Se id ausente ⇒ gravar `idVigente`; se `id==idVigente` ⇒ seguir; se `id≠idVigente` ⇒ bloquear. Depois R4 |
+| R4a | após id gravado, antes de R4 | DB id=`idVigente`; recibo fase=`reatribuindo`, sem `sha256PosReatribuicao` | fase `reatribuindo` + linha DB | Idempotente: confirmar `id==idVigente` ⇒ gravar `concluida`+`sha256PosReatribuicao` (hash recalculado **agora**, é evidência do estado pós-escrita, não gate). Sem nova janela: R4 é escrita atômica única |
+| R4b | durante R4 | tmp+rename ⇒ recibo antigo (`reatribuindo`) ou novo (`concluida`) | — | Ambos os estados são cobertos por R3/R4a — convergência garantida |
+
+**Separação de hashes (achado do Dono):** `sha256BackupRestaurado` é comparado **somente** antes da mutação (R2). Após a escrita do id os bytes mudam legitimamente — `sha256PosReatribuicao` é **evidência registrada**, nunca gate de boot futuro (dados mudam a cada boot; mesmo princípio de `sha256Banco`).
 
 ### Riscos abertos declarados
 
-- Janela C2 depende da ordem DB→recibo; se uma implementação inverter a ordem, C2 vira "recibo=X, DB sem id" — estado ambíguo que esta matriz não cobre e que deve ser tratado como bloqueio até revisão. **Requisito:** a ordem canônica é normativa, não sugestão.
-- O recibo de restauração pressupõe escrita atômica tmp+rename e validação de integridade na leitura — **requisito de implementação**.
+- **Janela `reatribuindo`:** entre R3 e R4 o arquivo já diverge do hash do backup por causa da nossa escrita; uma adulteração externa nessa janela não é distinguível da mutação legítima. Janela é de segundos, dentro do processo do fluxo oficial, e o banco substituído fica preservado para rollback — **risco residual declarado**, mitigável por execução serial do restore.
+- `vinculacao-pendente`/recibo de restauração/recibo externo pressupõem escrita atômica tmp+rename e integridade na leitura — **requisito de implementação** a verificar no código.
+- Forjar `vinculacao-pendente` exige escrita no diretório de estado — mesmo nível de ameaça de forjar o recibo; declarado, não agravado.
 - Preservação do banco substituído durante restore é obrigatória para rollback manual; política de retenção/limpeza fica fora desta especificação.
 
 ## O que é e não é detectável
