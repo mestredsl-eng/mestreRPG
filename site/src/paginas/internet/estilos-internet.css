@@ -185,3 +185,28 @@
 .internet-conta-dados div { display: flex; gap: 10px; align-items: baseline; }
 .internet-conta-dados dt { color: var(--texto-fraco, #9aa0aa); min-width: 90px; }
 .internet-conta-dados dd { margin: 0; font-weight: 600; }
+
+/* ---------- camada pública (#365 — Explorar W1/W3) ---------- */
+.internet-explorar { display: flex; flex-direction: column; gap: 12px; }
+.internet-explorar-inicio { display: flex; flex-direction: column; gap: 10px; }
+.internet-site-item { width: 100%; text-align: left; cursor: pointer; }
+.internet-site-cab { margin-bottom: 10px; }
+.internet-site-nome { margin: 0 0 2px; }
+.internet-site-desc { margin: 6px 0 0; color: var(--texto-fraco, #b4a9b1); }
+.internet-site-menu { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.internet-site-link {
+  background: none; border: none; padding: 8px 4px; cursor: pointer;
+  color: var(--horror-vinho-claro, #b85c69); text-align: left;
+  font: inherit; width: 100%;
+}
+.internet-site-link:hover, .internet-site-link:focus-visible { text-decoration: underline; }
+.internet-pagina { display: flex; flex-direction: column; gap: 8px; }
+.internet-pagina-site {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--horror-ambar, #b99a62); font: inherit; font-size: 0.85rem;
+}
+.internet-pagina-site:hover, .internet-pagina-site:focus-visible { text-decoration: underline; }
+.internet-pagina-titulo { margin: 0; }
+.internet-pagina-corpo { display: flex; flex-direction: column; gap: 10px; }
+.internet-pagina-corpo p { margin: 0; white-space: pre-line; }
+.internet-pagina-irmaos ul { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }

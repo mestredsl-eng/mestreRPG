@@ -97,7 +97,10 @@ const TABELAS_ANTIGAS = ["campaign_rule_books", "novidades", "novidade_leituras"
   "character_transfers",
   // Estornos de XP (migration 0042): folha — referencia characters/users
   // pais, que não são dropadas.
-  "xp_estornos"];
+  "xp_estornos",
+  // Internet pública 1.1.2 (migration 0043): filhas antes dos pais
+  // (pages → sites → accounts).
+  "internet_pages", "internet_sites"];
 const JOURNAL_MIGRATIONS = join(RAIZ_REPO, "servidor", "migrations", "meta", "_journal.json");
 const IDX_FRONTEIRA = 17; // primeira migration que este teste simula como "antiga"
 function migrationsAReverter() {
