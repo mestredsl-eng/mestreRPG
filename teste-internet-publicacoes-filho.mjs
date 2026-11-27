@@ -143,6 +143,13 @@ try {
       tipo: "noticia", titulo: "x", corpo: "y", visibilidade: "campanha", autorModo: "pseudonimo", pseudoNome: "Vulto_9",
     });
     t("pseudonimo válido → 201", rPseudoOk.status === 201 || rPseudoOk.status === 200, `status=${rPseudoOk.status}`);
+    // Dono gate item 8: pseudoNome segue o charset do handle — rejeitar
+    // espaços/acentos/símbolos que o handle não aceitaria
+    const rPseudoCharset = await api(BASE, C.campId, J1, "POST", "/publicacoes", {
+      tipo: "noticia", titulo: "x", corpo: "y", visibilidade: "campanha",
+      autorModo: "pseudonimo", pseudoNome: "Vulto Com Espaço!",
+    });
+    t("pseudoNome com charset inválido (espaço/!) → 4xx", rPseudoCharset.status >= 400 && rPseudoCharset.status < 500, `status=${rPseudoCharset.status}`);
     pubPseudoId = rPseudoOk.json?.publicacao?.id ?? rPseudoOk.json?.id;
     pubPseudoV = rPseudoOk.json?.publicacao?.version ?? 1;
     // D8/NEWS-04/05: gate profissao:jornalista server-side (decisão fechada,
@@ -295,6 +302,10 @@ try {
       const blobDet = JSON.stringify(rDet.json);
       t("detalhe traz fonte/handle do autor", rDet.status === 200 && (blobDet.includes("w45.autor") || blobDet.includes("handle")), `status=${rDet.status} ${blobDet.slice(0, 140)}`);
       t("detalhe sem ids internos crus", !/"autorContaId"|"characterId"|"campaignId"/.test(blobDet), blobDet.slice(0, 160));
+      // Dono gate item 8: personagemId interno oculto de leitores públicos
+      // (só origem='sistema' pode expô-lo, conforme contrato §4)
+      t("personagemId do autor não vaza para leitor público",
+        !blobDet.includes(ch1), `vazou=${blobDet.includes(ch1)} ${blobDet.slice(0, 140)}`);
     }
   }
 
@@ -379,6 +390,9 @@ try {
         mortePub.autor_conta_id === null && mortePub.visibilidade === "campanha", JSON.stringify(mortePub).slice(0, 160));
       const rDet = await api(BASE, C.campId, J2, "GET", `/publicacoes/${mortePub.id}`);
       t("notícia de morte legível na campanha", rDet.status === 200, `status=${rDet.status}`);
+      // contrato §4: personagemId exposto SOMENTE em origem='sistema'
+      t("notícia de sistema pode referenciar personagem_id (vínculo público)",
+        rDet.status === 200 && JSON.stringify(rDet.json).includes(ch3), `status=${rDet.status}`);
       // somente leitura: ninguém edita/apaga a notícia de sistema
       const rPatchSis = await api(BASE, C.campId, M, "PATCH", `/publicacoes/${mortePub.id}`, { titulo: "editada", expectedVersion: mortePub.version ?? 1 });
       t("DP-8: notícia de sistema não é editável", rPatchSis.status === 403 || rPatchSis.status === 404, `status=${rPatchSis.status}`);
