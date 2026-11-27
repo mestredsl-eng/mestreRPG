@@ -392,6 +392,14 @@ try {
     t("SITE-14: Mestre sem conta não altera metadados do titular", rMetaM.status === 403 || rMetaM.status === 404 || rMetaM.status === 401, `status=${rMetaM.status}`);
     const rPaginaM = await api(BASE, C.campId, M, "POST", `/sites/${siteA.slug}/paginas`, { slug: "pagina-do-mestre", titulo: "Não", corpo: "não" });
     t("SITE-14: Mestre sem conta não cria página por privilégio administrativo", rPaginaM.status === 403 || rPaginaM.status === 404 || rPaginaM.status === 401, `status=${rPaginaM.status}`);
+    const rSiteArqM = await api(BASE, C.campId, M, "POST", `/sites/${siteA.slug}/arquivar`);
+    t("SITE-14: Mestre sem conta arquiva site por moderação",
+      rSiteArqM.status === 200 || rSiteArqM.status === 201, `status=${rSiteArqM.status}`);
+    const siteOculto = await api(BASE, C.campId, J3, "GET", `/sites/${siteA.slug}`);
+    t("SITE-14: site arquivado pelo Mestre sai da leitura pública", siteOculto.status === 404, `status=${siteOculto.status}`);
+    const rSiteRestM = await api(BASE, C.campId, M, "POST", `/sites/${siteA.slug}/restaurar`);
+    t("SITE-14: Mestre sem conta restaura site por moderação",
+      rSiteRestM.status === 200 || rSiteRestM.status === 201, `status=${rSiteRestM.status}`);
   }
 
   // ---------- E7. Listagem autenticada de páginas ----------
