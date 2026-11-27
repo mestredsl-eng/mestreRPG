@@ -28,6 +28,22 @@
 // asserts de rota FALHAM — estado TDD correto até a PR do PAI.
 //
 // Fixtures 100% descartáveis (dirTeste + limparDir); produção intocada.
+//
+// ALINHAMENTO À MATRIZ — docs/prototipo-internet-publica-366/
+// MATRIZ-TESTES-1.1.2.md (branch docs/1.1.2-vereditos-proprietario,
+// ordem Gerente+FILHO #369 `7226366632`):
+//   sec S  → elegibilidade/gate de leitura        ≈ SEC-01 (parcial: conta/dispositivo)
+//   sec D  → diretório W1, owner sem ids internos ≈ SEARCH-01 base + W1 rows
+//   sec X  → isolamento cross-campaign            ≈ SEC-02
+//   sec N  → anti-oráculo 404 byte-equivalente    ≈ SEC-03 + UX-04
+//   sec G  → keyset/cursor forjado→400/estável    ≈ SEARCH-08/10 (escopo sites)
+//   sec V  → nunca-visível (agregados/busca)      ≈ SEC-03 + SEARCH-07
+//   skips  → internet_publicacoes e POST /sites   = fatias futuras (W4+/W3 escrita)
+// IDs futuros já mapeados na matriz: SITE-01..10/VER-01..03 (W3 escrita),
+// PUB/NEWS-01..08 (W4/W5), AD-01..11 (W6–W8), PROF-01..09 (W9/W10),
+// SEARCH-01..10 (W2), EXP-01..10 (D6), INV-01..06 (W11), SEC-01..08, UX/OPS.
+// Regra da matriz: SKIP nunca conta como PASS; cada fatia ganha suíte
+// black-box própria no SHA exato do contrato do PAI.
 import crypto from "node:crypto";
 import { join } from "node:path";
 import {
