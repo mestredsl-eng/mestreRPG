@@ -596,6 +596,91 @@ try {
       `versoes=${rVersoes.status} hist=${rHist.status} rollback=${rRollback.status}`);
   }
 
+  // ---------- E13. TOCTOU — vetores concorrentes (fix 69c900e) ----------
+  sec("E13. TOCTOU — corrida P7/arquivamento × mutação");
+  {
+    // V3: dois POST /sites com o mesmo slug em paralelo → UNIQUE decide.
+    const slugRace = "race-" + crypto.randomUUID().slice(0, 6);
+    const [rA, rB] = await Promise.all([
+      api(BASE, C.campId, J2, "POST", "/sites", { slug: slugRace, nome: "Corrida A" }),
+      api(BASE, C.campId, J2, "POST", "/sites", { slug: slugRace, nome: "Corrida B" }),
+    ]);
+    const ganhadores = [rA, rB].filter((r) => r.status === 201 || r.status === 200).length;
+    const perdedores = [rA, rB].filter((r) => r.status === 409).length;
+    t("TOCTOU-1: slug duplicado concorrente → 1 vencedor + 1 conflito", ganhadores === 1 && perdedores === 1,
+      `A=${rA.status} B=${rB.status}`);
+
+    // V1: PATCH página ∥ aceite de transferência P7 do personagem titular.
+    // siteA/capitulo-1 pertence à conta do ch1 (j1). Se o PATCH vencer a
+    // linearização, a edição comita com audit; se o aceite vencer, o
+    // titular anterior perde → 403/404. Nunca 5xx, nunca efeito sem audit.
+    const vAntes = versionPagina(siteA.slug, "capitulo-1");
+    const invP7 = await apiChars(BASE, C.campId, J1, "POST", `/${ch1}/transferencias`, { membershipId: MEM4 });
+    const tidP7 = invP7.json?.transferencia?.id;
+    t("TOCTOU-2 setup: convite P7 do titular do site criado", !!tidP7, `status=${invP7.status}`);
+    if (tidP7 && typeof vAntes === "number") {
+      const [rPatch, rAceite] = await Promise.all([
+        api(BASE, C.campId, J1, "PATCH", `/sites/${siteA.slug}/paginas/capitulo-1`,
+          { corpo: "edit durante P7", expectedVersion: vAntes }),
+        apiChars(BASE, C.campId, J4, "POST", `/transferencias/${tidP7}/responder`, { aceitar: true }),
+      ]);
+      const sem5xx = ![rPatch, rAceite].some((r) => r.status >= 500);
+      t("TOCTOU-2: corrida PATCH×aceite P7 sem 5xx", sem5xx, `patch=${rPatch.status} aceite=${rAceite.status}`);
+      const vDepois = versionPagina(siteA.slug, "capitulo-1");
+      if (rPatch.status === 200) {
+        t("TOCTOU-2b: PATCH vencedor incrementou version+1 com audit",
+          vDepois === vAntes + 1 && audits("pagina_editada").length >= 1,
+          `v:${vAntes}→${vDepois}`);
+      } else {
+        t("TOCTOU-2b: PATCH perdedor negado sem mutação", rPatch.status === 403 || rPatch.status === 404 || rPatch.status === 409,
+          `status=${rPatch.status} v:${vAntes}→${vDepois}`);
+      }
+      // titular anterior não retém escrita após a corrida
+      const rTardio = await api(BASE, C.campId, J1, "PATCH", `/sites/${siteA.slug}/paginas/capitulo-1`,
+        { corpo: "tardio", expectedVersion: vDepois ?? vAntes });
+      t("TOCTOU-2c: titular anterior sem escrita residual", rTardio.status === 403 || rTardio.status === 404,
+        `status=${rTardio.status}`);
+    }
+
+    // V2: PATCH página ∥ arquivamento do site pelo dono.
+    // siteAtivoNaTx deve abortar a mutação subordinada se o site
+    // arquivou na janela; se o PATCH venceu, audit registra a edição.
+    const siteRace = "race-site-" + crypto.randomUUID().slice(0, 5);
+    const rSiteRace = await api(BASE, C.campId, J2, "POST", "/sites", { slug: siteRace, nome: "Site Corrida" });
+    const siteRaceOk = rSiteRace.status === 201 || rSiteRace.status === 200;
+    t("TOCTOU-3 setup: site dedicado à corrida", siteRaceOk, `status=${rSiteRace.status}`);
+    if (siteRaceOk) {
+      const rPg = await api(BASE, C.campId, J2, "POST", `/sites/${siteRace}/paginas`,
+        { slug: "pg-race", titulo: "PG", corpo: "v1" });
+      const vRace = snapshotPagina(siteRace, "pg-race")?.version;
+      if (typeof vRace === "number") {
+        const [rPatch2, rArq2] = await Promise.all([
+          api(BASE, C.campId, J2, "PATCH", `/sites/${siteRace}/paginas/pg-race`,
+            { corpo: "edit na janela do archive", expectedVersion: vRace }),
+          api(BASE, C.campId, J2, "POST", `/sites/${siteRace}/arquivar`),
+        ]);
+        const sem5xx2 = ![rPatch2, rArq2].some((r) => r.status >= 500);
+        t("TOCTOU-3: corrida PATCH×arquivar-site sem 5xx", sem5xx2, `patch=${rPatch2.status} arq=${rArq2.status}`);
+        const siteFinal = comDb((db) => db.prepare("select status from internet_sites where slug=?").get(siteRace)?.status);
+        const pgFinal = snapshotPagina(siteRace, "pg-race");
+        const coerente =
+          siteFinal === "arquivado" &&
+          (rPatch2.status !== 200 || (pgFinal?.version === vRace + 1 && audits("pagina_editada").length >= 1)) &&
+          (rPatch2.status === 200 || rPatch2.status === 403 || rPatch2.status === 404 || rPatch2.status === 409);
+        t("TOCTOU-3b: estado final coerente (site arquivado; edição só com audit)", coerente,
+          `site=${siteFinal} patch=${rPatch2.status} v:${vRace}→${pgFinal?.version}`);
+        // site arquivado não aceita mais mutação de página
+        const rDepois = await api(BASE, C.campId, J2, "PATCH", `/sites/${siteRace}/paginas/pg-race`,
+          { corpo: "tarde demais", expectedVersion: pgFinal?.version ?? vRace });
+        t("TOCTOU-3c: página em site arquivado não edita", rDepois.status === 409 || rDepois.status === 403 || rDepois.status === 404,
+          `status=${rDepois.status}`);
+      } else {
+        t("TOCTOU-3 setup: página de corrida persistida", false, "POST /paginas falhou");
+      }
+    }
+  }
+
+
   // ---------- E12. Rate limit de escrita (30/min) ----------
   sec("E12. Rate limit escrita — 429, nunca 5xx");
   {
