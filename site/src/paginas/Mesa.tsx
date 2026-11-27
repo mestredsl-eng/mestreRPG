@@ -1164,7 +1164,10 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
             )}
             {turnos.ativo && turnos.ordem.length > 0 && (
               <p className="meta">Ordem: {turnos.ordem.map((id, i) => (
-                <span key={id} className={i === turnos.atual ? "tag tag-atual" : "tag"}>{nomeAtor(id)}</span>
+                // key inclui "atual": o span remonta ao virar/deixar de ser
+                // o turno corrente, disparando o pulso de micro-tag-turno
+                // só na troca — sem re-render forçado nem timer.
+                <span key={i === turnos.atual ? `${id}#atual` : id} className={i === turnos.atual ? "tag tag-atual" : "tag"}>{nomeAtor(id)}</span>
               ))}</p>
             )}
             {turnos.iniciativa && (
@@ -2669,6 +2672,9 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
                 {tk.nome.slice(0, 2).toUpperCase()}
                 {tk.vida?.hp && (
                   <span
+                    // key por valor: o span remonta só quando HP muda de
+                    // fato — micro-vida-muda dispara um flash único.
+                    key={`hp-${tk.vida.hp.atual}-${tk.vida.hp.maximo}`}
                     className="vtt-token-hp"
                     title={`HP ${tk.vida.hp.atual}/${tk.vida.hp.maximo}`}
                   >
@@ -2680,6 +2686,7 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
                 )}
                 {tk.vida?.vitalidade && tk.vida.vitalidade.nivel > 0 && (
                   <span
+                    key={`vit-${tk.vida.vitalidade.nivel}`}
                     className="vtt-token-vit"
                     title={`Vitalidade: ${tk.vida.vitalidade.nome} (nível ${tk.vida.vitalidade.nivel})`}
                   >{tk.vida.vitalidade.nivel}</span>
