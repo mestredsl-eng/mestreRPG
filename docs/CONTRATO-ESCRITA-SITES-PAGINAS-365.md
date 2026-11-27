@@ -52,17 +52,20 @@ separado, auditado com `papel: "mestre"`, e jamais altera `corpo`,
 | Site | criar | conta ativa + gate P5 | — | idem (qualquer conta elegível) | via conta própria |
 | Site | editar metadados (`nome`, `descricao`, `slug`) | sim | não | 403 | não (só modera) |
 | Site | arquivar / restaurar | sim | não | 403 | sim |
-| Página | criar em site `ativo` | sim (é autor da página) | — | sim — qualquer conta elegível da campanha pode publicar página em site alheio; autor = conta do requisitante | via conta própria |
+| Página | criar em site `ativo` | **somente o dono do site** | — | 403/404 | via conta própria |
 | Página | editar conteúdo (`titulo`, `corpo`, `formato`) | só se for o autor | sim | 403/404 | nunca (D14) |
 | Página | transição de status | só se for o autor | sim | 403/404 | arquivar/restaurar apenas |
 | Página | arquivar | autor | sim | 403/404 | sim |
 | Página | restaurar | autor | sim | 403/404 | sim |
 
-Notas de decisão (propostas de contrato — Deliberação se o dono divergir):
+Notas de decisão:
 
-- **Multi-autoria**: sites admitem páginas de vários autores da campanha
-  (D14 separa owner de autor). Criação de página não exige ser dono do
-  site — o site é o "espaço", o autor assina a página.
+- **Autoria única no corte 1.1.2** (fechamento já aprovado — SITE-12 da
+  matriz de testes): somente o personagem proprietário cria páginas
+  novas dentro do próprio site. Não há convite, colaboração nem criação
+  de página em site alheio neste corte — criação por não-dono responde
+  4xx. Páginas com `autorContaId` distinto do dono atual só podem surgir
+  via importação (EXP-08), nunca via endpoint de escrita.
 - **Múltiplos sites por conta**: schema não restringe; esta fatia não
   cria limite artificial.
 - **Sem DELETE**: remoção é sempre `arquivar` — rastro auditável (D3).
@@ -118,6 +121,9 @@ leitura — mutações são mais caras; enumeração de slugs continua cara).
 - Body: `{ slug, titulo, corpo, formato?, statusInicial? }`
 - `formato`: `"texto" | "markdown-subset"` (default `texto`)
 - `statusInicial`: `"rascunho" | "publicado"` (default `rascunho`)
+- **Somente o dono do site cria páginas** (SITE-12): conta do
+  requisitante precisa ser `ownerContaId` do site → não-dono recebe
+  `403` (site é público por D2 — 404 não agregaria sigilo)
 - Site precisa existir e estar `ativo` → `404`/`409 estado_invalido`
 - `statusInicial="publicado"` exige gate P5 elegível (mesmo critério do
   site) → `403 internet_elegibilidade_revogada`
@@ -130,13 +136,17 @@ leitura — mutações são mais caras; enumeração de slugs continua cara).
 
 `PATCH /sites/:slug/paginas/:pageSlug` — editar conteúdo
 
-- Body: `{ titulo?, corpo?, formato?, expectedVersion? }`
+- Body: `{ titulo?, corpo?, formato?, expectedVersion }`
+- `expectedVersion` **obrigatório** em toda edição de conteúdo — D3
+  torna a versão o mecanismo anti-lost-update; sem ele um PATCH cego
+  sobrescreveria edição concorrente. Divergente → `409
+  versao_desatualizada` com `{ versionAtual }`
 - Somente o autor (`autorContaId === conta.id`) → `404` uniforme para
   não-autor/não-mestre (existência de rascunho não vaza — a leitura
   pública já responde 404 idêntico para não-`publicado`)
-- `expectedVersion` presente e ≠ `version` atual → `409
-  versao_desatualizada` com `{ versionAtual }` (optimistic concurrency —
-  D3 torna a versão o mecanismo anti-lost-update)
+- Site `arquivado` congela o site inteiro: qualquer mutação em página
+  dele (edição ou status) → `409 estado_invalido` — restaurar o site
+  primeiro
 - Toda edição aceita incrementa `version` em 1, grava audit
   `internet.pagina_editada` `{ pageId, siteId, autorContaId, version,
   camposAlterados[] }` — ator autenticado (`actorId`) e horário já vêm
@@ -169,6 +179,9 @@ leitura — mutações são mais caras; enumeração de slugs continua cara).
 - Audit `internet.pagina_arquivada` / `internet.pagina_restaurada` com
   `{ de, para, por }`
 
+Regra transversal às quatro transições acima: site `arquivado` congela
+status de suas páginas → `409 estado_invalido` (mesma regra do PATCH).
+
 `GET /sites/:slug/paginas` — listagem autenticada
 
 - Anônimo-equivalente (qualquer membro): apenas `publicado` (mesmo
@@ -187,7 +200,9 @@ leitura — mutações são mais caras; enumeração de slugs continua cara).
   - demais → somente `publicado`; não-`publicado` responde `404`
     idêntico ao endpoint público (zero oráculo)
 - Resposta inclui `version`, `status`, `autorContaId`/handle do autor —
-  campos que a visão pública omite
+  campos que a visão pública omite. Registro: páginas não admitem
+  anonimato (DP-6), mas se um tipo futuro admitir, `autorContaId`/handle
+  não pode vazar nessa visão — revisar antes de reusar o endpoint
 
 ## Formato `markdown-subset` — whitelist fechada
 
@@ -237,7 +252,8 @@ a implementação isola a checagem em um helper para trocar o ponto.
    de `owner_conta_id`/`autor_conta_id`
 4. Mestre não consegue alterar `corpo`/`titulo`/`nome`/`descricao` por
    nenhum endpoint — somente arquivar/restaurar
-5. Dono do site não edita página de outro autor (D14)
+5. Dono do site não edita página de outro autor (D14); criação de
+   página em site alheio → 4xx (SITE-12 — autoria única no corte)
 6. `markdown-subset` rejeita HTML, scripts, schemes perigosos —
    `400 formato_invalido`, nunca 200 com conteúdo alterado
 7. Slug duplicado → `409`; corrida de criação resolvida pelo UNIQUE do
@@ -259,13 +275,14 @@ com `detail` carregando ids diegéticos (`contaId`, `autorContaId`,
 
 ## Questões em aberto para deliberação
 
-1. **Multi-autoria irrestrita** (qualquer conta elegível cria página em
-   site alheio): se o dono quiser "só o dono do site convida/autoria",
-   a fatia ganha um conceito de permissão por site — deliberação antes
-   de codar se preferir o modelo restrito.
-2. **Gate P5 só na publicação** (proposta acima) vs. em toda mutação.
-3. **`publishedAt`** = primeira publicação (proposta) vs. última —
+1. **Gate P5 só na publicação** (proposta acima) vs. em toda mutação.
+2. **`publishedAt`** = primeira publicação (proposta) vs. última —
    afeta ordenação "mais recentes" do W4 futuro.
-4. Sites: **sem `version`** no schema — D3 cobre páginas; se o dono
+3. Sites: **sem `version`** no schema — D3 cobre páginas; se o dono
    quiser versionamento de metadados de site, exige migration aditiva
    (`version` integer default 1) — fora desta fatia salvo deliberação.
+
+Fechado por alinhamento ao parecer INTERMEDIÁRIO (`7226880996`):
+multi-autoria irrestrita **não** entra nesta fatia — autoria única por
+site no corte 1.1.2 (SITE-12). Reabrir exigiria deliberação explícita do
+proprietário e um novo contrato de permissão por site.
