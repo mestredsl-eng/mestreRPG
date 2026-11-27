@@ -1,12 +1,11 @@
 # Internet pública — especificação UX/F2 (#366)
 
-**Status**: **UX aprovada pela revisão adversarial** (INTERMEDIÁRIO #366 —
-2 rodadas incorporadas) e alinhada ao threat model #367 e à proposta de
-domínio #365. **Segue Draft de produto**: PR #371 permanece draft até o Dono
-Técnico fechar o contrato v2.2. **Quiz 1–20 do proprietário (26/11)
-incorporados** — decisões respondidas marcadas DECIDIDAS na matriz §6;
-restantes seguem proposta.
-**HEAD da spec**: `b1079aa`+ (branch `docs/366-ux-internet-publica`, PR #371).
+**Status**: UX aprovada pela revisão adversarial e integrada pela PR #371.
+Alinhada ao threat model #367 e ao contrato #365. Os vereditos explícitos do
+proprietário de 27/11/2026 estão incorporados na matriz §6 e na seção §9.
+D1–D14 e DP-1…DP-9 estão decididas; as pendências restantes são de
+mapeamento técnico, implementação e homologação, não de produto.
+**Documento de UX**: PR #371 integrada; histórico preservado.
 **Protótipo navegável**: [`index.html`](./index.html) (wireframe, dados ilustrativos, sem backend).
 **Suplemento DP-1…DP-9**: [`SUPLEMENTO-DECISOES-DP.md`](./SUPLEMENTO-DECISOES-DP.md) — fechamento UX dependente das decisões de produto (ordem Dono 14:44).
 **Bases analisadas**:
@@ -14,10 +13,11 @@ restantes seguem proposta.
 - Documentação de contrato 1.1.1: `docs/prototipo-internet-352/ESPECIFICACAO.md` (branch `docs/352-prototipo-internet`)
 - Doc do módulo atual: `site/src/paginas/Internet.tsx` + `site/src/paginas/internet/*` @ `6d2e565`
 
-> Nada aqui implementa componentes, chama API nova ou altera a tela atual. Toda
-> funcionalidade depende de contrato backend que **não existe ainda** — a spec
-> marca cada dependência como `[contrato]` para a frente #365 (PAI) e #367
-> (INTERMEDIÁRIO) deliberarem.
+> W1/W3 (Explorar, diretório de sites, leitura de site/página) já estão
+> implementadas e integradas pela PR #388. Os demais fluxos abaixo são
+> especificação aprovada para implementação em fatias verticais; não se deve
+> reimplementar W1/W3 nem abrir um segundo sistema de browser, contas,
+> mensagens ou comércio.
 
 ## 1. Onde a camada pública mora (proposta de navegação)
 
@@ -133,9 +133,10 @@ pública via dispositivo. Escrita pública: J e M publicam; M adicionalmente
 | W11 Investigação | disponível | ✓* | ✓ | Jogar teste do RPG → ver resultado + informações obtidas |
 | W11 | repetição sem novidade | ✓* | ✓ | Bloqueada com motivo ("precisa de novas pistas/evidências") |
 
-\* `J` só atua como jornalista se a elegibilidade for decidida — **D8
-permanece proposta** (ver §6). A UI mostra a ação desabilitada com motivo
-quando não permitida.
+\* `J` publica conteúdo jornalístico/investigativo somente quando cumprir
+a elegibilidade derivada das regras/habilidades já existentes em
+Caçadores & Caçados. Não criar classe, perícia ou habilidade nova.
+`M` também pode publicar.
 
 ## 5. Recomendações de experiência
 
@@ -176,17 +177,18 @@ na busca" fundidas em **D10**; "moderação" + "motivo ao autor" fundidas em
 |---|--------|----------|--------------|--------------|----------------------|----------|
 | D1 | PAI #365 | ~~Escopo "público": só campanha ou entre campanhas/servidor?~~ **DECIDIDO 26/11 (Quiz 1): fronteira entre campanhas ABSOLUTA — escopo = campanha** | — | campanha-only, definitivo | W8 seletor fixo `campanha\|contatos`; W2 sem escopo cross-campaign | — (decidido) |
 | D2 | PAI #365 | ~~Sites visíveis a todos da campanha ou só a contatos?~~ **DECIDIDO 26/11 (Quiz 2, escolha A): sites descobríveis por TODOS os elegíveis da campanha; `contatos` restringe publicações individuais** | — | todos — diretório lista sites; perfil/site existe sem expor publicações restritas | W1 diretório de sites; W3/W9 existem mesmo sem publicações visíveis ao leitor | — (decidido) |
-| D3 | PAI #365 | Histórico de edições de página: `version`+audit ou tabela de revisões/rollback? | a) version+audit b) revisions | a) adiar revisions (fatía A) | W3/W8 "versões anteriores" só existe se b) | Tabela nova se b) |
+| D3 | PAI #365 | Histórico de edições de página? | a) `version` + auditoria b) tabela de revisões/rollback | **DECIDIDO 27/11/2026: A — `version` incremental + auditoria; sem histórico recuperável e sem rollback** | Edição autorizada incrementa versão e registra autoria/ator/data; sem tela de versões anteriores, endpoint de restauração ou rollback | — (decidido) |
 | D4 | PAI #365 | ~~Bio de perfil: coluna ou publicação fixada?~~ **DECIDIDO (Quiz): perfil exibe descrição editável** — implementa como campo do perfil | — | campo `descricao` no perfil | W9 campo descrição; edição livre | — (decidido) |
-| D5 | PAI #365 | Todo endpoint público exige gate do leitor (conta Internet + dispositivo)? | a) gate em tudo b) discovery aberto | a) gate em tudo — **absorve** "sem conta acessa?" e "anônimo?" (sem conta = sem gate = sem acesso) | Todo o Explorar atrás do gate; estado "sem conta" já especificado | Regra de autorização |
-| D6 | PAI #365 | Incluir tabelas públicas no export/backup P9? | a) sim b) não | a) sim (conteúdo diegético ≠ comunicação privada) | Nenhum impacto visual — registrado p/ completude | Contrato de export |
+| D5 | PAI #365 | Gate para leitura pública | a) gate em tudo b) descoberta aberta | **DECIDIDO/IMPLEMENTADO: A — conta Internet elegível + dispositivo reconhecido, revalidados no servidor a cada chamada** | Todo o Explorar fica atrás do gate; sem leitura anônima ou acesso sem dispositivo | — (decidido; W1/W3 implementados) |
+| D6 | PAI #365 | Exportação/importação da campanha inclui conteúdo público? | a) domínio público completo b) só publicado c) não exportar | **DECIDIDO 27/11/2026: A — exportar/importar o domínio público integral, inclusive rascunhos, visibilidade e moderação; excluir Mensagens/conversas privadas** | Preservar conteúdo e estados sem expor identidade protegida de publicação anônima (DP-1/DP-6) | — (decidido) |
 | D7 | UX | ~~Moderação~~ **DECIDIDO (Quiz): publicação livre + denúncia → remoção automática pelo sistema; contestação resolvida por administrador da plataforma — NÃO pelo Mestre.** Só admin da plataforma consulta identidade anônima em moderação excepcional (sem justificativa obrigatória, sem trilha de auditoria — escolha do proprietário) | — | — | W8 publica direto; ação "Denunciar" em conteúdos; estado removido; **sem** fila de aprovação, **sem** papel do mestre na contestação | Fluxo de denúncia/contestação |
-| D8 | UX | Quem publica o quê + **elegibilidade para jornalista** (matéria derivada de notícia automática de morte)? | a) tudo livre p/ elegível b) notícias/fontes só mestre c) jornalista exige elegibilidade própria | **PARCIAL**: identidade do autor por tipo decidida (verdadeira padrão; pseudônimo/anônimo conforme tipo; anônima imutável). **Segue proposta**: elegibilidade de jornalista e restrições por tipo de publicação | W8 seletor de identidade; W11 ação de investigação; selo de fonte | Permissões de escrita; W11 |
-| D9 | UX | Anúncio permite "Contatar"? | a) sim, via fluxo de contato existente b) não c) canal direto | a) — aresta dirigida + aceite + bloqueio P3; se bloqueado, estado honesto sem vazar o bloqueio | W7 ação Contatar | Ação de W7 |
+| D8 | UX | Quem pode publicar notícias e conteúdo jornalístico? | a) todo elegível b) só Mestre c) elegibilidade baseada nas regras/habilidades existentes | **DECIDIDO 27/11/2026: C — jornalista precisa cumprir elegibilidade derivada de Caçadores & Caçados; nenhuma classe/perícia/habilidade nova; Mestre também pode publicar** | W4/W5/W11 aplicam autorização jornalística; PAI deve identificar a regra existente exata antes de codificar | — (decidido; mapeamento técnico em andamento) |
+| D9 | UX | Anúncio permite contato? | a) fluxo existente b) sem contato c) chat paralelo | **DECIDIDO 27/11/2026: A — solicitação/aceite de contato existente; conversa abre após aceite** | W7 reutiliza contato e Mensagens; respeita bloqueio bilateral; não cria chat paralelo | — (decidido) |
 | D10 | UX | ~~O que o perfil público exibe?~~ **DECIDIDO (Quiz): perfil OPCIONAL; exibe só nome público + avatar + descrição; nome do personagem é padrão, alternativo permitido; edição livre; ativação IRREVERSÍVEL (aviso inequívoco, sem ocultar/desativar/excluir); permanece após morte; utilizável sem perfil** | — | — | W9/W10 conforme §3; W2 indexa perfil só se ativado | — (decidido) |
-| D11 | UX | Anúncio tem prazo? Quem remove? | a) expiração opcional pelo autor + remoção por autor/mestre b) prazo fixo c) sem expiração | a) `expiresAt` opcional (já no modelo); `expirado` derivado, sem job | W6 chip "expirado"; W8 campo validade; W7 estado | `meta.expiresAt` (já previsto) |
-| D12 | UX | Pesquisa indexa o quê e com que escopo default? | a) título+páginas+notícias+anúncios+perfis(handle) b) +displayName c) só publicações | a) conforme contrato v1 (`titulo`+`handle`+`nome`), filtro por visibilidade do leitor no SQL; `displayName` fora do índice (depende de D10) | W2 escopos e agrupamento de resultados | Quase respondida pelo contrato — confirmar |
-| D13 | UX | Sites têm navegação própria (menu) ou são páginas soltas? | a) menu derivado das páginas publicadas b) editor de menu c) sem navegação | a) menu simples derivado; sem editor de menu na fatia | W3 menu do site | W3 |
+| D11 | UX | Anúncio tem prazo? | a) opcional pelo autor b) prazo fixo c) sem expiração | **DECIDIDO 27/11/2026: A — `expiresAt` opcional; sem data = permanente; expiração derivada na leitura, sem job** | W8 oferece validade opcional; W6/W7 derivam ativo/expirado em leitura | — (decidido) |
+| D12 | UX | O que a pesquisa indexa? | a) sites/páginas/notícias/anúncios/classificados/perfis por handle b) também `displayName` c) só publicações | **DECIDIDO 27/11/2026: A — sites, páginas, notícias, anúncios/classificados e perfis por `handle`; `displayName` fora do índice** | Aplicar visibilidade/autorização antes de resultados, snippets, contagens, ordenação e paginação | — (decidido) |
+| D13 | UX | Sites têm navegação própria? | a) menu derivado b) editor de menu c) sem menu | **DECIDIDO/IMPLEMENTADO W1/W3: A — menu derivado das páginas publicadas, sem editor de menu** | W3 lista somente páginas publicadas | — (decidido/implementado) |
+| D14 | UX/PAI #365 | Quem cria e administra sites e páginas? | A) personagem elegível cria o próprio site; dono administra o site; cada autor edita suas páginas; Mestre modera/arquiva, sem reescrever conteúdo alheio | **DECIDIDO 27/11/2026: A — ownership do site pelo personagem; autoria própria por página; Mestre só modera/arquiva conteúdo alheio** | W3/W8: dono administra site; autor edita sua página; Mestre não reescreve conteúdo; ownership segue o personagem na transferência P7 | — (decidido; implementação nas próximas fatias) |
 
 **Definição de "morte" — RESOLVIDA (contrato v2.6, PAI; APROVADO INTERMEDIÁRIO)**: `characters.data.__morte` como array de épocas (chave reservada, não forjável), avaliador único `avaliarMorte` cobrindo HP→0, declaração do mestre e importação, dedup por `(characterId, ocorrencia.em)`. Requisitos INTERMEDIÁRIO incorporados: ressurreição não apaga fato (notícia fica, correção = nova publicação), `causa` sanitizada, somente-leitura enforced server-side, `__morte` viaja no P7. **Contrato v2.6**: avaliador único `avaliarMorte` cobre todos os write paths de `__hp` (inclusive importação); `__morte` = array de épocas com `revertidaEm`; trava somente superfícies Internet (mesa/chat/economia fora do corte). **DP-8/DP-9 DECIDIDAS** (#365 `7220007287`): ressurreição somente por ação mestre auditada `personagem_ressuscitado` — marca `revertidaEm`, preserva épocas/histórico e **não apaga nem retira** notícia já publicada; correção de causa somente por **nova publicação**, nunca edição retroativa de `__morte.causa` ou da notícia automática.
 
@@ -249,15 +251,22 @@ podem ser congeladas já (wireframe + contratos de leitura estáveis):
 - **Tokens/estados visuais**: reuso integral de `estilos-internet.css`,
   `abas.tsx`, `estados.tsx` — zero linguagem nova.
 - **Responsividade**: layouts mobile/desktop do wireframe.
-- **Com as decisões Quiz 1–20**: W9/W10 (perfil opcional, ativação
-  irrevogável, campos nome público/avatar/descrição), seletor de
+- **Com as decisões anteriores preservadas**: W9/W10 (perfil opcional,
+  ativação irrevogável, campos nome público/avatar/descrição), seletor de
   identidade por tipo no W8, publicação anônima imutável, notícia
-  automática de morte com selo, fluxo de denúncia/remoção automática.
+  automática de morte com selo e fluxo de denúncia/remoção automática.
+- **Com os vereditos de 27/11**: ownership/autoria (D14), versionamento
+  sem rollback (D3), export/import integral não privado (D6), autorização
+  jornalística por regras existentes (D8), contato pelo fluxo já existente
+  (D9), validade opcional sem job (D11) e pesquisa multi-tipo por handle
+  sem displayName (D12).
 
-**NÃO congelável** (depende de deliberação): elegibilidade de jornalista
-e permissões por tipo de publicação (D8 residual), ação "Contatar" (D9),
-campo de validade de anúncio (D11), escopo/índice da pesquisa (D12),
-menu do site (D13), e histórico de edições de página (D3).
+**Decisões de produto fechadas em 27/11/2026**: ownership (D14),
+versionamento (D3), export/import (D6), jornalismo (D8), contato em anúncios
+(D9), validade (D11) e pesquisa (D12). D13 também já estava decidido e
+foi implementado em W1/W3. Não reabrir estes pontos; restam mapeamentos
+técnicos, implementação e homologação, especialmente identificar a
+elegibilidade jornalística no ruleset existente.
 
 ## 8. O que NÃO está proposto
 
@@ -267,3 +276,31 @@ menu do site (D13), e histórico de edições de página (D3).
 - Nenhuma mudança na camada privada (Mensagens/Conta) nem no comércio
   (Lojas/Vender/Pedidos).
 - Nenhum componente implementado — o `index.html` é wireframe estático.
+
+
+## 9. Vereditos consolidados do proprietário — 27/11/2026
+
+Fonte: resposta explícita do proprietário ao Quiz de Produto 1.1.2;
+sete vereditos apresentados, observações adicionais: nenhuma. Este
+registro complementa a matriz e não altera decisões anteriores.
+
+| Item | Veredito | Requisito vinculante |
+|---|---|---|
+| Ownership de sites/páginas (D14) | A | Personagem elegível cria o próprio site; dono administra o site; cada autor edita suas páginas; Mestre pode moderar/arquivar, mas não reescrever conteúdo alheio. Ownership acompanha o personagem conforme P7. |
+| D3 — versões | A | `version` incremental + auditoria; sem histórico recuperável, tabela de revisões ou rollback. |
+| D6 — export/import | A | Incluir todo o domínio público da campanha, inclusive rascunhos, visibilidade e moderação; excluir Mensagens/conversas privadas. A anonimidade e o sigilo de autoria permanecem protegidos (DP-1/DP-6). |
+| D8 — jornalismo | C | Elegibilidade baseada em regras/habilidades já existentes de Caçadores & Caçados; não criar classe/perícia/habilidade nova. Mestre também pode publicar. |
+| D9 — contato | A | Usar solicitação/aceite de contato existente; abrir a conversa existente somente após aceite; respeitar bloqueios. |
+| D11 — validade | A | `expiresAt` opcional definido pelo autor; ausência significa permanente; expiração calculada na leitura, sem job de fundo. |
+| D12 — pesquisa | A | Indexar sites, páginas, notícias, anúncios/classificados e perfis por `handle`; não indexar `displayName`; visibilidade filtrada antes de qualquer resultado/metadado. |
+
+Decisões anteriores preservadas e não reabertas: D1, D2, D4, D5,
+D7, D10, D13 e DP-1…DP-9. Gate de conta/dispositivo, isolamento por
+campanha, anonimato por tipo, denúncia/contestação, perfil, morte,
+ressurreição, avatar e menu derivado seguem vigentes.
+
+A Internet é uma plataforma integrada dentro do módulo diegético Rede:
+Explorar concentra sites, páginas, pesquisa, notícias, perfis, posts e
+classificados; Mensagens reutiliza o mensageiro existente; Lojas/Vender/
+Pedidos reutilizam o comércio existente. Não construir app separado,
+segundo login, segundo chat, segundo checkout ou banco paralelo.
