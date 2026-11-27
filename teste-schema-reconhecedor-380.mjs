@@ -9,9 +9,24 @@
 //   S5 sentinela editável — dados legítimos do usuário NÃO bloqueiam;
 //   S6 objeto extra — diagnóstico lista extras+ausentes sem mutar o banco.
 //
-// ADAPTADOR (contrato assumido — ajustar 1 linha se o PAI nomear diferente):
+// CONTRATO REAL (spec + Adendo A1 @ PR #389 `811e8cb`): o reconhecedor
+// devolve `ReconhecimentoSchema` =
+//   { ok:true, familia, migracoes, evidencias{journalExata,hashesValidos,
+//     estruturaValida,sentinelasDados,identidadeBanco,integrityCheck,
+//     foreignKeyCheck} }
+// | { ok:false, motivo: "journal-ausente|journal-forjada|journal-extra|
+//     journal-interrompida|hash-divergente|estrutura-ausente|
+//     estrutura-divergente|sentinela-ausente|
+//     banco-nao-pertence-a-esta-instalacao|identidade-nao-atada|
+//     integridade-sqlite|chaves-estrangeiras|banco-ilegivel", detalhe? }
+//   — `detalhe` OBRIGATÓRIO listando extras/faltantes p/ estrutura-* (P1-5).
+// L4 depende de contexto de estado (recibo/server_settings) — o probe
+// herda process.env; se a assinatura real exigir args extras, ajustar
+// a chamada `fn(db, mig)` abaixo (1 linha).
+//
+// ADAPTADOR (assinatura assumida — ajustar 1 linha se o PAI nomear diferente):
 //   módulo `servidor/src/lib/schema-reconhecedor.ts` exportando
-//   `reconhecerSchema(dbPath, migrationsDir) -> { ok, codigo?, motivos? }`.
+//   `reconhecerSchema(dbPath, migrationsDir, env?) -> ReconhecimentoSchema`.
 //   Override por env: MESTRE_RECONHECEDOR_380=<path absoluto|relativo>.
 // Sem o módulo implementado, os casos de reconhecedor FALHAM com
 // "modulo ausente" — estado TDD correto até a PR de código da #380.
@@ -152,6 +167,16 @@ try {
         const arq = join(MIGRATIONS_SRC, sqlMigrations()[0]);
         return row.hash === sha256arq(arq);
       }));
+    // Sonda baseline: num banco 100% autêntico, L1–L3 devem passar —
+    // se bloquear, o motivo só pode ser da família L4/identidade (o
+    // golden não tem recibo/id no contexto do probe).
+    if (existsSync(MODULO)) {
+      const migG = copiaMig(join(BASE, "mig-golden"));
+      const vG = verificar(golden(), migG);
+      t("golden: reconhecedor não reprova L1–L3",
+        vG.ok === true || /identidade|nao-pertence|nao-atada/i.test(String(vG.motivo ?? "")),
+        JSON.stringify(vG).slice(0, 240));
+    }
   }
 
   sec("1. LF/CRLF — hash canônico dual (P0-1/P0-2)");
@@ -180,7 +205,19 @@ try {
     ).run("0".repeat(64)));
     const v2 = verificar(db2, mig2);
     t("S1b: hash arbitrário bloqueia (hash-divergente)",
-      v2.ok === false && /hash/i.test(String(v2.codigo ?? v2.erro ?? "")), JSON.stringify(v2).slice(0, 200));
+      v2.ok === false && /hash/i.test(String(v2.motivo ?? v2.codigo ?? v2.erro ?? "")), JSON.stringify(v2).slice(0, 200));
+
+    // P0-2 — política de 2 variantes: arquivo LF + hash do CONTEÚDO
+    // ORIGINAL CRLF (banco gravado antes da normalização EOL) também
+    // é aceito — o conjunto canônico admite {worktree, CRLF-normalizado}.
+    const c3 = cenario();
+    const mig3 = copiaMig(join(c3.dir, "mig"));
+    const p42b = join(mig3, arq42);
+    writeFileSync(p42b, readFileSync(p42b, "utf8").replace(/\r\n/g, "\n"));
+    const db3 = copiaDb(join(c3.dir, "banco", "db-crlfhash.db")); // hash CRLF original preservado
+    const v3 = verificar(db3, mig3);
+    t("S1c: .sql LF + hash CRLF original aceito (política 2 variantes P0-2)",
+      v3.ok === true, JSON.stringify(v3).slice(0, 200));
   }
 
   sec("2. when duplicado em __drizzle_migrations");
@@ -196,7 +233,7 @@ try {
     t("fixture: created_at duplicado presente", dup > 0, `dups=${dup}`);
     const v = verificar(db, mig);
     t("S2: when duplicado bloqueia",
-      v.ok === false && /when|ordem|journal|divergente|incomplet/i.test(String(v.codigo ?? v.erro ?? "")),
+      v.ok === false && /journal|hash|divergente|incomplet|estrutura/i.test(String(v.motivo ?? v.codigo ?? v.erro ?? "")),
       JSON.stringify(v).slice(0, 200));
   }
 
@@ -271,6 +308,15 @@ try {
       t("S4: recibo contém assinaturaSchema regravada",
         typeof recibo.assinaturaSchema === "string" && recibo.assinaturaSchema.length > 0,
         JSON.stringify(Object.keys(recibo)));
+      // L4 (Adendo A1): recibo registra instalacaoIdBanco e o banco o
+      // persiste em server_settings chave 'protocolo.instalacaoIdBanco'.
+      const idBanco = comDb(c.env.MESTRE_BANCO, (d) =>
+        d.prepare("select value from server_settings where key='protocolo.instalacaoIdBanco'").get()?.value);
+      let idParse = null;
+      try { idParse = JSON.parse(idBanco ?? "null")?.id ?? idBanco; } catch { idParse = idBanco; }
+      t("S4: recibo.instalacaoIdBanco == server_settings (L4)",
+        typeof recibo.instalacaoIdBanco === "string" && recibo.instalacaoIdBanco === idParse,
+        `recibo=${recibo.instalacaoIdBanco} banco=${idParse}`);
     } else {
       t("S4: recibo existe para inspeção", false, reciboPath);
     }
@@ -318,7 +364,7 @@ try {
     const v = verificar(db, mig);
     const blob = JSON.stringify(v);
     t("S6: estrutura divergente bloqueia",
-      v.ok === false && /estrutura|divergente|ausente/i.test(String(v.codigo ?? v.erro ?? "")),
+      v.ok === false && /estrutura/i.test(String(v.motivo ?? v.codigo ?? v.erro ?? "")),
       blob.slice(0, 200));
     t("S6: diagnóstico lista objeto extra (z_sonda_extra_380)",
       blob.includes("z_sonda_extra_380"), blob.slice(0, 300));
