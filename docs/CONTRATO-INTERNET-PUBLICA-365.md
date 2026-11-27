@@ -173,10 +173,10 @@ entregues em fatias verticais próprias.
   `fixtures/estrutura-cacadores-dump.json`; `regraKind` vincula as
   opções à biblioteca do respectivo tipo em `servidor/src/lib/ficha.ts`.
 - Elegibilidade jornalística do personagem: valor/chave estável
-  `jornalista` no campo de Profissão da ficha, validado contra a definição
-  `profissao:jornalista` ainda existente no ruleset ativo da campanha.
-  A consulta ocorre server-side; não aceitar label/texto livre ou profissão
-  informada pelo cliente como prova.
+  `jornalista` no campo da ficha vinculado a `regraKind: "profissao"`,
+  validado contra a definição `profissao:jornalista` ainda existente no
+  ruleset ativo da campanha. A consulta ocorre server-side; não aceitar
+  label/texto livre ou profissão informada pelo cliente como prova.
 - Mestre também pode publicar conteúdo jornalístico, independentemente
   do gate de profissão do personagem, conforme a decisão C.
 - Não criar classe, perícia, conhecimento, habilidade, atributo,
@@ -191,6 +191,7 @@ entregues em fatias verticais próprias.
   - [tipo de regra](../servidor/src/lib/regras.ts#L23-L29)
   - [campo de ficha por ruleKind](../servidor/src/lib/ficha.ts#L92-L93)
   - [campo Profissão da estrutura de referência](../fixtures/estrutura-cacadores-dump.json#L8-L19)
+  - [valor salvo pela chave estável da biblioteca](../site/src/FichaForm.tsx#L787-L793)
 
 ### D9 — contato em anúncios (A)
 
