@@ -6,7 +6,7 @@ Transformar a investigação da Issue #380 em um contrato testável para o recon
 
 A regra principal é **fail-closed**: journal, hash, contagem ou estrutura isolados nunca autorizam adoção.
 
-**Revisão vigente:** este documento incorpora a revisão L4/T7 aprovada na issue (`comentários 7204971329` e `7205292890`), incluindo identidade de instalação dentro do SQLite, a ressalva *trust on first use* e a política de cache corrigida.
+**Revisão vigente:** este documento incorpora a revisão L4/T7 aprovada na issue (`comentários 7204971329` e `7205292890`), incluindo identidade de instalação dentro do SQLite, a ressalva *trust on first use* e a política de cache corrigida. O **Adendo A1** (fim do documento) incorpora as precisões P0/P1/P2/P3 do parecer de ataque/compatibilidade `7211928759` — requisitos normativos para a implementação.
 
 ## Estado atual auditado
 
@@ -311,3 +311,160 @@ Para diferenciar journal íntegra de interrompida, a fixture interrompida deve c
 ## Critério de saída
 
 A próxima PR de código só deve começar quando esta especificação tiver revisão humana ou quando a Issue #380 registrar uma decisão equivalente. A implementação deve manter compatibilidade com instalações legítimas, rejeitar qualquer banco em que journal, hash, estrutura e identidade não formem uma prova coerente, e declarar explicitamente os limites de detecção (TOFU, edição de dados, clonagem).
+
+## Adendo A1 — precisões de contrato (parecer INTERMEDIÁRIO `7211928759`, ordem `7220031775`)
+
+Revisão de ataque/compatibilidade executada sobre o migrator real
+(`drizzle-orm/sqlite-core/dialect.js`, `migrator.js`) e os artefatos
+(`_journal.json`, `.gitattributes`, `migrate.ts`). Fatos verificados que
+este adendo torna contrato:
+
+- `hash` persistido = `sha256(readFileSync(file).toString())` — hash da
+  **string UTF-8 decodificada**, não dos bytes crus;
+- `created_at` = `journalEntry.when`; o migrator **pula** entries com
+  `folderMillis <= último created_at` — não há bi-jeção, só comparação
+  com a última row;
+- todas as migrations pendentes rodam num **único BEGIN/COMMIT** — crash
+  no meio = rollback total ⇒ prefixo sempre limpo;
+- `_journal.json` real: 42 entries, `when` estritamente crescente, zero
+  duplicados;
+- `server_settings` existe desde a migration **0009** ⇒ presente em
+  todos os prefixos — L4 viável em bases antigas;
+- `.gitattributes` fixa `eol=crlf` **somente para `*.bat`** — `.sql` sem
+  regra ⇒ `core.autocrlf` pode reescrever bytes por checkout;
+- nenhuma migration usa FTS5/generated columns/VACUUM/ATTACH — a
+  assinatura estrutural ainda assim os cobre por igualdade exata.
+
+### P0-1 — forma canônica do hash (literal, bloqueante)
+
+A verificação L1 **deve reproduzir exatamente** o que o migrator grava:
+
+```
+sha256_hex( readFileSync(caminhoSql).toString() )
+```
+
+Ou seja: decodificar o arquivo como UTF-8 (`toString()` sem encoding
+forçado) e hashear a **string resultante** — nunca hashear o
+`Buffer`/bytes crus diretamente. Para UTF-8 válido as duas formas
+coincidem; para BOM ou encoding exótico divergem, e a forma gravada no
+banco é a da string decodificada. A spec passa a declarar isso
+literalmente: "hash = sha256 do `.sql` **como string decodificada** do
+worktree".
+
+### P0-2 — EOL de `.sql` e política de transição (bloqueante)
+
+`.gitattributes` **deve** fixar `servidor/migrations/*.sql text eol=lf`
+(ou `-text`) — hoje `.sql` não tem regra e `core.autocrlf` pode
+reescrever LF→CRLF por checkout, mudando os bytes e invalidando L1 em
+instalações legítimas.
+
+**Política de transição para bancos cujo hash foi gravado sobre bytes
+CRLF:** o conjunto de hashes aceitos por arquivo é **determinístico e de
+no máximo 2 variantes** — o conteúdo como está no worktree (LF) e o
+mesmo conteúdo com fim de linha normalizado para CRLF, ambos hasheados
+na forma canônica do P0-1. Aceitar quando o `hash` persistido pertencer
+a esse conjunto. Não abre forja: sha256 continua resistente a pré-imagem
+e a segunda variante é computável, não adivinhada. Sem essa política, a
+primeira sincronização de um clone Windows com `autocrlf` divergente
+bloquearia instalações saudáveis — inaceitável para um gate fail-closed.
+
+### P1-1 — comparação posicional, nunca por valor
+
+As rows de `__drizzle_migrations` são comparadas **na ordem de inserção
+(`rowid`)** contra `entries[0..k)` do `_journal.json`. `ORDER BY
+created_at` é **proibido** — com `when` empatado a ordenação é ambígua e
+o migrator decide pelo último `created_at`, não por ordenação. A
+comparação é por **multiconjunto** de pares `(hash, created_at)` com
+multiplicidade (duas rows idênticas só são legítimas se a mesma entry
+aparece duas vezes no journal — hoje impossível; o contrato rejeita);
+o `id` surrogate é ignorado.
+
+### P1-2 — invariante `when` estritamente crescente
+
+`when` estritamente crescente é **invariante do projeto**. O
+binary-search/skip do migrator (`folderMillis <= último`) torna um
+`when` duplicado uma armadilha latente: a migration futura seria
+**pulada silenciosamente**, o banco ficaria sem row e sem objetos, e o
+binary só destravaria com intervenção manual. Exigências:
+
+- o reconhecedor valida a monotonicidade do `_journal.json` como parte
+  de L1 — `when` não estritamente crescente ⇒ `journal-forjada`;
+- uma **suíte de teste** (não workflow — `.github/workflows/ci.yml`
+  intocado) assevera a invariante sobre o journal real a cada mudança de
+  migrations, falhando antes do merge de qualquer violação.
+
+### P1-3 — gatilho de atualização do `assinaturaSchema` no recibo
+
+Sem regra explícita, o recibo fica **stale** na primeira migration
+pós-vinculação: `assinaturaSchema` gravado na verificação não cobre o
+schema novo ⇒ a regra B3 (`recibo.assinaturaSchema confere
+REFERENCIA(k)`) bloquearia uma instalação que migrou legitimamente —
+autobloqueio. **Exigência:** `gravarReciboInstalacao` regrava
+`assinaturaSchema` (= `REFERENCIA(k)` do prefixo corrente) e
+`instalacaoIdBanco` **após cada migrate bem-sucedido**, na mesma
+transação lógica do registro de término do migrate. Alternativa
+equivalente admitida: a checagem B3 usar a referência do **prefixo
+reconhecido corrente** em vez do valor congelado no recibo — desde que
+o vínculo `instalacaoIdBanco` continue exigido. A escolha entre as duas
+é de implementação; a propriedade exigida é: **boot subsequente a
+migrate legítimo nunca bloqueia por `assinaturaSchema` defasado**.
+
+### P1-4 — sentinelas L3: mapa por prefixo com justificativa de imutabilidade
+
+"Sentinela de dados" só é prova se o usuário não pode deletá-la/editar
+legitimamente. O seed `novidades` pode ser removível pela UI ⇒ falso
+`sentinela-ausente` em instalação sadia. **Exigência:** mapa de
+sentinelas **por prefixo**, cada entrada justificada como
+sistema/imutável (ou read-only via API); sentinela user-editável **não
+conta**. Onde nenhuma linha user-imutável existir para o efeito
+data-only de uma migration, a camada L3 para aquele prefixo deve ser
+marcada `nao-aplicavel` com justificativa — nunca satisfeita por sentinela
+fraca.
+
+### P1-5 — `estrutura-divergente` exige diagnóstico acionável
+
+Igualdade exata de assinatura é a escolha fail-closed correta, mas uma
+instalação com objeto auxiliar legítimo (índice manual, tabela de
+cache, resto de ferramenta) ficaria **permanentemente bloqueada sem
+explicação** — indistinguível de bug. **Exigência:** para
+`motivo ∈ {"estrutura-ausente","estrutura-divergente"}`, `detalhe` é
+**obrigatório** e carrega a lista somente-leitura dos objetos
+extras/faltantes e dos campos/colunas divergentes, para o operador
+reconciliar. O tipo `detalhe?: string` passa a ser exigido nesses
+motivos; permanece opcional nos demais.
+
+### P2 — registrados (não bloqueantes, contrato de implementação)
+
+- **P2-1** `PRAGMA table_info` ⇒ preferir `table_xinfo` (cobre
+  generated/hidden columns se o schema evoluir; blindagem gratuita).
+- **P2-2** `integrity_check` completo por boot pode ser custoso em
+  bases grandes — aceitável como gate, mas a implementação deve medir o
+  custo e, se inviável, **declarar o risco e alterar o contrato** (ex.:
+  `quick_check` com justificativa) — nunca dispensar silenciosamente.
+- **P2-3** `foreign_key_check` falho bloqueia **com as linhas violadoras
+  no `detalhe`**; o runbook #378 cobre o reparo.
+- **P2-4** `created_at numeric` — comparar com `Number()` nas duas
+  pontas; `when` ~1.7e12 < 2^53, seguro — declarado.
+- **P2-5** bi-jeção como **multiconjunto** (ver P1-1) — rows duplicadas
+  idênticas rejeitadas salvo entry duplicada no journal (hoje
+  impossível).
+
+### P3 — notas registradas
+
+- Clone integral com path diferente: `repoCanon` muda ⇒ intenção
+  pendente vira B5 — **documentado**: mudança de diretório com intenção
+  pendente bloqueia até intervenção do operador.
+- `PRAGMA wal_checkpoint(TRUNCATE)` falhar (outra conexão viva) é
+  **erro explícito**, nunca checkpoint parcial seguido de hash.
+- Ataque "recibo antecipado": coberto pela máquina B/R; residual real =
+  atacante com escrita em state-dir+DB forja ambos — mesmo nível já
+  declarado, sem agravamento.
+
+### Síntese do adendo
+
+Nenhum achado invalida a arquitetura L1–L4/B/R — são precisões de
+contrato e compatibilidade. Com P0-1, P0-2 e P1-1..P1-5 incorporados
+como requisitos normativos acima, esta especificação está pronta para o
+PAI implementar; a matriz adversarial ganha os casos (a) `.sql` com
+CRLF forçado, (b) journal com `when` duplicado, (c) recibo stale
+pós-migrate, (d) tabela extra legítima → bloqueio **com diagnóstico**.
