@@ -38,8 +38,9 @@ Toda rota de escrita exige, em ordem:
 3. `internet_accounts.status = "ativa"`;
 4. Regra de ownership da tabela abaixo;
 5. Gate P5 cumulativo (`gateInternetDoPersonagem` /
-   `avaliarElegibilidadeInternet`) **somente na primeira publicação**
-   (ver "Gate P5" abaixo).
+   `avaliarElegibilidadeInternet`) **em toda mutação**, inclusive
+   rascunho, edição de metadados, publicação, retirada, arquivamento,
+   restauração e moderação. Sem exceção por estado privado.
 
 Mestre nunca escreve conteúdo como se fosse autor: moderação é endpoint
 separado, auditado com `papel: "mestre"`, e jamais altera `corpo`,
@@ -84,8 +85,8 @@ leitura — mutações são mais caras; enumeração de slugs continua cara).
 - Body: `{ slug, nome, descricao? }` (zod strict)
 - `slug`: `/^[a-z0-9][a-z0-9._-]{1,62}$/` após normalização
   (minúsculas); único por campanha → `409 slug_em_uso`
-- Requer conta ativa + titular + **gate P5 elegível** (criar site é
-  estrear presença pública) → `403 internet_elegibilidade_revogada`
+- Requer conta ativa, titularidade atual e gate P5 elegível, como toda
+  mutação → `403 internet_elegibilidade_revogada`.
 - `status` inicial `ativo`; `ownerContaId` = conta do requisitante
 - `201 { ok, site }`; audit `internet.site_criado`
 
@@ -93,14 +94,18 @@ leitura — mutações são mais caras; enumeração de slugs continua cara).
 
 - Body: `{ nome?, descricao?, slug? }` — qualquer subconjunto; `slug`
   novo deve respeitar formato + unicidade → `409`
-- Somente dono (`ownerContaId === conta.id`) → `403 nao_autorizado`
+- Somente dono (`ownerContaId === conta.id`) e gate P5 atual →
+  `403 nao_autorizado` ou `403 internet_elegibilidade_revogada`.
 - Site `arquivado` aceita edição de metadados? **Não** — `409
-  estado_invalido` (restaurar primeiro)
+  estado_invalido` (restaurar primeiro). A restauração também exige gate
+  P5 atual.
 - Audit `internet.site_atualizado` com `camposAlterados[]`
 
 `POST /sites/:slug/arquivar` e `POST /sites/:slug/restaurar`
 
-- Dono da conta ou mestre; transição `ativo ↔ arquivado`
+- Dono da conta ou mestre, ambos sujeitos à autorização/gate vigente;
+  transição `ativo ↔ arquivado`. Mestre não ganha bypass do gate nem
+  permissão para editar conteúdo.
 - Site arquivado some do diretório/leitura pública (read slice já filtra
   `status="ativo"` — invariante preservada, zero mudança no GET)
 - Audit `internet.site_arquivado` / `internet.site_restaurado` com
@@ -123,10 +128,12 @@ leitura — mutações são mais caras; enumeração de slugs continua cara).
 - `statusInicial`: `"rascunho" | "publicado"` (default `rascunho`)
 - **Somente o dono do site cria páginas** (SITE-12): conta do
   requisitante precisa ser `ownerContaId` do site → não-dono recebe
-  `403` (site é público por D2 — 404 não agregaria sigilo)
+  `403` (site é público por D2 — 404 não agregaria sigilo).
+- Toda criação exige conta ativa, titularidade atual e gate P5 elegível,
+  inclusive quando `statusInicial="rascunho"`.
 - Site precisa existir e estar `ativo` → `404`/`409 estado_invalido`
-- `statusInicial="publicado"` exige gate P5 elegível (mesmo critério do
-  site) → `403 internet_elegibilidade_revogada`
+- Qualquer `statusInicial` exige gate P5 elegível; não existe exceção
+  para rascunho → `403 internet_elegibilidade_revogada`.
 - `autorContaId` = conta do requisitante; `campaignId` desnormalizado =
   `site.campaignId`; `version=1`; `publishedAt` preenchido só se já
   publicado
@@ -226,20 +233,25 @@ Limites de tamanho (valores de contrato): `titulo` ≤ 200 chars,
 `corpo` ≤ 50.000 chars, `nome` de site ≤ 120, `descricao` ≤ 1.000,
 `slug` conforme regex acima. Excedido → `400 dados_invalidos`.
 
-## Gate P5 — onde se aplica
+## Gate P5 — obrigatório em toda mutação
 
-`avaliarElegibilidadeInternet` (perícia/conhecimento configurado +
-dispositivo) é cumulativo e pode ser perdido (item vendido, ficha
-alterada). Regra desta fatia:
+`contaAutorizadaPara(contaId, userId)` é a fonte server-side de
+autorização e deve ser executada novamente em **cada operação de
+escrita**. Ela revalida conta ativa, personagem não arquivado,
+membership ativa, titularidade atual após P7 e elegibilidade canônica
+(dispositivo + requisito de ficha configurado). Não reutilizar um
+resultado anterior nem confiar em um gate calculado pelo cliente.
 
-- **Sempre**: titularidade atual + conta `ativa` (toda mutação)
-- **Publicar** (criar site, criar página já `publicada`, transição
-  `→ publicado`): revalida o gate — ir ao público é o ato privilegiado
-- **Rascunho/edição privada/metadados de site**: não revalida (trabalho
-  em andamento não é exposição)
+A exigência cobre criação e edição de site, criação de rascunho ou página
+publicada, edição de conteúdo, publicação, retirada, arquivamento,
+restauração e ações de moderação. Rascunho não é uma rota de escrita
+privilegiada: perder dispositivo, requisito ou titularidade bloqueia
+também a manutenção do rascunho até a elegibilidade ser recuperada.
 
-Se o dono preferir gate em TODA mutação, é deliberação de uma linha —
-a implementação isola a checagem em um helper para trocar o ponto.
+O papel de Mestre amplia somente as ações de moderação expressamente
+permitidas (arquivar/restaurar); não permite reescrever conteúdo nem
+contornar a validação de autorização da camada diegética. Toda falha de
+autorização/elegibilidade é negada antes da mutação e da auditoria.
 
 ## Invariantes preservadas (testes devem provar)
 
@@ -260,29 +272,47 @@ a implementação isola a checagem em um helper para trocar o ponto.
    banco (mesmo padrão de `character_transfers`)
 8. Rate limit: 31ª mutação no minuto → `429`, nunca 5xx
 
-## Auditoria — ações novas
+## Auditoria — ações novas e atomicidade
 
-`internet.site_criado`, `internet.site_atualizado`,
+Ações: `internet.site_criado`, `internet.site_atualizado`,
 `internet.site_arquivado`, `internet.site_restaurado`,
 `internet.pagina_criada`, `internet.pagina_editada`,
-`internet.pagina_status`, `internet.pagina_arquivada`,
-`internet.pagina_restaurada` — todas via `audit()` existente
-(`actorId` = usuário autenticado, `campaignId` automático, `createdAt`),
-com `detail` carregando ids diegéticos (`contaId`, `autorContaId`,
-`ownerContaId`, `pageId`, `siteId`), `version` resultante e
-`papel: "titular"|"mestre"` quando aplicável. Nenhuma tabela nova —
-`audit_logs` já cobre D3.
+`internet.pagina_status`, `internet.pagina_arquivada` e
+`internet.pagina_restaurada`.
 
-## Questões em aberto para deliberação
+**A gravação do recurso e o registro em `audit_logs` devem ocorrer na
+mesma transação do banco.** Usar a transação Drizzle/SQLite da mutação
+para inserir o evento de auditoria diretamente; se a inserção da
+auditoria falhar, a mutação inteira deve sofrer rollback e responder
+erro. O helper `audit()` atual é best-effort (captura e engole falhas),
+portanto **não satisfaz D3 e não pode ser usado isoladamente** como
+garantia desta fatia.
 
-1. **Gate P5 só na publicação** (proposta acima) vs. em toda mutação.
-2. **`publishedAt`** = primeira publicação (proposta) vs. última —
-   afeta ordenação "mais recentes" do W4 futuro.
-3. Sites: **sem `version`** no schema — D3 cobre páginas; se o dono
-   quiser versionamento de metadados de site, exige migration aditiva
-   (`version` integer default 1) — fora desta fatia salvo deliberação.
+O detalhe de auditoria registra somente metadados necessários:
+`actorId`, `campaignId`, IDs diegéticos (`contaId`,
+`ownerContaId`, `autorContaId`, `pageId`, `siteId`), ação,
+`camposAlterados[]`, transição de status, versão resultante e papel
+(`titular` ou `mestre`) quando aplicável. Nunca gravar corpo anterior,
+corpo atual, snapshots, conteúdo recuperável ou dados que permitam
+transformar auditoria em histórico/rollback oculto. Horário vem do
+registro de auditoria no banco.
 
-Fechado por alinhamento ao parecer INTERMEDIÁRIO (`7226880996`):
-multi-autoria irrestrita **não** entra nesta fatia — autoria única por
-site no corte 1.1.2 (SITE-12). Reabrir exigiria deliberação explícita do
-proprietário e um novo contrato de permissão por site.
+## Decisões técnicas fechadas para a implementação
+
+- Gate P5 é revalidado em **toda** mutação, inclusive rascunhos e
+  moderação; não há exceção para trabalho privado.
+- `publishedAt` registra a primeira publicação. Re-publicações não
+  substituem a data original; `updatedAt` registra alterações
+  posteriores.
+- O schema atual não possui versão de metadados de site. Não criar
+  migration para isso nesta fatia: o versionamento D3 aplica-se às
+  páginas; metadados de site recebem auditoria atômica com
+  `camposAlterados[]`.
+- Toda alteração de página — conteúdo ou transição de estado — exige
+  `expectedVersion`, incrementa `version` exatamente uma vez e grava
+  auditoria atômica. Conflito de versão resulta em `409
+  versao_desatualizada`; não sobrescrever alteração concorrente.
+
+Fechado conforme D14/SITE-12: somente o personagem proprietário cria
+páginas no próprio site; não há convite, colaboração nem criação em site
+alheio nesta versão. Não reabrir essas decisões no ciclo técnico.
