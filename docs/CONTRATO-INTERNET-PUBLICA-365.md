@@ -1,9 +1,12 @@
 # Contrato — Internet pública 1.1.2, fatia W1/W3 (#365)
 
-Base: `main@36f6b23` + migração `0043` (`internet_sites`, `internet_pages`).
+Base original do slice: `main@36f6b23` + migração `0043` (`internet_sites`, `internet_pages`). W1/W3 integrados em `main@4289adafe23d7343e083c02443ff09626a463726` pela PR #388.
 Escopo desta fatia: **somente leitura** — diretório de sites, detalhe de
 site e leitura de página. Criação/edição de sites e páginas NÃO existe
-aqui (regra de produto pendente de deliberação — ver #365).
+nesta fatia read-only. O ownership para futuras fatias foi decidido em
+27/11/2026 (D14): personagem elegível cria/possui e administra seu site;
+cada autor edita suas páginas; Mestre pode moderar/arquivar, sem reescrever
+conteúdo alheio.
 
 Implementação: `servidor/src/routes/internet-publica.ts`, montado em
 `/api/campaigns/:campaignId/internet` (mesmo prefixo e mesmo
@@ -93,8 +96,9 @@ Página `publicado` de site `ativo` da **mesma** campanha.
 
 Notícias, classificados, perfil público (W9/W10), pesquisa multi-escopo
 (W2), denúncias, anonimato por tipo, perfil pós-morte, investigação
-(W11), criação/edição/publicação (DP de produto pendente), menu editor,
-histórico/rollback de versões (D3 → `version`+audit basta por ora).
+(W11), criação/edição/publicação (D14 decidido; escrita pertence a fatias futuras), menu editor,
+histórico/rollback de versões (D3 fechado: `version` incremental + auditoria,
+sem revisões recuperáveis nem rollback).
 
 ## Dados
 
@@ -108,3 +112,103 @@ histórico/rollback de versões (D3 → `version`+audit basta por ora).
   updated_at`.
 - Migração `0043` puramente aditiva; `internet_pages`/`internet_sites`
   registradas em `TABELAS_ANTIGAS` de `teste-restauracao-boot.mjs`.
+
+
+## Decisões consolidadas para as próximas fatias — 27/11/2026
+
+As decisões abaixo são vinculantes para o produto 1.1.2. Não alteram
+retroativamente o escopo read-only da PR #388; as rotas de escrita serão
+entregues em fatias verticais próprias.
+
+### D14 — ownership de sites e páginas (A)
+
+- Um personagem elegível cria seu próprio site; o dono administra os
+  metadados e a configuração permitida do site.
+- Cada página possui autor próprio; somente esse autor edita o conteúdo
+  da página.
+- O proprietário do site não ganha permissão para reescrever páginas de
+  outros autores.
+- Mestre pode moderar/arquivar o site ou conteúdo, mas não reescrever
+  conteúdo alheio.
+- Ownership e autoria acompanham o personagem conforme a regra de
+  transferência P7, não a identidade humana do titular anterior.
+- Antes da implementação, PAI/Técnico Geral devem conferir como a conta
+  Internet e `owner_conta_id` atual se comportam na transferência P7.
+  Escolher a representação persistida que mantém o vínculo canônico ao
+  personagem; não mudar o significado da decisão.
+
+### D3 — versionamento (A)
+
+- Cada edição aceita incrementa `version` e grava evento de auditoria
+  com autor/personagem, ator autenticado, horário e versão resultante.
+- Não criar tabela de revisões recuperáveis, histórico navegável,
+  endpoint de restauração ou rollback de conteúdo.
+- A auditoria não deve virar cópia oculta recuperável do corpo anterior.
+
+### D6 — export/import da campanha (A)
+
+- Exportar/importar o domínio público completo da campanha: sites, páginas,
+  notícias, posts, anúncios/classificados, perfis, rascunhos, estados,
+  visibilidade, denúncias/contestação e metadados necessários para
+  reconstruir o comportamento.
+- Mensagens privadas, conversas, presença/digitação e demais dados do
+  mensageiro privado não entram no export/import da campanha.
+- Preservar relações por personagem, estados, autoria permitida, datas,
+  expiração e isolamento entre campanhas; mapear IDs sem colisão no destino.
+- **Privacidade de anonimato**: exportação de campanha não pode revelar
+  o vínculo de identidade real de publicação anônima. Manter somente os
+  dados necessários ao comportamento público/moderação, respeitando DP-1
+  e DP-6; não serializar campo secreto de desanonimização para o pacote
+  entregue ao Mestre.
+- Backup integral do servidor permanece distinto e protege o banco
+  completo conforme seu próprio contrato operacional.
+
+### D8 — publicação jornalística (C)
+
+- Publicar notícia/matéria jornalística e executar investigação jornalística
+  exige a elegibilidade que puder ser demonstrada por regras/habilidades
+  já existentes em Caçadores & Caçados.
+- Mestre também pode publicar conteúdo jornalístico.
+- Não criar classe, profissão, perícia, conhecimento, habilidade, atributo
+  ou progressão paralela de "jornalista".
+- PAI deve localizar e citar a regra existente exata no ruleset/fonte
+  canônica antes de implementar o gate. Se não houver regra aplicável
+  demonstrável, trazer a lacuna e alternativas ao Dono Técnico; não
+  improvisar um critério.
+
+### D9 — contato em anúncios (A)
+
+- A ação "Contatar" cria/usa a solicitação de contato do sistema existente.
+- A conversa existente só abre depois do aceite do destinatário.
+- Bloqueio bilateral, rejeição, pendência e privacidade continuam sob as
+  regras do mensageiro 1.1.1.
+- Nenhuma conversa direta nem segundo mecanismo de chat.
+
+### D11 — validade de anúncios (A)
+
+- `expiresAt` é opcional e escolhido pelo autor na publicação/edição
+  permitida.
+- Sem `expiresAt`, o anúncio permanece ativo até retirada/moderação.
+- Estado expirado é derivado pela comparação do instante atual com
+  `expiresAt` no momento da leitura/listagem; não criar cron/job de
+  expiração em background.
+
+### D12 — pesquisa (A)
+
+- Escopos indexados: sites, páginas, notícias, anúncios/classificados e
+  perfis públicos.
+- Perfil é localizado por `handle`; `displayName` não participa do
+  índice.
+- Visibilidade e autorização são aplicadas antes de calcular resultados,
+  snippets, totais, ordenação ou paginação. Conteúdo invisível não pode
+  influenciar contagens, ranking, cursor ou mensagens de erro.
+- O gate de Internet, a separação por campanha e os controles de
+  visibilidade existentes continuam obrigatórios.
+
+### Forma do produto
+
+A camada pública é uma plataforma integrada dentro da Internet diegética:
+Explorar reúne sites, páginas, pesquisa, notícias, perfis/posts e
+classificados; Mensagens e Lojas/Vender/Pedidos reutilizam os módulos
+privados e comerciais já existentes. Não criar app/browser/login,
+mensageiro, checkout ou armazenamento paralelo.
