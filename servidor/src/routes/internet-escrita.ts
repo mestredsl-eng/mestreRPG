@@ -408,6 +408,11 @@ internetEscritaRouter.patch("/sites/:slug", requirePapel("mestre", "jogador"), a
       const novo = k === "slug" ? novoSlug : body.data[k as "nome" | "descricao"];
       return atual !== novo;
     });
+  if (!camposAlterados.length) {
+    // PATCH idempotente: mesmos valores → sem version/audit/cota
+    res.json({ ok: true, site: siteSerializado(site) });
+    return;
+  }
 
   const agora = new Date();
   if (negaSemCota(req, res)) return;
@@ -500,7 +505,6 @@ internetEscritaRouter.post("/sites/:slug/paginas", requirePapel("mestre", "jogad
   const cid = campanhaId(req);
   const site = await sitePorSlug(cid, req.params.slug);
   if (!site) { erroHttp(res, 404, "Site não encontrado"); return; }
-  if (site.status !== "ativo") { erroHttp(res, 409, "estado_invalido"); return; }
 
   const body = paginaCriarSchema.safeParse(req.body);
   if (!body.success) { erroHttp(res, 400, "Dados inválidos", { detalhes: body.error.issues }); return; }
@@ -519,6 +523,9 @@ internetEscritaRouter.post("/sites/:slug/paginas", requirePapel("mestre", "jogad
   // gate revogado caem todos aqui (403).
   const auth = await contaAutorizadaPara(site.ownerContaId, req.usuario!.id);
   if (!auth) { erroHttp(res, 403, "Conta não autorizada"); return; }
+  // status do site só após autorização — 409 antes entregaria
+  // "site arquivado" a quem não é dono
+  if (site.status !== "ativo") { erroHttp(res, 409, "estado_invalido"); return; }
 
   const [duplicada] = await db.select({ id: internetPages.id }).from(internetPages)
     .where(and(eq(internetPages.siteId, site.id), eq(internetPages.slug, slug)))
@@ -569,15 +576,9 @@ internetEscritaRouter.patch("/sites/:slug/paginas/:pageSlug", requirePapel("mest
   const pagina = await paginaPorSlug(site.id, cid, req.params.pageSlug);
   if (!pagina) { erroHttp(res, 404, "Página não encontrada"); return; }
 
-  const body = paginaPatchSchema.safeParse(req.body);
-  if (!body.success) { erroHttp(res, 400, "Dados inválidos", { detalhes: body.error.issues }); return; }
-  const campos = (["titulo", "corpo", "formato"] as const).filter(
-    (k) => body.data[k] !== undefined,
-  );
-  if (!campos.length) { erroHttp(res, 400, "Nada para atualizar"); return; }
-
-  // Ator: somente o autor como personagem — contaAutorizadaPara cobre
-  // titularidade+gate. Mestre administrativo não edita conteúdo (403).
+  // Ator ANTES do body: validar payload cedo demais criaria oráculo —
+  // página existente + body inválido → 400 vs inexistente → 404
+  // distinguiria existência de rascunho para qualquer autenticado.
   const auth = await contaAutorizadaPara(pagina.autorContaId, req.usuario!.id);
   if (!auth) {
     if (await titularAtualDaConta(pagina.autorContaId, req.usuario!.id)) {
@@ -591,6 +592,13 @@ internetEscritaRouter.patch("/sites/:slug/paginas/:pageSlug", requirePapel("mest
     }
     return;
   }
+
+  const body = paginaPatchSchema.safeParse(req.body);
+  if (!body.success) { erroHttp(res, 400, "Dados inválidos", { detalhes: body.error.issues }); return; }
+  const campos = (["titulo", "corpo", "formato"] as const).filter(
+    (k) => body.data[k] !== undefined,
+  );
+  if (!campos.length) { erroHttp(res, 400, "Nada para atualizar"); return; }
 
   if (site.status !== "ativo") { erroHttp(res, 409, "estado_invalido"); return; }
   if (pagina.status === "arquivado") { erroHttp(res, 409, "estado_invalido"); return; }
@@ -814,7 +822,9 @@ internetEscritaRouter.get("/sites/:slug/paginas", requirePapel("mestre", "jogado
       slug: p.slug, titulo: p.titulo, status: p.status,
       version: p.version, formato: p.formato,
       publicadoEm: p.publishedAt, atualizadoEm: p.updatedAt,
-      autorContaId: p.autorContaId,
+      // UUID interno da conta só para o próprio autor ou mestre —
+      // páginas publicadas de sites alheios expõem só o handle público
+      autorContaId: (ehMestre || contaIds.includes(p.autorContaId)) ? p.autorContaId : null,
     })),
   });
 });
