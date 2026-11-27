@@ -165,16 +165,32 @@ entregues em fatias verticais próprias.
 
 ### D8 — publicação jornalística (C)
 
-- Publicar notícia/matéria jornalística e executar investigação jornalística
-  exige a elegibilidade que puder ser demonstrada por regras/habilidades
-  já existentes em Caçadores & Caçados.
-- Mestre também pode publicar conteúdo jornalístico.
-- Não criar classe, profissão, perícia, conhecimento, habilidade, atributo
-  ou progressão paralela de "jornalista".
-- PAI deve localizar e citar a regra existente exata no ruleset/fonte
-  canônica antes de implementar o gate. Se não houver regra aplicável
-  demonstrável, trazer a lacuna e alternativas ao Dono Técnico; não
-  improvisar um critério.
+- A biblioteca inicial já contém a profissão existente
+  `profissao:jornalista` em `servidor/src/lib/seed-regras.ts`; o tipo
+  `profissao` consta de `TIPOS_REGRA` em `servidor/src/lib/regras.ts`.
+- A estrutura de ficha de referência contém o campo **Profissão**,
+  `tipo: selecao_unica`, `regraKind: "profissao"` em
+  `fixtures/estrutura-cacadores-dump.json`; `regraKind` vincula as
+  opções à biblioteca do respectivo tipo em `servidor/src/lib/ficha.ts`.
+- Elegibilidade jornalística do personagem: valor/chave estável
+  `jornalista` no campo de Profissão da ficha, validado contra a definição
+  `profissao:jornalista` ainda existente no ruleset ativo da campanha.
+  A consulta ocorre server-side; não aceitar label/texto livre ou profissão
+  informada pelo cliente como prova.
+- Mestre também pode publicar conteúdo jornalístico, independentemente
+  do gate de profissão do personagem, conforme a decisão C.
+- Não criar classe, perícia, conhecimento, habilidade, atributo,
+  especialização ou profissão nova chamada jornalista. Usar a profissão
+  existente; não semear/reativar a definição automaticamente se o Mestre
+  a tiver removido ou desativado na campanha.
+- `profissao:investigador` também consta da biblioteca, mas não concede
+  automaticamente permissão jornalística; a elegibilidade D8 escolhida
+  é `profissao:jornalista`.
+- Referências de código:
+  - [seed de profissões](../servidor/src/lib/seed-regras.ts#L96)
+  - [tipo de regra](../servidor/src/lib/regras.ts#L23-L29)
+  - [campo de ficha por ruleKind](../servidor/src/lib/ficha.ts#L92-L93)
+  - [campo Profissão da estrutura de referência](../fixtures/estrutura-cacadores-dump.json#L8-L19)
 
 ### D9 — contato em anúncios (A)
 
