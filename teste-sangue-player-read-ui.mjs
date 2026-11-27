@@ -156,7 +156,7 @@ try {
     await page.goto(BASE, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Campanhas" }).first().click();
     await page.locator(".cartao-campanha", { hasText: "Campanha Sangue Read UI" }).click();
-    await page.getByRole("button", { name: "Personagens", exact: true }).click();
+    await page.getByRole("tab", { name: "Personagens", exact: true }).click();
   };
   const abrirFicha = async (page, nome, { esperarPainel = true } = {}) => {
     await abrirPersonagens(page);
@@ -292,7 +292,7 @@ try {
     await page.goto(BASE, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Campanhas" }).first().click();
     await page.locator(".cartao-campanha", { hasText: "Campanha Sangue Read UI" }).click();
-    await page.getByRole("button", { name: "Mesa", exact: true }).click();
+    await page.getByRole("tab", { name: "Mesa", exact: true }).click();
     await page.waitForTimeout(800);
     const sessaoRow = page.locator("table.tabela tbody tr.clicavel", { hasText: "Sessão Sangue UI" }).first();
     if (await sessaoRow.count()) {
@@ -335,7 +335,7 @@ try {
     await page.goto(BASE, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Campanhas" }).first().click();
     await page.locator(".cartao-campanha", { hasText: "Campanha Sangue Read UI" }).click();
-    await page.getByRole("button", { name: "Mesa", exact: true }).click();
+    await page.getByRole("tab", { name: "Mesa", exact: true }).click();
     await page.waitForTimeout(800);
     const sessaoRow = page.locator("table.tabela tbody tr.clicavel", { hasText: "Sessão Corrida" }).first();
     if (await sessaoRow.count()) {

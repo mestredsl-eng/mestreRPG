@@ -202,7 +202,7 @@ for (const lados of [4, 6, 8, 10, 20]) {
   await p.waitForTimeout(900);
   await p.locator(".cartao-campanha", { hasText: "teste-mestree" }).first().click();
   await p.waitForTimeout(1200);
-  await p.getByRole("button", { name: /Mesa/ }).click();
+  await p.getByRole("tab", { name: /Mesa/ }).click();
   await p.waitForTimeout(1000);
   await p.locator("tr", { hasText: "Sessão Dados" }).first().click();
   await p.waitForTimeout(1500);
@@ -269,7 +269,7 @@ for (const lados of [4, 6, 8, 10, 20]) {
   await p.waitForTimeout(800);
   await p.locator(".cartao-campanha", { hasText: "teste-mestree" }).first().click();
   await p.waitForTimeout(1000);
-  await p.getByRole("button", { name: /Mesa/ }).click();
+  await p.getByRole("tab", { name: /Mesa/ }).click();
   await p.waitForTimeout(800);
   await p.locator("tr", { hasText: "Sessão Dados" }).first().click();
   await p.waitForTimeout(1800);
@@ -290,7 +290,7 @@ for (const lados of [4, 6, 8, 10, 20]) {
   await pj.waitForTimeout(800);
   await pj.locator(".cartao-campanha", { hasText: "teste-mestree" }).first().click();
   await pj.waitForTimeout(1000);
-  await pj.getByRole("button", { name: /Mesa/ }).click();
+  await pj.getByRole("tab", { name: /Mesa/ }).click();
   await pj.waitForTimeout(800);
   await pj.locator("tr", { hasText: "Sessão Dados" }).first().click();
   await pj.waitForTimeout(1800);
@@ -308,7 +308,7 @@ for (const lados of [4, 6, 8, 10, 20]) {
   await p3.waitForTimeout(700);
   await p3.locator(".cartao-campanha", { hasText: "teste-mestree" }).first().click();
   await p3.waitForTimeout(1000);
-  await p3.getByRole("button", { name: /Mesa/ }).click();
+  await p3.getByRole("tab", { name: /Mesa/ }).click();
   await p3.waitForTimeout(800);
   await p3.locator("tr", { hasText: "Sessão Dados" }).first().click();
   await p3.waitForTimeout(1500);

@@ -132,7 +132,7 @@ try {
     await page.goto(BASE, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Campanhas" }).first().click();
     await page.locator(".cartao-campanha", { hasText: nomeCampanha }).click();
-    await page.getByRole("button", { name: "Personagens", exact: true }).click();
+    await page.getByRole("tab", { name: "Personagens", exact: true }).click();
     await page.locator("tr.clicavel", { hasText: nomeChar }).click();
     await page.waitForSelector(".extrato-xp, .cartao:has-text('Ficha')", { timeout: 15000 });
   };
@@ -171,7 +171,7 @@ try {
     await page.goto(BASE, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Campanhas" }).first().click();
     await page.locator(".cartao-campanha", { hasText: "Campanha Extrato XP" }).click();
-    await page.getByRole("button", { name: "Personagens", exact: true }).click();
+    await page.getByRole("tab", { name: "Personagens", exact: true }).click();
     // j2 só vê os próprios personagens — Herói Ledger não deve nem abrir
     const temHerói = await page.locator("tr.clicavel", { hasText: "Herói Ledger" }).count();
     ok("UI. jogador não vê personagem alheio na lista", temHerói === 0);
@@ -249,7 +249,7 @@ try {
     await page.goto(BASE, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Campanhas" }).first().click();
     await page.locator(".cartao-campanha", { hasText: "Campanha Extrato XP" }).click();
-    await page.getByRole("button", { name: "Personagens", exact: true }).click();
+    await page.getByRole("tab", { name: "Personagens", exact: true }).click();
     await page.locator("tr.clicavel", { hasText: "Herói Ledger" }).click();
     await page.waitForSelector(".extrato-xp", { timeout: 15000 });
     await page.waitForSelector("text=XP disponíveis", { timeout: 15000 });

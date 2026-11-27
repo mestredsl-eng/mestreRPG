@@ -124,7 +124,7 @@ await p.getByRole("button", { name: "Campanhas" }).click();
 await p.waitForTimeout(800);
 await p.locator(".cartao-campanha", { hasText: `modais-${sufixo}` }).first().click();
 await p.waitForTimeout(1200);
-await p.getByRole("button", { name: /Participantes/ }).click();
+await p.getByRole("tab", { name: /Participantes/ }).click();
 await p.waitForTimeout(800);
 
 const linhaMembro = p.locator("tr", { hasText: `modal2_${sufixo}` }).first();
@@ -157,7 +157,7 @@ await p.getByRole("button", { name: "Campanhas" }).click();
 await p.waitForTimeout(800);
 await p.locator(".cartao-campanha", { hasText: `modais-${sufixo}` }).first().click();
 await p.waitForTimeout(1200);
-await p.getByRole("button", { name: /Participantes/ }).click();
+await p.getByRole("tab", { name: /Participantes/ }).click();
 await p.waitForTimeout(800);
 
 // transferir titularidade — abre, cancela, confirma
@@ -186,7 +186,7 @@ const campFinal = (await apiM("GET", `/api/campaigns/${CID}`)).json.campanha;
 ok("API. administrador mestre novamente", campFinal.meuPapel === "mestre");
 
 // ===== Arquivos: excluir pasta e arquivo =====
-await p.getByRole("button", { name: /Arquivos/ }).click();
+await p.getByRole("tab", { name: /Arquivos/ }).click();
 await p.waitForTimeout(1000);
 
 // pasta via API
@@ -197,7 +197,7 @@ await p.getByRole("button", { name: "Campanhas" }).click();
 await p.waitForTimeout(800);
 await p.locator(".cartao-campanha", { hasText: `modais-${sufixo}` }).first().click();
 await p.waitForTimeout(1200);
-await p.getByRole("button", { name: /Arquivos/ }).click();
+await p.getByRole("tab", { name: /Arquivos/ }).click();
 await p.waitForTimeout(1000);
 
 const btnPasta = p.locator(".biblioteca-pastas button[title='Excluir pasta vazia']").last();
@@ -232,7 +232,7 @@ await p.getByRole("button", { name: "Campanhas" }).click();
 await p.waitForTimeout(800);
 await p.locator(".cartao-campanha", { hasText: `modais-${sufixo}` }).first().click();
 await p.waitForTimeout(1200);
-await p.getByRole("button", { name: /Arquivos/ }).click();
+await p.getByRole("tab", { name: /Arquivos/ }).click();
 await p.waitForTimeout(1000);
 
 const itemArq = p.locator(".biblioteca-lista li", { hasText: `modal-${sufixo}.txt` }).first();
@@ -254,7 +254,7 @@ ok("UI. arquivo excluído após confirmar", !(await apiM("GET", `/api/campaigns/
 const sessaoNova = await apiM("POST", `/api/campaigns/${CID}/sessoes`, { name: "Sessão Modais" });
 const SID = sessaoNova.json?.sessao?.id;
 ok("setup. sessão criada", !!SID, `status=${sessaoNova.status}`);
-await p.getByRole("button", { name: /Mesa/ }).click();
+await p.getByRole("tab", { name: /Mesa/ }).click();
 await p.waitForTimeout(1000);
 await p.locator("tr", { hasText: "Sessão Modais" }).first().click();
 await p.waitForTimeout(1500);

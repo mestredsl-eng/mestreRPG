@@ -52,7 +52,7 @@ try {
     await p.waitForTimeout(700);
     await p.locator(".cartao-campanha", { hasText: nomeCampanha }).first().click();
     await p.waitForTimeout(1000);
-    await p.getByRole("button", { name: /Personagens/ }).click();
+    await p.getByRole("tab", { name: /Personagens/ }).click();
     await p.waitForTimeout(800);
     await p.locator("tr", { hasText: nomePersonagem }).first().click();
     await p.waitForTimeout(1200);

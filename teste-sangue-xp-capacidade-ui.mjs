@@ -118,7 +118,7 @@ try {
     await page.goto(BASE, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Campanhas" }).first().click();
     await page.locator(".cartao-campanha", { hasText: "Campanha XP Sangue UI" }).click();
-    await page.getByRole("button", { name: "Personagens", exact: true }).click();
+    await page.getByRole("tab", { name: "Personagens", exact: true }).click();
   };
   const abrirFicha = async (page, nome) => {
     await abrirPersonagens(page);

@@ -120,7 +120,7 @@ try {
     await page.goto(BASE, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Campanhas" }).first().click();
     await page.locator(".cartao-campanha", { hasText: "Campanha XP Lote UI" }).click();
-    await page.getByRole("button", { name: "Personagens", exact: true }).click();
+    await page.getByRole("tab", { name: "Personagens", exact: true }).click();
     await page.waitForSelector("text=Herói A", { timeout: 15000 });
   };
 
@@ -146,7 +146,7 @@ try {
     await p.goto(BASE, { waitUntil: "networkidle" });
     await p.getByRole("button", { name: "Campanhas" }).first().click();
     await p.locator(".cartao-campanha", { hasText: "Campanha XP Lote UI" }).click();
-    ok("UI. espectador não tem aba Personagens", await p.getByRole("button", { name: "Personagens", exact: true }).count() === 0);
+    ok("UI. espectador não tem aba Personagens", await p.getByRole("tab", { name: "Personagens", exact: true }).count() === 0);
     await cE.close();
   }
 
@@ -394,7 +394,7 @@ try {
     const entrarEmOutraCampanha = async (nomeCampanha, nomePersonagem) => {
       await p.getByRole("button", { name: "Voltar", exact: true }).click();
       await p.locator(".cartao-campanha", { hasText: nomeCampanha }).click();
-      await p.getByRole("button", { name: "Personagens", exact: true }).click();
+      await p.getByRole("tab", { name: "Personagens", exact: true }).click();
       await p.waitForSelector(`text=${nomePersonagem}`, { timeout: 15000 });
     };
 
@@ -409,8 +409,8 @@ try {
     await p.waitForSelector(".modal-fundo", { state: "detached", timeout: 5000 });
 
     // Personagens desmonta ao trocar para Diário; o cache do módulo permanece.
-    await p.getByRole("button", { name: "Diário", exact: true }).click();
-    await p.getByRole("button", { name: "Personagens", exact: true }).click();
+    await p.getByRole("tab", { name: "Diário", exact: true }).click();
+    await p.getByRole("tab", { name: "Personagens", exact: true }).click();
     await p.waitForSelector("text=Mestre Personagem", { timeout: 15000 });
 
     // B: outra campanha do mesmo mestre, payload independente e ACK positivo.

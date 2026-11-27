@@ -33,7 +33,7 @@ async function abrirPersonagem(p) {
   await p.waitForTimeout(700);
   await p.locator(".cartao-campanha", { hasText: "Caçadores" }).first().click();
   await p.waitForTimeout(1000);
-  await p.getByRole("button", { name: /Personagens/ }).click();
+  await p.getByRole("tab", { name: /Personagens/ }).click();
   await p.waitForTimeout(800);
   await p.locator("tr", { hasText: "PJ Ficha Definitiva" }).first().click();
   await p.waitForTimeout(1200);
@@ -101,7 +101,7 @@ const medirCampo = (p, label) => p.evaluate((lab) => {
 // ---------- B) Editor: pré-visualização com ranges 1-5, 0-3, 1-3 ----------
 async function previaComRange(p, min, max) {
   // abre editor do modelo, expande Talentos, edita Prontidão
-  await p.getByRole("button", { name: /Fichas/ }).click();
+  await p.getByRole("tab", { name: /Fichas/ }).click();
   await p.waitForTimeout(1200);
   await p.locator(".cartao-item", { hasText: "Ficha Caçadores & Caçados" }).first().click();
   await p.waitForTimeout(1000);

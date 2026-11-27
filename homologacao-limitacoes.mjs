@@ -240,7 +240,7 @@ try {
   await p.waitForTimeout(900);
   await p.locator(".cartao-campanha", { hasText: "Campanha Teste" }).first().click();
   await p.waitForTimeout(1200);
-  await p.getByRole("button", { name: "Regras", exact: true }).click();
+  await p.getByRole("tab", { name: "Regras", exact: true }).click();
   await p.waitForTimeout(1200);
   t("aba Regras aberta", await p.locator(".lista-elementos").count() > 0);
 
