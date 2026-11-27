@@ -1261,7 +1261,6 @@ personagensRouter.post("/:characterId/ressuscitar", requireLeasePersonagem(), as
     return;
   }
   const agora = new Date();
-  let revertidaEm: string | null = null;
   let semMorte = false;
   await db.transaction((tx) => {
     const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
@@ -1269,7 +1268,6 @@ personagensRouter.post("/:characterId/ressuscitar", requireLeasePersonagem(), as
     const dadosTx = (atual.data ?? {}) as Record<string, unknown>;
     const r = reverterMorte(dadosTx, agora.toISOString());
     if (!r.revertida) { semMorte = true; return; }
-    revertidaEm = r.revertida.em;
     tx.update(characters).set({ data: r.dados, updatedAt: agora }).where(eq(characters.id, p.id)).run();
     tx.insert(auditLogs).values({
       id: crypto.randomUUID(), actorId: req.usuario!.id,
@@ -1283,7 +1281,9 @@ personagensRouter.post("/:characterId/ressuscitar", requireLeasePersonagem(), as
     }).run();
   });
   if (semMorte) { res.status(409).json({ erro: "sem_morte_vigente" }); return; }
-  await audit(req, "personagem.ressuscitado", { characterId: p.id, morteEm: revertidaEm });
+  // Auditoria única e atômica: gravada dentro da tx acima
+  // (action 'personagem_ressuscitado', com motivo) — sem audit() pós-tx
+  // para não duplicar a trilha.
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
   res.json({ ok: true });
 });
