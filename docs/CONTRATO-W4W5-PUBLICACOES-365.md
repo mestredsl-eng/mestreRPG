@@ -79,7 +79,9 @@ CREATE UNIQUE INDEX internet_denuncias_uma_conta_idx
   `autor_modo ∈ {identificado, pseudonimo}`**; `anonimo` → 400 (aceito no schema p/ fatias W6/W7).
   Publicação anônima (futuro) = imutável: sem PATCH/DELETE do autor.
 - Autoria server-side: `autor_conta_id`/`origem`/`publicado_em` gravados pelo servidor,
-  nunca do body. Pseudônimo validado (charset/length como `handle`).
+  nunca do body. Pseudônimo validado: **charset do handle** `[A-Za-z0-9._-]`
+  com caixa preservada para exibição (não é handle — não é lowercased nem
+  único), comprimento próprio 2–60.
 - **D8 — gate `profissao:jornalista` (fechado, NEWS-04/05):** `tipo='noticia'` publicado
   por personagem-jogador exige `profissao:jornalista` resolvido **server-side**: valor em
   campo `regraKind='profissao'` da estrutura da ficha do personagem, conferido por
@@ -144,6 +146,15 @@ Moderação (DP-2 — **admin da plataforma**, nunca o mestre da campanha; `requ
 - `__morte` sobrevive a importação (sanear como chave reservada; dedup `(characterId, em)`).
   Cobertura de escritores de `__hp`: rota `/hp` (tx), criação de personagem (HP inicial
   patológico ≤0) e init legado no PATCH — todos passam por `avaliarMorte`.
+- **Restauração "substituir"** (`restaurarEstado`): zera o domínio Internet da
+  campanha — `internet_denuncias`, `internet_publicacoes`, `internet_messages`,
+  `internet_conversations`/`participantes`, `internet_contacts`, `internet_pages`,
+  `internet_sites` e `internet_accounts` são removidos antes de reimportar o pacote
+  (comportamento vigente desde 1.1.1/1.1.2, estendido às tabelas 0044). `__morte`
+  volta a ser derivado do `__hp` saneado — epoch preservada para dedup, **sem**
+  notícia retroativa. Questão **D6** (preservar vs. zerar o domínio Internet no
+  restore) permanece aberta para deliberação do Dono — o contrato registra o
+  comportamento atual, não o decide.
 
 ## 6. Decisões registradas (deliberação Dono `7229555079` — fechadas)
 
