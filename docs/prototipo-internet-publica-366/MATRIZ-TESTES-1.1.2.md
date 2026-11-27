@@ -64,13 +64,16 @@ W1/W3 incluídos: gate de leitura; diretório de sites da campanha; paginação 
 | NEWS-01 | Personagem sem `profissao:jornalista` ativa no campo Profissão do ruleset da campanha tenta publicar matéria | Negado sem criar publicação |
 | NEWS-02 | Personagem com a chave estável `jornalista` no campo Profissão e definição `profissao:jornalista` ativa publica matéria | Permitido e autoria registrada |
 | NEWS-03 | Mestre publica matéria/notícia | Permitido, com proveniência/autoria/auditoria preservadas |
-| NEWS-04 | Requisito de elegibilidade tenta introduzir classe/perícia/habilidade/atributo "jornalista" | Teste/inspeção confirma que não foi criado sistema paralelo |
-| NEWS-05 | Investigar matéria sem elegibilidade jornalística | Negado conforme regra D8 |
+| NEWS-04 | Cliente envia o rótulo "Jornalista" ou texto livre, sem a chave canônica | Não concede permissão; servidor lê a chave estável da ficha |
+| NEWS-05 | Campanha remove `profissao:jornalista` do ruleset e ficha mantém valor antigo | Permissão negada; não re-semeia/reativa automaticamente |
+| NEWS-06 | Requisito tenta introduzir classe/perícia/habilidade/atributo paralelo "jornalista" | Teste/inspeção confirma que não foi criado sistema paralelo |
+| NEWS-07 | Mestre publica matéria sem profissão jornalística no personagem | Permitido conforme exceção decidida |
+| NEWS-08 | Investigar matéria sem elegibilidade jornalística | Negado conforme regra D8 |
 | NEWS-06 | Morte ativa gera notícia automática | Uma publicação por ocorrência/evento; deduplicação por personagem/época; selo automático |
 | NEWS-07 | Ressurreição auditada e nova morte | Notícia antiga permanece; nova ocorrência pode gerar nova notícia, sem sobrescrever a anterior (DP-8/DP-9) |
 | NEWS-08 | Corrigir causa da morte publicada | Nova publicação complementar; nunca alterar retroativamente a notícia automática ou `__morte.causa` |
 
-**Base concreta D8 já localizada:** a biblioteca inicial em `servidor/src/lib/seed-regras.ts` registra `profissao:jornalista`; `profissao` é um `TipoRegra` válido e a ficha de referência tem campo Profissão com `regraKind: "profissao"`. O gate usa a chave estável no ruleset ativo, server-side. O Mestre pode remover/editar a biblioteca: não recriar automaticamente a profissão apagada. `profissao:investigador` também existe, mas não dá permissão jornalística por si só. PAI/Técnico Geral devem confirmar o caminho canônico do valor do campo em fichas reais e a regra de autorização por campanha antes de codificar; não criar nenhuma regra paralela.
+**Base concreta D8 já localizada:** a biblioteca inicial em `servidor/src/lib/seed-regras.ts` registra `profissao:jornalista`; `profissao` é um `TipoRegra` válido; a ficha de referência tem campo Profissão com `regraKind: "profissao"`; e `site/src/FichaForm.tsx` salva `o.key` como valor, mantendo `o.name` só como rótulo. O gate usa a chave estável `jornalista` no ruleset ativo, server-side. O Mestre pode remover/editar a biblioteca: não recriar automaticamente a profissão apagada. `profissao:investigador` também existe, mas não dá permissão jornalística por si só.
 
 ## 5. Anúncios e classificados — D9=A e D11=A
 
