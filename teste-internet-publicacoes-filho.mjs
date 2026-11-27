@@ -61,13 +61,15 @@ try {
     for (const [kind, key, name] of [
       ["pericia", "computador", "Computador"], ["conhecimento", "tecnologia", "Tecnologia"],
       ["item", "notebook", "Notebook"],
+      ["profissao", "jornalista", "Jornalista"], ["profissao", "medico", "Médico"],
     ]) ins.run(crypto.randomUUID(), rs.id, kind, key, name, null, null, agora, agora);
     const ver = db.prepare("select id, structure from sheet_versions order by created_at desc limit 1").get();
     const est = JSON.parse(ver.structure);
     if (!est.secoes[0].campos.some((x) => x.id === "comp")) {
       est.secoes[0].campos.push(
         { id: "comp", label: "Computador", tipo: "inteiro", regra: { kind: "pericia", key: "computador" } },
-        { id: "tec", label: "Tecnologia", tipo: "inteiro", regra: { kind: "conhecimento", key: "tecnologia" } });
+        { id: "tec", label: "Tecnologia", tipo: "inteiro", regra: { kind: "conhecimento", key: "tecnologia" } },
+        { id: "prof", label: "Profissão", tipo: "selecao_unica", regraKind: "profissao" });
       db.prepare("update sheet_versions set structure=? where id=?").run(JSON.stringify(est), ver.id);
     }
     db.close();
@@ -83,9 +85,9 @@ try {
     return (r.status === 200 || r.status === 201) ? true : null;
   };
 
-  const ch1 = C.novoPersonagem(C.jogadores.j1.membershipId, "W45 Autor", { comp: 3 });
-  const ch2 = C.novoPersonagem(C.jogadores.j2.membershipId, "W45 Vizinho", { comp: 3 });
-  const ch3 = C.novoPersonagem(C.jogadores.j3.membershipId, "W45 Alvo", { comp: 3 });
+  const ch1 = C.novoPersonagem(C.jogadores.j1.membershipId, "W45 Autor", { comp: 3, prof: "jornalista" });
+  const ch2 = C.novoPersonagem(C.jogadores.j2.membershipId, "W45 Vizinho", { comp: 3, prof: "medico" });
+  const ch3 = C.novoPersonagem(C.jogadores.j3.membershipId, "W45 Alvo", { comp: 3, prof: "medico" });
   for (const ch of [ch1, ch2, ch3]) darNotebook(ch);
   await criarConta(C.jogadores.j1, ch1, "w45.autor");
   await criarConta(C.jogadores.j2, ch2, "w45.vizinho");
@@ -105,7 +107,7 @@ try {
 
   // ---------- P1. Criação de publicações ----------
   sec("P1. POST /publicacoes — tipos, autoria, anonimato");
-  let pubNoticia = null;
+  let pubNoticia = null, pubPseudoId = null, pubPseudoV = 1;
   {
     const r = await api(BASE, C.campId, J1, "POST", "/publicacoes", {
       tipo: "noticia", titulo: "Festa no largo", corpo: "Houve festa.", visibilidade: "campanha",
@@ -134,6 +136,19 @@ try {
       tipo: "noticia", titulo: "x", corpo: "y", visibilidade: "campanha", autorModo: "pseudonimo", pseudoNome: "Vulto_9",
     });
     t("pseudonimo válido → 201", rPseudoOk.status === 201 || rPseudoOk.status === 200, `status=${rPseudoOk.status}`);
+    pubPseudoId = rPseudoOk.json?.publicacao?.id ?? rPseudoOk.json?.id;
+    pubPseudoV = rPseudoOk.json?.publicacao?.version ?? 1;
+    // D8/NEWS-04/05: gate profissao:jornalista server-side (decisão fechada,
+    // INTERMEDIÁRIO B-1 na PR #394) — conta sem a profissão não publica noticia
+    const rSemProf = await api(BASE, C.campId, J3, "POST", "/publicacoes", {
+      tipo: "noticia", titulo: "Notícia sem profissão", corpo: "y", visibilidade: "campanha",
+    });
+    t("NEWS-04/05: conta sem profissao:jornalista → 403", rSemProf.status === 403 || rSemProf.status === 400, `status=${rSemProf.status}`);
+    const rForjaProf = await api(BASE, C.campId, J3, "POST", "/publicacoes", {
+      tipo: "noticia", titulo: "x", corpo: "y", visibilidade: "campanha", profissao: "jornalista", characterId: ch1,
+    });
+    t("NEWS-04: profissão forjada no body/characterId alheio → rejeitado",
+      rForjaProf.status === 403 || rForjaProf.status === 400 || rForjaProf.status === 404, `status=${rForjaProf.status}`);
     const rForja = await api(BASE, C.campId, J1, "POST", "/publicacoes", {
       tipo: "noticia", titulo: "x", corpo: "y", visibilidade: "campanha", autorContaId: "forjado", origem: "sistema",
     });
@@ -172,9 +187,15 @@ try {
       // não-autor não edita
       const rNaoAutor = await api(BASE, C.campId, J2, "PATCH", `/publicacoes/${pubId}`, { titulo: "sequestro", expectedVersion: pubVersion });
       t("não-autor PATCH → 404 uniforme", rNaoAutor.status === 404 || rNaoAutor.status === 403, `status=${rNaoAutor.status}`);
-      // mestre pode (moderação de conteúdo autorizada pelo contrato)
+      // B-3/D14 (INTERMEDIÁRIO PR #394): mestre não reescreve conteúdo alheio —
+      // no máximo modera. Se o PATCH for aceito, o conteúdo deve permanecer.
       const rMestre = await api(BASE, C.campId, M, "PATCH", `/publicacoes/${pubId}`, { titulo: "Editado pelo mestre", expectedVersion: pubVersion });
-      t("mestre edita publicação (papel administrativo)", rMestre.status === 200 || rMestre.status === 403 || rMestre.status === 404, `status=${rMestre.status}`);
+      let mestreNaoReescreveu = rMestre.status === 403 || rMestre.status === 404;
+      if (rMestre.status === 200) {
+        const detM = await api(BASE, C.campId, J3, "GET", `/publicacoes/${pubId}`);
+        mestreNaoReescreveu = !JSON.stringify(detM.json).includes("Editado pelo mestre");
+      }
+      t("B-3/D14: mestre não reescreve conteúdo de publicação alheia", mestreNaoReescreveu, `status=${rMestre.status}`);
       // despublicar: publicado→rascunho
       const vAtual = (rMestre.json?.publicacao ?? rMestre.json)?.version ?? pubVersion;
       const rDespub = await api(BASE, C.campId, J1, "PATCH", `/publicacoes/${pubId}`, { status: "rascunho", expectedVersion: vAtual });
@@ -197,6 +218,10 @@ try {
       const id = r.json?.publicacao?.id ?? r.json?.id;
       const v = r.json?.publicacao?.version ?? 1;
       if (id) await api(BASE, C.campId, J1, "PATCH", `/publicacoes/${id}`, { status: "publicado", expectedVersion: v });
+    }
+    // publicação pseudônima de j1 — publica para checar representação
+    if (pubPseudoId) {
+      await api(BASE, C.campId, J1, "PATCH", `/publicacoes/${pubPseudoId}`, { status: "publicado", expectedVersion: pubPseudoV });
     }
     // publicação contatos de j1 — j3 (sem aresta) não pode ver em feed nem detalhe
     const rCont = await api(BASE, C.campId, J1, "POST", "/publicacoes", { tipo: "noticia", titulo: "SEGREDO_CONTATOS_X9", corpo: "só contatos", visibilidade: "contatos" });
@@ -234,6 +259,18 @@ try {
     if (campBId && pubId) {
       const rCross = await api(BASE, campBId, J1, "GET", `/publicacoes/${pubId}`);
       t("cross-campaign → 404 (fronteira absoluta)", rCross.status === 404 || rCross.status === 403, `status=${rCross.status}`);
+    }
+    // P1-B (INTERMEDIÁRIO): pseudônimo exibe pseudo_nome, nunca handle real
+    if (pubPseudoId) {
+      const rDetP = await api(BASE, C.campId, J3, "GET", `/publicacoes/${pubPseudoId}`);
+      const blobP = JSON.stringify(rDetP.json);
+      t("pseudônimo: detalhe exibe pseudo_nome sem vazar handle",
+        rDetP.status === 200 && blobP.includes("Vulto_9") && !blobP.includes("w45.autor"), `status=${rDetP.status} ${blobP.slice(0, 160)}`);
+      const rFeedP = await api(BASE, C.campId, J3, "GET", "/publicacoes?tipo=noticia&limit=50");
+      const blobFeedP = JSON.stringify(rFeedP.json);
+      const linhaPseudo = (rFeedP.json?.publicacoes ?? rFeedP.json?.items ?? []).find?.((i) => JSON.stringify(i).includes("Vulto_9"));
+      t("pseudônimo: feed não vaza handle da conta",
+        !linhaPseudo || !JSON.stringify(linhaPseudo).includes("w45.autor"), JSON.stringify(linhaPseudo ?? null).slice(0, 160));
     }
     // detalhe: fonte=handle do autor, sem ids internos
     if (pubId) {
