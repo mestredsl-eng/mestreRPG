@@ -105,7 +105,7 @@ try {
     await pg.waitForTimeout(900);
     await pg.locator(".cartao-campanha", { hasText: "Campanha Progressão UI" }).first().click();
     await pg.waitForTimeout(1200);
-    await pg.getByRole("button", { name: "Personagens" }).click();
+    await pg.getByRole("tab", { name: "Personagens" }).click();
     await pg.waitForTimeout(1200);
     await pg.locator("tr.clicavel", { hasText: nomePersonagem }).first().click();
     await pg.locator(".progressao-xp").waitFor({ state: "visible", timeout: 15000 });

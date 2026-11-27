@@ -90,7 +90,7 @@ await p.getByRole("button", { name: "Campanhas" }).click();
 await p.waitForTimeout(800);
 await p.locator(".cartao-campanha", { hasText: "teste-mestree" }).first().click();
 await p.waitForTimeout(1200);
-await p.getByRole("button", { name: /Mesa/ }).click();
+await p.getByRole("tab", { name: /Mesa/ }).click();
 await p.waitForTimeout(1000);
 await p.locator("tr", { hasText: "Sessão Estabilidade" }).first().click();
 await p.waitForTimeout(2500);
@@ -135,9 +135,9 @@ try {
 ok("Socket. mesa íntegra após reconexão", await p.locator(".mesa-view .chat-lista").count() === 1);
 
 // navega para outra aba e volta — sem listeners duplicados
-await p.getByRole("button", { name: /Diário/ }).click();
+await p.getByRole("tab", { name: /Diário/ }).click();
 await p.waitForTimeout(800);
-await p.getByRole("button", { name: /Mesa/ }).click();
+await p.getByRole("tab", { name: /Mesa/ }).click();
 await p.waitForTimeout(800);
 await p.locator("tr", { hasText: "Sessão Estabilidade" }).first().click();
 await p.waitForTimeout(2000);
@@ -153,7 +153,7 @@ await pm.getByRole("button", { name: "Campanhas" }).click();
 await pm.waitForTimeout(800);
 await pm.locator(".cartao-campanha", { hasText: "teste-mestree" }).first().click();
 await pm.waitForTimeout(1200);
-await pm.getByRole("button", { name: /Mesa/ }).click();
+await pm.getByRole("tab", { name: /Mesa/ }).click();
 await pm.waitForTimeout(1000);
 await pm.locator("tr", { hasText: "Sessão Estabilidade" }).first().click();
 await pm.waitForTimeout(2000);

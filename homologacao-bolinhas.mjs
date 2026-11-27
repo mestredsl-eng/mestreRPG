@@ -31,7 +31,7 @@ async function cenario(nome, width, height) {
   await page.waitForTimeout(800);
   await page.locator(".cartao-campanha", { hasText: "Campanha Teste E4" }).first().click();
   await page.waitForTimeout(1200);
-  await page.getByRole("button", { name: /Personagens/ }).click();
+  await page.getByRole("tab", { name: /Personagens/ }).click();
   await page.waitForTimeout(800);
   await page.locator("tr", { hasText: "Herói Teste" }).first().click();
   await page.waitForTimeout(1000);

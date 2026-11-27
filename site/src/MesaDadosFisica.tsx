@@ -5,6 +5,7 @@ import MesaDadosCanvas, { seedDeId, type ItemDadoMesa } from "./MesaDados3D";
 import { faceValues, geometry, normalFor, type Vec3 } from "./fisicaDado";
 import { semiLadoMesa } from "./fisicaMesa";
 import { EFEITO_RESULTADO_MS, type EstadoEfeitoDado } from "./convencaoD10";
+import { movimentoReduzido } from "./visualUsuario";
 
 export { seedDeId };
 
@@ -390,7 +391,7 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
     let rendererInstance: THREE.WebGLRenderer | null = null;
     let lastFrame = performance.now();
     let accumulator = 0;
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduced = movimentoReduzido();
 
     // Expiração do flash por dado: ao fim, repinta rótulos/arestas com
     // as cores normais e gera um frame para limpar as classes de crítico.
@@ -725,7 +726,7 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
   useEffect(() => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduced = movimentoReduzido();
     runtime.dados.forEach((die, index) => {
       const item = dados[index];
       if (!item) return;

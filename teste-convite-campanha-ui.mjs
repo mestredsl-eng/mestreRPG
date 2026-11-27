@@ -50,7 +50,7 @@ try {
   await pageMestre.getByRole("button", { name: "Campanhas" }).first().click();
   await pageMestre.locator(".cartao-campanha", { hasText: "Campanha Convite UI" }).first().click();
   await pageMestre.locator(".abas").waitFor({ timeout: 15000 });
-  await pageMestre.getByRole("button", { name: /Convites/ }).click();
+  await pageMestre.getByRole("tab", { name: /Convites/ }).click();
 
   // Papel inicial já é "jogador"; gera convite sem aprovação.
   await pageMestre.getByRole("button", { name: "Gerar convite" }).click();
@@ -99,7 +99,7 @@ try {
   await pageNovo.waitForURL((url) => url.pathname === "/", { timeout: 10000 });
 
   // --- Mestre: Participantes mostra o novo membro com papel jogador ---
-  await pageMestre.getByRole("button", { name: /Participantes/ }).click();
+  await pageMestre.getByRole("tab", { name: /Participantes/ }).click();
   const secao = pageMestre.locator("section.cartao").filter({ has: pageMestre.locator("h2", { hasText: "Participantes" }) });
   await secao.getByText("convidada_ui", { exact: false }).first().waitFor({ timeout: 10000 });
   const membroLinha = secao.locator("tbody tr").filter({ hasText: "convidada_ui" }).first();
@@ -109,7 +109,7 @@ try {
   ok("papel efetivo = jogador na linha do novo membro", membroTexto.includes("Jogador"));
 
   // --- Regressão: lista reflete o uso na coluna própria ---
-  await pageMestre.getByRole("button", { name: /Convites/ }).click();
+  await pageMestre.getByRole("tab", { name: /Convites/ }).click();
   const linha = pageMestre.locator(".tabela tbody tr", { hasText: "Jogador" }).first();
   await linha.waitFor({ timeout: 10000 });
   const usos = (await linha.locator("td").nth(2).innerText()).trim();
@@ -120,7 +120,7 @@ try {
   await pageMestre.getByRole("button", { name: "Campanhas" }).first().click();
   await pageMestre.locator(".cartao-campanha", { hasText: "Campanha Convite UI" }).first().click();
   await pageMestre.locator(".abas").waitFor({ timeout: 15000 });
-  await pageMestre.getByRole("button", { name: /Convites/ }).click();
+  await pageMestre.getByRole("tab", { name: /Convites/ }).click();
   await pageMestre.locator(".tabela").waitFor({ timeout: 10000 });
   ok("bloco de código único não reaparece após reload", await pageMestre.locator(".convite-criado").count() === 0);
   const textosDaLista = [

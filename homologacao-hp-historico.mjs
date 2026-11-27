@@ -32,7 +32,7 @@ async function abrirFicha(nomePersonagem, { mobile = false } = {}) {
   await page.goto(BASE, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: "Campanhas" }).click();
   await page.getByText("Campanha Teste", { exact: false }).first().click();
-  await page.getByRole("button", { name: "Personagens" }).click();
+  await page.getByRole("tab", { name: "Personagens" }).click();
   await page.getByText(nomePersonagem, { exact: false }).first().click();
   await page.waitForSelector(".hp-historico", { timeout: 15000 });
   return { ctx, page };

@@ -196,7 +196,7 @@ ok("HP atual preservado em 100 (não cura)", v?.hp?.atual === 100, `atual=${v?.h
   await p.waitForTimeout(900);
   await p.locator(".cartao-campanha", { hasText: "teste-mestree" }).first().click();
   await p.waitForTimeout(1200);
-  await p.getByRole("button", { name: /Personagens/ }).click();
+  await p.getByRole("tab", { name: /Personagens/ }).click();
   await p.waitForTimeout(800);
   await p.locator("tr", { hasText: "PJ Vida" }).first().click();
   await p.waitForTimeout(1500);
@@ -221,7 +221,7 @@ ok("HP atual preservado em 100 (não cura)", v?.hp?.atual === 100, `atual=${v?.h
   await p3.waitForTimeout(700);
   await p3.locator(".cartao-campanha", { hasText: "teste-mestree" }).first().click();
   await p3.waitForTimeout(1000);
-  await p3.getByRole("button", { name: /Personagens/ }).click();
+  await p3.getByRole("tab", { name: /Personagens/ }).click();
   await p3.waitForTimeout(800);
   await p3.locator("tr", { hasText: "PJ Vida" }).first().click();
   await p3.waitForTimeout(1500);
