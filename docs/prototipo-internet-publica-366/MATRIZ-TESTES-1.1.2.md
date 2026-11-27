@@ -56,7 +56,8 @@ W1/W3 incluídos: gate de leitura; diretório de sites da campanha; paginação 
 | VER-01 | Edição válida após versão N | Resultado N+1 e evento de auditoria correspondente |
 | VER-02 | Tentar consultar versões antigas, restaurar versão ou fazer rollback | Não existe histórico recuperável, endpoint, UI ou rollback de conteúdo (D3=A) |
 | VER-03 | Examinar auditoria | Contém trilha necessária, mas não funciona como cópia oculta recuperável do corpo anterior |
-| SITE-13 | Perde dispositivo/requisito de ficha ou titularidade antes de cada mutação (site, metadados, rascunho, edição, publicação, retirada, arquivo/restauro e moderação) | Toda escrita é negada pelo gate server-side revalidado; nenhum registro/status muda |
+| SITE-13 | Perde dispositivo/requisito de ficha ou titularidade antes de mutação feita em nome de personagem (site, metadados, rascunho, edição, publicação, retirada, arquivo/restauro pelo autor) | Escrita diegética negada pelo gate revalidado; nenhum registro/status muda |
+| SITE-14 | Mestre sem conta Internet tenta moderar site/página | Membership ativa de Mestre permite somente arquivar/restaurar; criar site/página, editar metadados ou conteúdo continua negado; ação administrativa é auditada como Mestre |
 | VER-04 | Edição ou transição de página usa `expectedVersion` obsoleto | `409 versao_desatualizada`; conteúdo/status, `version` e auditoria permanecem inalterados |
 | VER-05 | Forçar falha ao inserir evento em `audit_logs` durante criação/edição/transição | Transação inteira sofre rollback; nunca existe mutação sem evento de auditoria correspondente |
 | VER-06 | Publicar, retirar, arquivar ou restaurar página com versão atual | Cada transição aceita incrementa `version` exatamente uma vez e grava auditoria na mesma transação |
