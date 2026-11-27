@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, type CampanhaResumo, type ElementoVinculavel, type ItemInventario, type MetadadoPoder, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
 import { getSocket } from "../socket";
+import { useSincronizacaoCampanha, registrarSyncOk } from "../useSincronizacao";
 import FichaForm, { useFichaValores } from "../FichaForm";
 import EstadoVazio from "../EstadoVazio";
 import { EstadoCarregando, EstadoErro } from "../EstadoFeedback";
@@ -53,7 +54,9 @@ export default function Personagens({ campaignId, campanha }: Props) {
   const [filtroStatus, setFiltroStatus] = useState("");
   const souMestre = campanha?.meuPapel === "mestre";
 
+  const geracao = useRef(0);
   const carregar = useCallback(async () => {
+    const g = ++geracao.current;
     const inicial = primeiraCarga.current;
     if (inicial) setCarregando(true);
     try {
@@ -61,43 +64,47 @@ export default function Personagens({ campaignId, campanha }: Props) {
         api.listarPersonagens(campaignId, verArquivados),
         api.listarModelos(campaignId),
       ]);
+      if (g !== geracao.current) return;
       setPersonagens(personagens);
       setModelos(modelos);
       setErro(null);
+      registrarSyncOk(campaignId, "personagens");
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro ao carregar");
+      if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar");
     } finally {
-      primeiraCarga.current = false;
-      setCarregando(false);
+      if (g === geracao.current) {
+        primeiraCarga.current = false;
+        setCarregando(false);
+      }
     }
     // Biblioteca de regras (Etapa 5) — opcional, alimenta campos vinculados
     try {
       const { elementos, metadadosPoderes: poderes } = await api.obterVinculaveis(campaignId);
+      if (g !== geracao.current) return;
       setBiblioteca(elementos);
       setMetadadosPoderes(poderes ?? []);
     } catch {
-      setBiblioteca(null);
-      setMetadadosPoderes([]);
+      if (g === geracao.current) {
+        setBiblioteca(null);
+        setMetadadosPoderes([]);
+      }
     }
   }, [campaignId, verArquivados]);
 
+  useEffect(() => { void carregar(); }, [carregar]);
+
+  // Invalidação por evento + resync na reconexão via hook único.
+  useSincronizacaoCampanha(
+    ["personagens:atualizados", "fichas:atualizadas", "regras:atualizadas"],
+    // Issue #67: regras:atualizadas invalida a biblioteca de vinculáveis.
+    () => void carregar(),
+  );
+
   useEffect(() => {
-    void carregar();
     const socket = getSocket();
     socket.emit("entrar-campanha", campaignId, () => undefined);
-    const aoMudar = () => void carregar();
-    socket.on("personagens:atualizados", aoMudar);
-    socket.on("fichas:atualizadas", aoMudar);
-    // Issue #67: elementos de regra alterados invalidam a biblioteca de
-    // vinculáveis usada pelos campos da ficha.
-    socket.on("regras:atualizadas", aoMudar);
-    return () => {
-      socket.off("personagens:atualizados", aoMudar);
-      socket.off("fichas:atualizadas", aoMudar);
-      socket.off("regras:atualizadas", aoMudar);
-      socket.emit("sair-campanha", campaignId);
-    };
-  }, [carregar, campaignId]);
+    return () => { socket.emit("sair-campanha", campaignId); };
+  }, [campaignId]);
 
   const abrir = async (id: string) => {
     const epoch = ++selecaoEpochRef.current;
@@ -331,6 +338,22 @@ function extrairErrosValidacao(detalhes: unknown): ErroValidacao[] {
         campoId: typeof e.campoId === "string" ? e.campoId : undefined,
       }))
       .filter((e) => e.mensagem);
+  }
+  // Shape {campoId, codigo} sem mensagem — ex.: PATCH 400
+  // campo_obrigatorio ("não pode ser esvaziado"). Sem este ramo o fallback
+  // abaixo exporia UUID/código interno como "mensagem" ao usuário.
+  const chaves = Object.keys(d);
+  if (chaves.every((k) => k === "campoId" || k === "codigo" || k === "mensagem")
+    && typeof d.campoId === "string" && typeof d.codigo === "string") {
+    return [{
+      campoId: d.campoId,
+      codigo: d.codigo,
+      mensagem: typeof d.mensagem === "string" && d.mensagem
+        ? d.mensagem
+        : d.codigo === "campo_obrigatorio"
+          ? "O campo obrigatório não pode ser esvaziado."
+          : "Valor inválido para este campo.",
+    }];
   }
   // mapa campoId -> mensagem (validarFicha). Todas as chaves são preservadas:
   // "erros" e "pontos" podem ser IDs legítimos de campos do modelo.

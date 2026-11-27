@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ArquivoBiblioteca, type CampanhaResumo, type PastaBiblioteca } from "../api";
 import { ModalConfirmar } from "../Modal";
-import { useSincronizacaoCampanha } from "../useSincronizacao";
+import { useSincronizacaoCampanha, registrarSyncOk } from "../useSincronizacao";
 import EstadoVazio from "../EstadoVazio";
 import { EstadoCarregando, EstadoErro } from "../EstadoFeedback";
 
@@ -62,8 +62,9 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
       setArquivos(a.arquivos); setPastas(p.pastas);
       setJogadoresEnviam(a.config.jogadoresEnviam);
       setErro(null);
+      registrarSyncOk(campaignId, "arquivos");
     } catch (e) { if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar"); }
-    finally { primeiraCarga.current = false; if (g === geracao.current) setCarregando(false); }
+    finally { if (g === geracao.current) { primeiraCarga.current = false; setCarregando(false); } }
   }, [campaignId]);
   useEffect(() => { void carregar(); }, [carregar]);
   // Issue #67: upload/moderação/edição/exclusão de outro membro atualiza a lista.

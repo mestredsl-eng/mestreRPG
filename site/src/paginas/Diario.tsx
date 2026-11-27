@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ModalConfirmar } from "../Modal";
 import AvatarRetrato from "../AvatarRetrato";
 import { api, type Anotacao, type ArquivoBiblioteca, type CampanhaResumo, type Membro, type PersonagemResumo } from "../api";
-import { useSincronizacaoCampanha } from "../useSincronizacao";
+import { useSincronizacaoCampanha, registrarSyncOk } from "../useSincronizacao";
 import EstadoVazio from "../EstadoVazio";
 import { EstadoCarregando, EstadoErro } from "../EstadoFeedback";
 
@@ -59,8 +59,9 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
       if (g !== geracao.current) return;
       setAnotacoes(lista);
       setErro(null);
+      registrarSyncOk(campaignId, "diario");
     } catch (e) { if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar"); }
-    finally { primeiraCarga.current = false; if (g === geracao.current) setCarregando(false); }
+    finally { if (g === geracao.current) { primeiraCarga.current = false; setCarregando(false); } }
   }, [campaignId, aba]);
 
   useEffect(() => { void carregar(); }, [carregar]);

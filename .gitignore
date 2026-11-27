@@ -2,11 +2,10 @@ node_modules/
 dist/
 *.tsbuildinfo
 
-# Dados locais (nunca commitar)
-banco/*.db
-banco/*.db-journal
-banco/*.db-wal
-banco/*.db-shm
+# Dados locais (nunca commitar) — banco/ inteiro: .db, .bak-*, .trava*,
+# scratch de teste. O auto-update exige árvore limpa; sem isto, resíduos
+# locais de runtime bloqueiam o fast-forward com "árvore suja".
+/banco/
 arquivos/campanhas/*
 !arquivos/campanhas/.gitkeep
 backups/*
