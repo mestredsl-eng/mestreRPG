@@ -164,7 +164,7 @@ const P1 = "sorte", P2 = "poder_fogo", P3 = "poder_vigor", P4 = "poder_influenci
   await p.waitForTimeout(700);
   await p.locator(".cartao-campanha", { hasText: "Caçadores" }).first().click();
   await p.waitForTimeout(1000);
-  await p.getByRole("button", { name: /Personagens/ }).click();
+  await p.getByRole("tab", { name: /Personagens/ }).click();
   await p.waitForTimeout(800);
   await p.locator("tr", { hasText: "PJ Poderes Defeitos" }).first().click();
   await p.waitForTimeout(1500);

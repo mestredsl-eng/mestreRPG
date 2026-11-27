@@ -67,7 +67,7 @@ try {
     await page.goto(BASE, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Campanhas" }).first().click();
     await page.locator(".cartao-campanha", { hasText: "Campanha Sangue UI" }).click();
-    await page.getByRole("button", { name: "Regras", exact: true }).click();
+    await page.getByRole("tab", { name: "Regras", exact: true }).click();
     await page.getByRole("button", { name: "Sangue", exact: true }).click();
     await page.waitForSelector(".painel-sangue", { timeout: 15000 });
   };
@@ -267,7 +267,7 @@ try {
     await page.goto(BASE, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Campanhas" }).first().click();
     await page.locator(".cartao-campanha", { hasText: "Campanha Sangue UI" }).click();
-    ok("UI. jogador não vê aba Regras", await page.getByRole("button", { name: "Regras", exact: true }).count() === 0);
+    ok("UI. jogador não vê aba Regras", await page.getByRole("tab", { name: "Regras", exact: true }).count() === 0);
     // API direta: jogador → 403 no PUT config
     const r = await req(BASE, "PUT", `/campaigns/${campId}/regras/config`, {
       cookie: `mestre_rpg_session=${jogadores.j1.cookie.split("=").pop()}`,

@@ -187,7 +187,7 @@ try {
   // Campanhas → campanha → Personagens → Novo personagem
   await page.getByRole("button", { name: "Campanhas" }).click();
   await page.locator(".cartao-campanha", { hasText: "Campanha Teste" }).click();
-  await page.getByRole("button", { name: "Personagens" }).click();
+  await page.getByRole("tab", { name: "Personagens" }).click();
   await page.getByRole("button", { name: "Novo personagem" }).click();
   await page.locator("input").first().fill("Herói Homolog");
   await page.locator("select").first().selectOption({ index: 1 });
@@ -391,7 +391,7 @@ try {
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "Campanhas" }).click();
     await page.locator(".cartao-campanha", { hasText: "Campanha Teste" }).click();
-    await page.getByRole("button", { name: "Personagens" }).click();
+    await page.getByRole("tab", { name: "Personagens" }).click();
     await page.getByText("Herói Homolog").click();
     await page.waitForTimeout(800);
     const corpo = await page.locator("body").innerText();
@@ -417,7 +417,7 @@ try {
     await pv.goto(UI, { waitUntil: "domcontentloaded" });
     await pv.getByRole("button", { name: "Campanhas" }).click();
     await pv.locator(".cartao-campanha", { hasText: "Campanha Teste" }).click();
-    await pv.getByRole("button", { name: "Personagens" }).click();
+    await pv.getByRole("tab", { name: "Personagens" }).click();
     await pv.getByText("Herói Homolog").click();
     await pv.getByRole("button", { name: "Editar ficha" }).click();
     await pv.waitForTimeout(400);

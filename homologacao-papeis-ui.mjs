@@ -35,6 +35,7 @@ async function irCampanha(page) {
   await page.getByText("Campanha Papeis", { exact: true }).first().click();
 }
 const temBotao = (page, nome) => page.getByRole("button", { name: nome, exact: false }).count().then((c) => c > 0);
+const temAba = (page, nome) => page.getByRole("tab", { name: nome, exact: false }).count().then((c) => c > 0);
 const temTexto = (page, txt) => page.getByText(txt, { exact: false }).count().then((c) => c > 0);
 
 try {
@@ -103,10 +104,10 @@ try {
     await irCampanha(page);
     await page.waitForSelector(".abas", { timeout: 10000 });
     for (const abaProibida of ["Fichas", "Regras", "Participantes", "Convites"]) {
-      t(`jogador não vê aba ${abaProibida}`, !(await temBotao(page, abaProibida)));
+      t(`jogador não vê aba ${abaProibida}`, !(await temAba(page, abaProibida)));
     }
     for (const abaOk of ["Informações", "Mesa", "Personagens", "Diário", "Histórico", "Arquivos"]) {
-      t(`jogador vê aba ${abaOk}`, await temBotao(page, abaOk));
+      t(`jogador vê aba ${abaOk}`, await temAba(page, abaOk));
     }
     t("jogador não vê Editar campanha", !(await temBotao(page, "Editar campanha")));
     await page.locator(".abas button", { hasText: "Diário" }).first().click();
@@ -127,9 +128,9 @@ try {
     await irCampanha(page);
     await page.waitForSelector(".abas", { timeout: 10000 });
     for (const abaProibida of ["Fichas", "Regras", "Participantes", "Convites", "Personagens"]) {
-      t(`espectador não vê aba ${abaProibida}`, !(await temBotao(page, abaProibida)));
+      t(`espectador não vê aba ${abaProibida}`, !(await temAba(page, abaProibida)));
     }
-    t("espectador vê abas de leitura", await temBotao(page, "Mesa") && await temBotao(page, "Diário"));
+    t("espectador vê abas de leitura", await temAba(page, "Mesa") && await temAba(page, "Diário"));
     await page.locator(".abas button", { hasText: "Diário" }).first().click();
     await page.waitForTimeout(600);
     t("espectador não vê Nova anotação", !(await temBotao(page, "Nova anotação")));
@@ -171,7 +172,7 @@ try {
     await irCampanha(page);
     await page.waitForSelector(".abas", { timeout: 10000 });
     for (const abaOk of ["Fichas", "Regras", "Participantes", "Convites"]) {
-      t(`mestre vê aba ${abaOk}`, await temBotao(page, abaOk));
+      t(`mestre vê aba ${abaOk}`, await temAba(page, abaOk));
     }
     t("mestre vê Editar campanha", await temBotao(page, "Editar campanha"));
     await page.context().close();
@@ -185,7 +186,7 @@ try {
     t("mobile: jogador sem Administração", !(await temBotao(page, "Administração")));
     await irCampanha(page);
     await page.waitForSelector(".abas", { timeout: 10000 });
-    t("mobile: sem abas admin", !(await temBotao(page, "Regras")) && !(await temBotao(page, "Participantes")));
+    t("mobile: sem abas admin", !(await temAba(page, "Regras")) && !(await temAba(page, "Participantes")));
     await ctx.close();
   }
 

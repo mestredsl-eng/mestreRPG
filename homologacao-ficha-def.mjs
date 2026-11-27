@@ -30,7 +30,7 @@ async function abrirFicha(page, w, h, nome) {
   await p.waitForTimeout(700);
   await p.locator(".cartao-campanha", { hasText: "Caçadores" }).first().click();
   await p.waitForTimeout(1000);
-  await p.getByRole("button", { name: /Personagens/ }).click();
+  await p.getByRole("tab", { name: /Personagens/ }).click();
   await p.waitForTimeout(800);
   await p.locator("tr", { hasText: "PJ Ficha Definitiva" }).first().click();
   await p.waitForTimeout(1200);
@@ -69,7 +69,7 @@ async function abrirEditor(w, h, nome) {
   await p.waitForTimeout(700);
   await p.locator(".cartao-campanha", { hasText: "Caçadores" }).first().click();
   await p.waitForTimeout(1000);
-  await p.getByRole("button", { name: /Fichas/ }).click();
+  await p.getByRole("tab", { name: /Fichas/ }).click();
   await p.waitForTimeout(1200);
   // seleciona o modelo definitivo
   const item = p.locator(".cartao-item", { hasText: "Ficha Caçadores" }).first();
