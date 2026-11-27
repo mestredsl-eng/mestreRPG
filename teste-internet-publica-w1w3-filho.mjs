@@ -10,15 +10,14 @@
 //   arquivado, `contatos` sem aresta — zero existência/título/snippet/
 //   contagem/agregados) · autoria ancorada na sessão.
 //
-// ADAPTADOR DE ROTAS (contrato candidato do PAI v1 — ajustar 1 bloco
-// quando o SHA do slice publicar os paths reais):
-//   GET  /campaigns/:c/internet/sites?cursor=&q=&limite=
+// CONTRATO REAL — PR #388 @ 9e8795a (docs/CONTRATO-INTERNET-PUBLICA-365.md):
+//   GET  /campaigns/:c/internet/sites?q=&cursor=&limit=   (limit 1–50, default 20)
 //   GET  /campaigns/:c/internet/sites/:slug
-//   GET  /campaigns/:c/internet/sites/:slug/p/:pageSlug
-//   GET  /campaigns/:c/internet/publicacoes?tipo=&q=&cursor=
-//   GET  /campaigns/:c/internet/publicacoes/:id
-//   POST /campaigns/:c/internet/sites            {slug,nome,descricao?}
-//   POST /campaigns/:c/internet/sites/:siteId/pages {slug,titulo,corpo,formato}
+//   GET  /campaigns/:c/internet/sites/:slug/paginas/:pageSlug
+//   cursor = base64url(createdAtMs:id), keyset (createdAt,id) DESC; inválido → 400
+//   404: {erro:"Site não encontrado"} / {erro:"Página não encontrada"} — idênticos
+//   gate: contaAutorizadaPara OU mestreLeitorDaCampanha; sem as duas → 403; sem sessão → 401
+//   FATIA READ-ONLY: não há POST/edição/publicações — seeds só via banco.
 //
 // ADAPTADOR DE FIXTURE: seeds de site/página/publicação tentam a API de
 // escrita; se o slice for read-only ("dados controlados por fixture"),
@@ -44,14 +43,7 @@ const t = (n, c, x = "") => {
 };
 const sec = (n) => console.log("\n== " + n + " ==");
 
-// ---------- mapa de rotas (contrato candidato — 1 lugar p/ ajustar) ----------
-const R = {
-  sites: (c) => `/campaigns/${c}/internet/sites`,
-  site: (c, slug) => `/campaigns/${c}/internet/sites/${slug}`,
-  page: (c, slug, pslug) => `/campaigns/${c}/internet/sites/${slug}/p/${pslug}`,
-  publicacoes: (c) => `/campaigns/${c}/internet/publicacoes`,
-  publicacao: (c, id) => `/campaigns/${c}/internet/publicacoes/${id}`,
-};
+// ---------- rotas reais (PR #388 — docs/CONTRATO-INTERNET-PUBLICA-365.md) ----------
 const api = (base, camp, cookie, metodo, path, body) =>
   req(base, metodo, `/campaigns/${camp}/internet${path}`, { cookie, body });
 
@@ -86,12 +78,12 @@ function seedSite({ campId, slug, nome, ownerContaId, status = "ativo", siteId =
   db.close();
   return id;
 }
-function seedPage({ siteId, slug, titulo, status = "publicado", autorContaId, corpo = "corpo" }) {
+function seedPage({ siteId, campId, slug, titulo, status = "publicado", autorContaId, corpo = "corpo" }) {
   const db = abrirDb(BANCO); const agora = Date.now();
   const id = crypto.randomUUID();
-  db.prepare(`insert into internet_pages (id,site_id,slug,titulo,corpo,formato,status,version,autor_conta_id,published_at,created_at,updated_at)
-    values (?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(id, siteId, slug, titulo, corpo, "texto", status, 1, autorContaId,
+  db.prepare(`insert into internet_pages (id,site_id,campaign_id,slug,titulo,corpo,formato,status,version,autor_conta_id,published_at,created_at,updated_at)
+    values (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, siteId, campId, slug, titulo, corpo, "texto", status, 1, autorContaId,
       status === "publicado" ? agora : null, agora, agora);
   db.close();
   return id;
@@ -190,10 +182,10 @@ try {
   let siteAlvo = null, siteArquivado = null, slugAlvo = "portal-da-vila", slugInexistente = "slug-que-nao-existe-xyz";
   if (temSites && temPaginas) {
     siteAlvo = seedSite({ campId: C.campId, slug: slugAlvo, nome: "Portal da Vila", ownerContaId: contaAutor });
-    seedPage({ siteId: siteAlvo, slug: "noticias", titulo: "Noticias Locais", status: "publicado", autorContaId: contaAutor });
-    seedPage({ siteId: siteAlvo, slug: "rascunho-secreto", titulo: "RASCUNHO_SECRETO_380X", status: "rascunho", autorContaId: contaAutor });
+    seedPage({ siteId: siteAlvo, campId: C.campId, slug: "noticias", titulo: "Noticias Locais", status: "publicado", autorContaId: contaAutor });
+    seedPage({ siteId: siteAlvo, campId: C.campId, slug: "rascunho-secreto", titulo: "RASCUNHO_SECRETO_380X", status: "rascunho", autorContaId: contaAutor });
     siteArquivado = seedSite({ campId: C.campId, slug: "site-arquivado", nome: "Site Arquivado", ownerContaId: contaAutor, status: "arquivado" });
-    seedPage({ siteId: siteArquivado, slug: "pagina-arq", titulo: "Pagina Arquivada", status: "publicado", autorContaId: contaAutor });
+    seedPage({ siteId: siteArquivado, campId: C.campId, slug: "pagina-arq", titulo: "Pagina Arquivada", status: "publicado", autorContaId: contaAutor });
     // volume para paginação: +28 sites → 29 visíveis no total
     // (siteAlvo + 28 massa; siteArquivado fica fora do discovery)
     for (let i = 0; i < 28; i++)
@@ -217,11 +209,11 @@ try {
 
   sec("D. Diretório elegível (W1) — leitura D6: conta ativa + titular + membership");
   {
-    const rAutor = await api(BASE, C.campId, cookieAutor, "GET", "/sites");
+    const rAutor = await api(BASE, C.campId, cookieAutor, "GET", "/sites?limit=50");
     t("diretório responde 200 ao elegível", rAutor.status === 200, `status=${rAutor.status} ${JSON.stringify(rAutor.json).slice(0, 160)}`);
     const itens = itensDe(rAutor.json);
     t("diretório lista sites semeados", itens.some((s) => (s.slug ?? s.site?.slug) === slugAlvo), JSON.stringify(itens[0] ?? null).slice(0, 160));
-    const rContato = await api(BASE, C.campId, cookieContato, "GET", "/sites");
+    const rContato = await api(BASE, C.campId, cookieContato, "GET", "/sites?limit=50");
     t("contato também lista (mesmo escopo campanha)", rContato.status === 200 && itensDe(rContato.json).length === itens.length);
     const rLivre = await api(BASE, C.campId, cookieLivre, "GET", "/sites");
     t("sem aresta também lista (sites são da campanha)", rLivre.status === 200);
@@ -229,13 +221,30 @@ try {
     t("sem sessão → 401", rSemCookie.status === 401, `status=${rSemCookie.status}`);
     const rEspectador = await req(BASE, "GET", `/campaigns/${C.campId}/internet/sites`, { cookie: sessao(BANCO, C.jogadores.j4.id) });
     t("sem conta de internet → não lê diretório", rEspectador.status !== 200 || itensDe(rEspectador.json).length === 0, `status=${rEspectador.status}`);
+    // mestre sem conta própria lê via mestreLeitorDaCampanha (P10-style)
+    const rMestre = await api(BASE, C.campId, C.cookieMestre, "GET", "/sites");
+    t("mestre lê diretório sem conta (leitura privilegiada)", rMestre.status === 200, `status=${rMestre.status}`);
+    // paginasPublicadas conta SÓ status='publicado' — siteAlvo tem 1 pub + 1 rascunho
+    const alvo = itens.find((s) => (s.slug ?? s.site?.slug) === slugAlvo);
+    t("paginasPublicadas==1 (rascunho não conta)", alvo?.paginasPublicadas === 1, JSON.stringify(alvo ?? null)?.slice(0, 200));
+    // owner público mínimo — nunca characterId/userId/ownerContaId crus
+    const blobOwner = JSON.stringify(alvo?.owner ?? {});
+    t("owner sem ids internos", !/characterId|userId|ownerContaId|campaignId/i.test(blobOwner) && typeof alvo?.owner?.handle === "string", blobOwner.slice(0, 160));
+    // limit 1..50 — página parcial devolve cursor
+    const rLim = await api(BASE, C.campId, cookieAutor, "GET", "/sites?limit=5");
+    t("limit=5 → ≤5 itens + cursor", rLim.status === 200 && itensDe(rLim.json).length <= 5 && cursorDe(rLim.json) !== null,
+      `status=${rLim.status} n=${itensDe(rLim.json).length}`);
+    const rLim0 = await api(BASE, C.campId, cookieAutor, "GET", "/sites?limit=0");
+    t("limit=0 → 400 (fora de 1..50)", rLim0.status === 400, `status=${rLim0.status}`);
   }
 
   sec("X. Isolamento cross-campaign (Quiz 1 — invariante D1)");
   {
-    // slug de A acessado via caminho de B → 404 idêntico a inexistente em B
-    const rCruza = await api(BASE, campBId, cookieSoloB, "GET", `/sites/${slugAlvo}`);
-    const rInex = await api(BASE, campBId, cookieSoloB, "GET", `/sites/${slugInexistente}`);
+    // slug de A acessado via caminho de B → 404 idêntico a inexistente em B.
+    // Leitor elegível em B = cookieMestre (criador de B é mestre lá →
+    // mestreLeitorDaCampanha passa pelo gate sem precisar de conta).
+    const rCruza = await api(BASE, campBId, C.cookieMestre, "GET", `/sites/${slugAlvo}`);
+    const rInex = await api(BASE, campBId, C.cookieMestre, "GET", `/sites/${slugInexistente}`);
     t("slug de A via B → 404", rCruza.status === 404, `status=${rCruza.status}`);
     t("404 cross == 404 inexistente (byte-equivalente)", serial(rCruza) === serial(rInex),
       `${serial(rCruza).slice(0, 120)} vs ${serial(rInex).slice(0, 120)}`);
@@ -243,8 +252,8 @@ try {
     const rFora = await api(BASE, C.campId, cookieSoloB, "GET", `/sites/${slugAlvo}`);
     t("não-membro de A → sem conteúdo do site", rFora.status !== 200 || !JSON.stringify(rFora.json).includes(slugAlvo),
       `status=${rFora.status}`);
-    // diretório de B não contém sites de A
-    const rDirB = await api(BASE, campBId, cookieSoloB, "GET", "/sites");
+    // diretório de B não contém sites de A (mestre lê B — P10-style)
+    const rDirB = await api(BASE, campBId, C.cookieMestre, "GET", "/sites");
     t("diretório de B vazio de A", rDirB.status !== 200 || !JSON.stringify(rDirB.json).includes(slugAlvo), `status=${rDirB.status}`);
   }
 
@@ -253,16 +262,16 @@ try {
     const rInex = await api(BASE, C.campId, cookieAutor, "GET", `/sites/${slugInexistente}`);
     t("site inexistente → 404", rInex.status === 404, `status=${rInex.status}`);
     const rArq = await api(BASE, C.campId, cookieAutor, "GET", "/sites/site-arquivado");
-    t("site arquivado não devolve conteúdo de páginas", rArq.status === 404 || !JSON.stringify(rArq.json).includes("pagina-arq"),
-      `status=${rArq.status}`);
+    t("site arquivado → 404 idêntico a inexistente", serial(rArq) === serial(rInex),
+      `${serial(rArq).slice(0, 120)} vs ${serial(rInex).slice(0, 120)}`);
     // página rascunho: não-autor recebe 404 idêntico a slug inexistente
-    const rRasc = await api(BASE, C.campId, cookieContato, "GET", `/sites/${slugAlvo}/p/rascunho-secreto`);
-    const rPagInex = await api(BASE, C.campId, cookieContato, "GET", `/sites/${slugAlvo}/p/pagina-que-nao-existe`);
+    const rRasc = await api(BASE, C.campId, cookieContato, "GET", `/sites/${slugAlvo}/paginas/rascunho-secreto`);
+    const rPagInex = await api(BASE, C.campId, cookieContato, "GET", `/sites/${slugAlvo}/paginas/pagina-que-nao-existe`);
     t("rascunho p/ não-autor → 404", rRasc.status === 404, `status=${rRasc.status}`);
     t("404 rascunho == 404 inexistente", serial(rRasc) === serial(rPagInex),
       `${serial(rRasc).slice(0, 120)} vs ${serial(rPagInex).slice(0, 120)}`);
     t("rascunho não vaza título no corpo", !JSON.stringify(rRasc.json).includes("RASCUNHO_SECRETO_380X"));
-    const rPub = await api(BASE, C.campId, cookieContato, "GET", `/sites/${slugAlvo}/p/noticias`);
+    const rPub = await api(BASE, C.campId, cookieContato, "GET", `/sites/${slugAlvo}/paginas/noticias`);
     t("página publicada → 200 com conteúdo", rPub.status === 200 && JSON.stringify(rPub.json).includes("Noticias"), `status=${rPub.status}`);
   }
 
@@ -271,7 +280,7 @@ try {
     const coletar = async (cookie) => {
       const vistos = new Set(); const cursores = new Set(); let cursor = null; let paginas = 0;
       for (;;) {
-        const q = cursor ? `?limite=7&cursor=${encodeURIComponent(cursor)}` : "?limite=7";
+        const q = cursor ? `?limit=7&cursor=${encodeURIComponent(cursor)}` : "?limit=7";
         const r = await api(BASE, C.campId, cookie, "GET", `/sites${q}`);
         if (r.status !== 200) return { erro: `status=${r.status}`, vistos };
         const itens = itensDe(r.json);
@@ -289,14 +298,9 @@ try {
     t("todos os sites visíveis coletados", w1.vistos.size === 29, `n=${w1.vistos.size}`);
     t("sem duplicatas entre páginas", w1.vistos.size === new Set([...w1.vistos]).size);
     t("segunda varredura idêntica (ordem estável)", w1.vistos.size === w2.vistos.size && [...w1.vistos].sort().join() === [...w2.vistos].sort().join());
-    // cursor forjado
+    // cursor forjado → contrato: inválido = 400 (nunca 500/vazamento)
     const rForjado = await api(BASE, C.campId, cookieAutor, "GET", "/sites?cursor=@@@forjado@@@");
-    t("cursor forjado → 400 ou resultado do mesmo escopo (nunca 500/vazamento)",
-      rForjado.status === 400 || rForjado.status === 200, `status=${rForjado.status}`);
-    if (rForjado.status === 200) {
-      const slugs = itensDe(rForjado.json).map((s) => s.slug ?? s.site?.slug);
-      t("cursor forjado não introduz itens de outro escopo", slugs.every((s) => typeof s === "string" && !s.includes("..")));
-    }
+    t("cursor forjado → 400", rForjado.status === 400, `status=${rForjado.status} ${JSON.stringify(rForjado.json).slice(0, 120)}`);
     // agregados: total nunca conta escondidos
     const rDir = await api(BASE, C.campId, cookieAutor, "GET", "/sites");
     const tot = totalDe(rDir.json);
@@ -305,11 +309,18 @@ try {
 
   sec("V. Nunca-visível — agregados e busca (anti-oráculo V-02)");
   {
-    const rDir = await api(BASE, C.campId, cookieAutor, "GET", "/sites");
+    const rDir = await api(BASE, C.campId, cookieAutor, "GET", "/sites?limit=50");
     const blob = JSON.stringify(rDir.json);
     t("diretório não lista site arquivado", !blob.includes("site-arquivado"), blob.slice(0, 200));
     const rBusca = await api(BASE, C.campId, cookieAutor, "GET", "/sites?q=" + encodeURIComponent("arquivado"));
     t("busca não retorna arquivado", !JSON.stringify(rBusca.json).includes("Site Arquivado"), `status=${rBusca.status}`);
+    // q = prefixo em `nome` (contrato): prefixo casa, não-prefixo não casa
+    const rQ1 = await api(BASE, C.campId, cookieAutor, "GET", "/sites?q=" + encodeURIComponent("Site Massa") + "&limit=50");
+    const itensQ1 = itensDe(rQ1.json);
+    t("q prefixo 'Site Massa' → só massa", rQ1.status === 200 && itensQ1.length === 28 && itensQ1.every((s) => (s.nome ?? "").startsWith("Site Massa")),
+      `status=${rQ1.status} n=${itensQ1.length}`);
+    const rQ2 = await api(BASE, C.campId, cookieAutor, "GET", "/sites?q=" + encodeURIComponent("zzz-nada"));
+    t("q sem match → lista vazia honesta", rQ2.status === 200 && itensDe(rQ2.json).length === 0, `status=${rQ2.status} n=${itensDe(rQ2.json).length}`);
     const rBuscaRasc = await api(BASE, C.campId, cookieAutor, "GET", `/sites/${slugAlvo}`);
     t("detalhe do site não lista página rascunho", !JSON.stringify(rBuscaRasc.json).includes("rascunho-secreto"), `status=${rBuscaRasc.status}`);
     // publicações `contatos` (se o slice cobrir o feed)
