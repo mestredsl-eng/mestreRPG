@@ -18,7 +18,7 @@ import { avaliarD10, type AvaliacaoDadoD10 } from "../lib/d10.js";
 import { npcFichaVisivel } from "../lib/npc-visibility.js";
 import { inferirGeneroVozDaFicha } from "../lib/voz.js";
 import {
-  lerVtt, nevoaPadrao, tracoRevelarValido, donosDosTokens,
+  lerVtt, nevoaPadrao, tracoRevelarValido, donosDosTokens, hpManualValido,
   vttParaDestinatario, VTT_MAX_BYTES, VTT_MAX_NOME, VTT_MAX_TOKENS, NEVOA_MAX_TRAÇOS,
   type TokenVtt, type VttState,
 } from "../lib/vtt.js";
@@ -741,6 +741,18 @@ function socket_handlers(
           // P4: vínculos coerentes — personagem e usuário precisam ser do mesmo dono
           const vinc = await validarVinculo(ctx.sessao.campaignId, t.userId, t.personagemId);
           if (!vinc.ok) { cb?.({ ok: false, erro: vinc.erro }); return; }
+          // HP manual (F14): só existe em token SEM ficha; com ficha a
+          // vida vem exclusivamente de vidaParaFicha — nunca misturar.
+          let hpManual: TokenVtt["hpManual"];
+          if (t.hpManual !== undefined) {
+            if (vinc.personagemId) { cb?.({ ok: false, erro: "Token vinculado a ficha não aceita HP manual" }); return; }
+            if (t.hpManual === null) { hpManual = null; }
+            else {
+              const hm = hpManualValido(t.hpManual);
+              if (!hm) { cb?.({ ok: false, erro: "HP manual inválido" }); return; }
+              hpManual = hm;
+            }
+          }
           const idToken = typeof t.id === "string" && /^[A-Za-z0-9-]{8,64}$/.test(t.id) ? t.id : randomUUID();
           // Token vinculado a NPC nasce oculto por padrão — o mestre
           // decide explicitamente quando exibir aos jogadores.
@@ -749,11 +761,16 @@ function socket_handlers(
             id: idToken, nome, cor, x: t.x as number, y: t.y as number,
             userId: vinc.userId, personagemId: vinc.personagemId, ativo: t.ativo !== false,
             ...(oculto ? { oculto: true } : {}),
+            ...(hpManual ? { hpManual } : {}),
           };
           vtt.tokens.push(novo);
         } else if (acao === "atualizar" || acao === "mover") {
           if (!existente) { cb?.({ ok: false, erro: "Token não encontrado" }); return; }
           if (!posicaoValida(t.x ?? existente.x, t.y ?? existente.y)) { cb?.({ ok: false, erro: "Posição inválida" }); return; }
+          // "mover" é só posição — nunca mutação de HP, para qualquer papel.
+          if (acao === "mover" && t.hpManual !== undefined) {
+            cb?.({ ok: false, erro: "Mover não altera HP do token" }); return;
+          }
           if (ehMestre) {
             if (t.nome !== undefined) {
               if (!nomeValido(t.nome)) { cb?.({ ok: false, erro: "Nome de token inválido" }); return; }
@@ -780,8 +797,32 @@ function socket_handlers(
               // oculto explícito no mesmo payload).
               if (vinc.personagemNpc && t.oculto === undefined) existente.oculto = true;
             }
+            // HP manual (F14): token com ficha nunca carrega hpManual —
+            // vincular limpa na mesma mutação; desvincular não copia nada
+            // (o mestre informa manualmente se quiser). Enviar hpManual
+            // quando o estado final tem ficha é erro explícito — nunca
+            // descarte silencioso.
+            if (existente.personagemId) {
+              if (t.hpManual !== undefined) {
+                cb?.({ ok: false, erro: "Token vinculado a ficha não aceita HP manual" }); return;
+              }
+              delete existente.hpManual;
+            } else if (t.hpManual !== undefined) {
+              if (t.hpManual === null) {
+                delete existente.hpManual;
+              } else {
+                const hm = hpManualValido(t.hpManual);
+                if (!hm) { cb?.({ ok: false, erro: "HP manual inválido" }); return; }
+                existente.hpManual = hm;
+              }
+            }
           } else {
-            // jogador: somente posição do próprio token — nada mais
+            // jogador: somente posição do próprio token — nada mais.
+            // hpManual é rejeitado explicitamente como em "mover" —
+            // nunca ignorado silenciosamente.
+            if (t.hpManual !== undefined) {
+              cb?.({ ok: false, erro: "Jogador não altera HP do token" }); return;
+            }
             if (!(await tokenPertenceAoUsuario(sessionId, existente, u.id))) {
               cb?.({ ok: false, erro: "Token não pertence a você" }); return;
             }

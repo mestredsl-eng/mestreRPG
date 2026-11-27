@@ -34,14 +34,19 @@ type CharRow = typeof characters.$inferSelect;
 /** Carrega personagens vinculados aos tokens + regras + estruturas (1x por emissão). */
 export async function prepararVidaVtt(sessionId: string, tokens: TokenVtt[]): Promise<CtxVida | null> {
   const pids = [...new Set(tokens.map((t) => t.personagemId).filter((p): p is string => !!p))];
-  if (!pids.length) return null;
+  // HP manual também obedece a vidaCompartilhada. Mesmo sem fichas
+  // vinculadas, precisamos carregar a configuração da campanha para não
+  // expor HP de NPCs/tokens sem personagem quando o compartilhamento está OFF.
+  const temHpManual = tokens.some((t) => !t.personagemId && !!t.hpManual);
+  if (!pids.length && !temHpManual) return null;
   const db = getDb();
   const [sess] = await db.select({ campaignId: sessions.campaignId }).from(sessions).where(eq(sessions.id, sessionId)).limit(1);
   if (!sess) return null;
-  const rows = await db.select().from(characters)
-    .where(and(eq(characters.campaignId, sess.campaignId), inArray(characters.id, pids)));
-  if (!rows.length) return null;
   const regras = await carregarRegras(sess.campaignId);
+  const rows = pids.length
+    ? await db.select().from(characters)
+      .where(and(eq(characters.campaignId, sess.campaignId), inArray(characters.id, pids)))
+    : [];
   const versionIds = [...new Set(rows.map((r) => r.templateVersionId).filter((v): v is string => !!v))];
   const estruturas = new Map<string, EstruturaFicha>();
   if (versionIds.length) {
@@ -123,7 +128,6 @@ export function vidaNoEstado(
   ctx: CtxVida | null, vtt: VttState, papel: PapelVtt, userId: string,
   membershipId: string | undefined, donos: Map<string, string | null>
 ): VttState {
-  if (!ctx) return vtt;
   // ehDono por token: `donos` (dono efetivo resolvido no servidor via
   // membership ativa do personagem) — equivale à regra da ficha.
   // efetivo do token) — equivale à membership do personagem, pois
@@ -131,12 +135,29 @@ export function vidaNoEstado(
   return {
     ...vtt,
     tokens: vtt.tokens.map((tk) => {
-      if (!tk.personagemId) return { ...tk, vida: null };
+      // hpManual é interno: NUNCA sai no payload — só vira vida.hp quando
+      // o token sobreviveu ao filtro canônico e não tem ficha vinculada.
+      const { hpManual, ...resto } = tk;
+      if (!tk.personagemId) {
+        // F14: HP manual segue a mesma política da vida derivada de ficha
+        // — mestre sempre; dono efetivo do token mesmo com
+        // compartilhamento OFF (paridade com vidaParaPersonagem); demais
+        // só quando compartilhada está ON.
+        const podeVerHpManual = papel === "mestre" || ctx?.compartilhada === true
+          || donos.get(tk.id) === userId;
+        return {
+          ...resto,
+          vida: hpManual && podeVerHpManual
+            ? { hp: { atual: hpManual.atual, maximo: hpManual.maximo }, vitalidade: null }
+            : null,
+        };
+      }
+      if (!ctx) return { ...resto, vida: null };
       const p = ctx.chars.get(tk.personagemId);
-      if (!p) return { ...tk, vida: null };
+      if (!p) return { ...resto, vida: null };
       const ehDono = donos.get(tk.id) === userId;
       const vida = vidaParaPersonagem(ctx, p, papel, userId, membershipId, ehDono);
-      return { ...tk, vida };
+      return { ...resto, vida };
     }),
   };
 }

@@ -349,6 +349,330 @@ try {
     await Promise.all(loops);
     t("30s K=4 sem RATE_LIMITED", limitados === 0, `limitados=${limitados} oks=${oks} outros=${outros}`);
   }
+
+  // ---------- I. HP manual em token SEM ficha (F14/#127) ----------
+  sec("I. HP manual — token sem personagemId");
+  {
+    // A seção F liga a flag para isolar névoa; força OFF novamente para
+    // que os vetores F14 comecem de forma determinística.
+    const cfgInicioManual = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`,
+      { cookie: ids.cookieMestre, body: { vtt: { vidaCompartilhada: false } } });
+    t("vidaCompartilhada OFF antes dos vetores HP manual", cfgInicioManual.status === 200);
+    const criarManual = (extra) => emitirCb(sM, "mesa:vtt:token", {
+      sessionId: sid, acao: "criar",
+      token: { id: extra.id, nome: extra.id, cor: "#445566", x: 0.3, y: 0.3, ...extra },
+    });
+    const syncM = () => sincronizar(sM);
+
+    // criação com HP manual válido (fração inclusa)
+    const rCriar = await criarManual({ id: "tkman-001", hpManual: { atual: 30, maximo: 50.5 } });
+    t("mestre cria token manual com HP", rCriar?.ok === true, JSON.stringify(rCriar).slice(0, 160));
+    let vM = await syncM();
+    const tm = tok(rCriar?.vtt ?? vM?.vtt, "tkman-001");
+    t("mestre recebe vida.hp manual 30/50.5", tm?.vida?.hp?.atual === 30 && tm?.vida?.hp?.maximo === 50.5, JSON.stringify(tm?.vida));
+    t("hpManual NUNCA sai bruto no payload", tm && !("hpManual" in tm), JSON.stringify(Object.keys(tm ?? {})));
+
+    // HP manual respeita a mesma política explícita de compartilhamento
+    // da vida derivada de ficha: OFF (padrão) = só mestre; ON = tokens visíveis.
+    const [rSAoff, rSBoff, rSEoff] = await Promise.all([sincronizar(sA), sincronizar(sB), sincronizar(sE)]);
+    t("vidaCompartilhada OFF: jogador vê token, mas não HP manual",
+      tok(rSAoff?.vtt, "tkman-001") !== undefined && tok(rSAoff?.vtt, "tkman-001")?.vida == null);
+    t("vidaCompartilhada OFF: outro jogador não recebe HP manual",
+      tok(rSBoff?.vtt, "tkman-001")?.vida == null);
+    t("vidaCompartilhada OFF: espectador não recebe HP manual",
+      tok(rSEoff?.vtt, "tkman-001")?.vida == null);
+    const httpOff = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}`,
+      { cookie: c.jogadores.jogador1.cookie });
+    const httpOffState = httpOff.json?.sessao?.vttState;
+    const httpOffVtt = typeof httpOffState === "string" ? JSON.parse(httpOffState) : httpOffState;
+    t("HTTP com vidaCompartilhada OFF não entrega HP manual",
+      tok(httpOffVtt, "tkman-001")?.vida == null && !("hpManual" in (tok(httpOffVtt, "tkman-001") ?? {})));
+
+    const cfgManualOn = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`,
+      { cookie: ids.cookieMestre, body: { vtt: { vidaCompartilhada: true } } });
+    t("ativa vidaCompartilhada para HP manual", cfgManualOn.status === 200, `status=${cfgManualOn.status}`);
+    const [rSAon, rSBon, rSEon] = await Promise.all([sincronizar(sA), sincronizar(sB), sincronizar(sE)]);
+    t("vidaCompartilhada ON: jogador recebe HP manual do token visível",
+      tok(rSAon?.vtt, "tkman-001")?.vida?.hp?.maximo === 50.5);
+    t("vidaCompartilhada ON: outro jogador recebe HP manual",
+      tok(rSBon?.vtt, "tkman-001")?.vida?.hp?.atual === 30);
+    t("vidaCompartilhada ON: espectador recebe HP manual visível",
+      tok(rSEon?.vtt, "tkman-001")?.vida?.hp?.maximo === 50.5);
+    const httpOn = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}`,
+      { cookie: c.jogadores.jogador1.cookie });
+    const httpOnState = httpOn.json?.sessao?.vttState;
+    const httpOnVtt = typeof httpOnState === "string" ? JSON.parse(httpOnState) : httpOnState;
+    t("HTTP com vidaCompartilhada ON entrega vida.hp, nunca hpManual",
+      tok(httpOnVtt, "tkman-001")?.vida?.hp?.maximo === 50.5
+        && !("hpManual" in (tok(httpOnVtt, "tkman-001") ?? {})));
+
+    const cfgManualOff = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`,
+      { cookie: ids.cookieMestre, body: { vtt: { vidaCompartilhada: false } } });
+    t("desliga novamente vidaCompartilhada após a prova ON", cfgManualOff.status === 200);
+    const [rSA, rSB, rSE] = await Promise.all([sincronizar(sA), sincronizar(sB), sincronizar(sE)]);
+    t("vidaCompartilhada OFF: HP manual some após novo sync",
+      [rSA, rSB, rSE].every((r) => tok(r?.vtt, "tkman-001")?.vida == null));
+    t("nenhum destinatário recebe hpManual bruto",
+      [rSA, rSB, rSE, rCriar].every((r) => { const tk = tok(r?.vtt, "tkman-001"); return tk && !("hpManual" in tk); }));
+
+    // edição e limpeza pelo mestre
+    const rUpd = await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tkman-001", hpManual: { atual: 12.5, maximo: 40 } } });
+    t("mestre edita HP manual", rUpd?.ok === true);
+    t("vida.hp reflete edição 12.5/40", tok(rUpd?.vtt, "tkman-001")?.vida?.hp?.atual === 12.5 && tok(rUpd?.vtt, "tkman-001")?.vida?.hp?.maximo === 40);
+    const rClear = await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tkman-001", hpManual: null } });
+    t("mestre limpa HP manual", rClear?.ok === true && tok(rClear?.vtt, "tkman-001")?.vida == null, JSON.stringify(tok(rClear?.vtt, "tkman-001")?.vida));
+
+    // token do jogador sem ficha: mestre define HP; jogador NÃO consegue
+    const rTkUser = await criarManual({ id: "tkman-002", userId: ids.j1 });
+    t("token manual do j1 criado", rTkUser?.ok === true);
+    const rHpM2 = await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tkman-002", hpManual: { atual: 10, maximo: 20 } } });
+    t("mestre define HP manual no token do jogador", rHpM2?.ok === true);
+    const rHpJ1 = await emitirCb(sA, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tkman-002", hpManual: { atual: 99, maximo: 99 } } });
+    t("jogador não altera HP nem no próprio token (rejeição explícita)", rHpJ1?.ok === false, JSON.stringify(rHpJ1).slice(0, 120));
+    const vDepoisJ1 = await sincronizar(sA);
+    const vDepoisMestre = await syncM();
+    t("vidaCompartilhada OFF: dono do token sem ficha recebe o próprio HP (paridade ficha)",
+      tok(vDepoisJ1?.vtt, "tkman-002")?.vida?.hp?.atual === 10
+        && tok(vDepoisJ1?.vtt, "tkman-002")?.vida?.hp?.maximo === 20);
+    t("mestre mantém autoridade e vê HP manual 10/20",
+      tok(vDepoisMestre?.vtt, "tkman-002")?.vida?.hp?.atual === 10
+        && tok(vDepoisMestre?.vtt, "tkman-002")?.vida?.hp?.maximo === 20);
+
+    // espectador read-only
+    const rHpE = await emitirCb(sE, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tkman-001", hpManual: { atual: 1, maximo: 2 } } });
+    t("espectador não altera HP manual", rHpE?.ok === false, JSON.stringify(rHpE).slice(0, 120));
+
+    // HP inválido — fail-closed, sem persistência
+    for (const [nome, hp] of [
+      ["máximo zero", { atual: 0, maximo: 0 }],
+      ["atual > máximo", { atual: 60, maximo: 50 }],
+      ["atual negativo", { atual: -1, maximo: 50 }],
+      ["NaN", { atual: NaN, maximo: 50 }],
+      ["texto", { atual: "30", maximo: 50 }],
+    ]) {
+      const r = await criarManual({ id: `tkbad-${nome.length}`, hpManual: hp });
+      t(`HP inválido rejeitado: ${nome}`, r?.ok === false, JSON.stringify(r).slice(0, 100));
+    }
+
+    // vincular ficha limpa hpManual na mesma mutação
+    await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tkman-001", hpManual: { atual: 20, maximo: 30 } } });
+    const rVinc = await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tkman-001", personagemId: PJ1 } });
+    t("vincular ficha aceito", rVinc?.ok === true, JSON.stringify(rVinc).slice(0, 140));
+    // PJ1 tem vida de ficha (110/150 com cfg — seção C já debitou 10) — não o manual 20/30
+    const vAposVinc = tok(rVinc?.vtt, "tkman-001")?.vida;
+    t("vida passa a vir da ficha (não do manual)", vAposVinc?.hp?.atual === 110, JSON.stringify(vAposVinc));
+
+    // criar já vinculado + hpManual → rejeitado
+    const rAmbos = await criarManual({ id: "tkamb-01", personagemId: PJ2, hpManual: { atual: 1, maximo: 2 } });
+    t("token com ficha + hpManual rejeitado", rAmbos?.ok === false, JSON.stringify(rAmbos).slice(0, 120));
+
+    // P3 mecânicos (#127 ordem 7180837385):
+    // personagemId + hpManual na mesma mutação → erro explícito, nada muda
+    const rAmbosUpd = await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "atualizar",
+      token: { id: "tkman-002", personagemId: PJ1, hpManual: { atual: 7, maximo: 9 } } });
+    t("atualizar personagemId+hpManual → rejeitado explícito", rAmbosUpd?.ok === false && JSON.stringify(rAmbosUpd).includes("HP manual"), JSON.stringify(rAmbosUpd).slice(0, 140));
+    const vAposAmbos = tok((await syncM())?.vtt, "tkman-002");
+    t("combinação rejeitada não gravou nada (sem ficha, hpManual 10/20 intacto)",
+      vAposAmbos && !vAposAmbos.personagemId && vAposAmbos.vida?.hp?.atual === 10);
+    // hpManual enviado a token JÁ vinculado → erro explícito (não descarte)
+    const rHpEmFicha = await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "atualizar",
+      token: { id: "tkpj1-aa11", hpManual: { atual: 1, maximo: 2 } } });
+    t("hpManual em token com ficha → rejeitado explícito", rHpEmFicha?.ok === false && JSON.stringify(rHpEmFicha).includes("HP manual"), JSON.stringify(rHpEmFicha).slice(0, 140));
+    // "mover" nunca muta HP — mestre e jogador
+    const rMoverHpM = await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "mover",
+      token: { id: "tkman-002", x: 0.5, y: 0.5, hpManual: { atual: 99, maximo: 99 } } });
+    t("mover com hpManual (mestre) → rejeitado", rMoverHpM?.ok === false && JSON.stringify(rMoverHpM).includes("HP"), JSON.stringify(rMoverHpM).slice(0, 140));
+    const rMoverHpJ = await emitirCb(sA, "mesa:vtt:token", { sessionId: sid, acao: "mover",
+      token: { id: "tkman-002", x: 0.6, y: 0.6, hpManual: { atual: 99, maximo: 99 } } });
+    t("mover com hpManual (jogador) → rejeitado", rMoverHpJ?.ok === false && JSON.stringify(rMoverHpJ).includes("HP"), JSON.stringify(rMoverHpJ).slice(0, 140));
+    const rMoverOk = await emitirCb(sA, "mesa:vtt:token", { sessionId: sid, acao: "mover",
+      token: { id: "tkman-002", x: 0.33, y: 0.44 } });
+    t("mover legítimo (só posição) segue ok", rMoverOk?.ok === true && tok(rMoverOk?.vtt, "tkman-002")?.x === 0.33);
+    // desvincular + hpManual na mesma mutação → permitido (estado final sem ficha)
+    await criar("tkp3-f01", { personagemId: PJNpc });
+    const rDesvinc = await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "atualizar",
+      token: { id: "tkp3-f01", personagemId: null, hpManual: { atual: 5, maximo: 9 } } });
+    t("desvincular+hpManual na mesma mutação → aceito", rDesvinc?.ok === true, JSON.stringify(rDesvinc).slice(0, 140));
+    t("vida passa a ser a manual 5/9 após desvincular",
+      tok(rDesvinc?.vtt, "tkp3-f01")?.vida?.hp?.atual === 5 && tok(rDesvinc?.vtt, "tkp3-f01")?.vida?.hp?.maximo === 9);
+
+    // persistência: hpManual fica em vtt_state; vida NUNCA é persistida
+    {
+      const db = abrirDb(BANCO);
+      const row = db.prepare("select vtt_state from sessions where id=?").get(sid);
+      db.close();
+      const bruto = JSON.parse(row.vtt_state);
+      const tks = bruto.tokens ?? [];
+      const tk002 = tks.find((x) => x.id === "tkman-002");
+      t("vtt_state persiste hpManual do token sem ficha", tk002?.hpManual?.atual === 10 && tk002?.hpManual?.maximo === 20, JSON.stringify(tk002?.hpManual));
+      const tk001 = tks.find((x) => x.id === "tkman-001");
+      t("hpManual removido do token que ganhou ficha", !("hpManual" in (tk001 ?? {})));
+      t("nenhum token persistido tem campo vida", tks.every((x) => !("vida" in x)));
+    }
+
+    // reconexão: novo socket recebe vida manual/hp correto
+    const sM2 = conectar(ids.cookieMestre);
+    await pronto(sM2);
+    const rEntrar2 = await emitirCb(sM2, "mesa:entrar", { sessionId: sid });
+    t("reconexão do mestre ok", rEntrar2?.ok === true);
+    const vRecon = rEntrar2?.sessao?.vttState ? JSON.parse(typeof rEntrar2.sessao.vttState === "string" ? rEntrar2.sessao.vttState : JSON.stringify(rEntrar2.sessao.vttState)) : null;
+    t("reconexão entrega vida da ficha no token revinculado", tok(vRecon, "tkman-001")?.vida?.hp?.atual === 110, JSON.stringify(tok(vRecon, "tkman-001")?.vida));
+
+    // HTTP: GET sessão entrega vttState filtrado com vida, sem hpManual
+    const det = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}`, { cookie: c.jogadores.jogador1.cookie });
+    const vttHttp = det.json?.sessao?.vttState;
+    const parsed = typeof vttHttp === "string" ? JSON.parse(vttHttp) : vttHttp;
+    const tkHttp = tok(parsed, "tkman-001");
+    t("HTTP entrega vida filtrada sem hpManual", !!tkHttp && !("hpManual" in tkHttp) && tkHttp.vida?.hp?.atual === 110, JSON.stringify(tkHttp?.vida));
+
+    // segunda sessão sem o token: nada vaza
+    const sess3 = await req(BASE, "POST", `/campaigns/${ids.camp}/sessoes`, { cookie: ids.cookieMestre, body: { name: "Mesa Sem Token" } });
+    const sid3 = sess3.json?.sessao?.id ?? sess3.json?.id;
+    const sA3 = conectar(c.jogadores.jogador1.cookie);
+    await pronto(sA3);
+    await emitirCb(sA3, "mesa:entrar", { sessionId: sid3 });
+    const rSync3 = await emitirCb(sA3, "mesa:vtt:sincronizar", { sessionId: sid3 });
+    t("sessão sem o token não recebe vida alguma dele", !tok(rSync3?.vtt, "tkman-001"), JSON.stringify((rSync3?.vtt?.tokens ?? []).length));
+
+    // Exercita o ramo em que a sessão contém APENAS token manual, sem
+    // qualquer personagemId. prepararVidaVtt ainda precisa carregar regras.
+    const sM3 = conectar(ids.cookieMestre);
+    await pronto(sM3);
+    const rEntrarM3 = await emitirCb(sM3, "mesa:entrar", { sessionId: sid3 });
+    t("mestre entra na sessão manual-only", rEntrarM3?.ok === true);
+    const rManualOnly = await emitirCb(sM3, "mesa:vtt:token", {
+      sessionId: sid3, acao: "criar",
+      token: { id: "tk-manual-only", nome: "Manual Only", cor: "#445566", x: 0.4, y: 0.4,
+        userId: ids.j1, hpManual: { atual: 9, maximo: 12 } },
+    });
+    t("cria token manual-only sem ficha", rManualOnly?.ok === true);
+    const rManualOnlyOff = await emitirCb(sA3, "mesa:vtt:sincronizar", { sessionId: sid3 });
+    const tkManualOnlyOff = tok(rManualOnlyOff?.vtt, "tk-manual-only");
+    t("manual-only OFF: dono recebe o próprio HP manual (paridade ficha), sem dado bruto",
+      !!tkManualOnlyOff && tkManualOnlyOff.vida?.hp?.atual === 9 && tkManualOnlyOff.vida?.hp?.maximo === 12
+        && !("hpManual" in tkManualOnlyOff));
+    // F20: o mesmo contrato OFF vale no GET HTTP da sessão manual-only —
+    // a sessão não tem nenhum personagemId vinculado.
+    const httpOnlyOff = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid3}`,
+      { cookie: c.jogadores.jogador1.cookie });
+    const httpOnlyOffVtt = typeof httpOnlyOff.json?.sessao?.vttState === "string"
+      ? JSON.parse(httpOnlyOff.json.sessao.vttState) : httpOnlyOff.json?.sessao?.vttState;
+    const tkHttpOnlyOff = tok(httpOnlyOffVtt, "tk-manual-only");
+    t("manual-only HTTP OFF: dono recebe vida.hp, nunca hpManual",
+      !!tkHttpOnlyOff && tkHttpOnlyOff.vida?.hp?.atual === 9 && tkHttpOnlyOff.vida?.hp?.maximo === 12
+        && !("hpManual" in tkHttpOnlyOff));
+    const cfgOnlyOn = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`,
+      { cookie: ids.cookieMestre, body: { vtt: { vidaCompartilhada: true } } });
+    t("ativa compartilhamento para sessão manual-only", cfgOnlyOn.status === 200);
+    const rManualOnlyOn = await emitirCb(sA3, "mesa:vtt:sincronizar", { sessionId: sid3 });
+    const tkManualOnlyOn = tok(rManualOnlyOn?.vtt, "tk-manual-only");
+    t("manual-only ON: jogador recebe HP projetado, sem dado bruto",
+      tkManualOnlyOn?.vida?.hp?.atual === 9 && tkManualOnlyOn?.vida?.hp?.maximo === 12
+        && !("hpManual" in tkManualOnlyOn));
+    const httpOnlyOn = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid3}`,
+      { cookie: c.jogadores.jogador1.cookie });
+    const httpOnlyOnVtt = typeof httpOnlyOn.json?.sessao?.vttState === "string"
+      ? JSON.parse(httpOnlyOn.json.sessao.vttState) : httpOnlyOn.json?.sessao?.vttState;
+    const tkHttpOnlyOn = tok(httpOnlyOnVtt, "tk-manual-only");
+    t("manual-only HTTP ON: jogador recebe vida.hp, nunca hpManual",
+      tkHttpOnlyOn?.vida?.hp?.atual === 9 && tkHttpOnlyOn?.vida?.hp?.maximo === 12
+        && !("hpManual" in tkHttpOnlyOn));
+    const httpOnlyOnM = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid3}`,
+      { cookie: ids.cookieMestre });
+    const httpOnlyOnMVtt = typeof httpOnlyOnM.json?.sessao?.vttState === "string"
+      ? JSON.parse(httpOnlyOnM.json.sessao.vttState) : httpOnlyOnM.json?.sessao?.vttState;
+    const tkHttpOnlyM = tok(httpOnlyOnMVtt, "tk-manual-only");
+    t("manual-only HTTP ON: mestre recebe vida.hp via GET",
+      tkHttpOnlyM?.vida?.hp?.maximo === 12 && !("hpManual" in (tkHttpOnlyM ?? {})));
+    const rMasterOnlyOff = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`,
+      { cookie: ids.cookieMestre, body: { vtt: { vidaCompartilhada: false } } });
+    t("restaura compartilhamento OFF ao final", rMasterOnlyOff.status === 200);
+  }
+
+  // ---------- J. HP manual × oculto/névoa (F19/#259) ----------
+  sec("J. HP manual — oculto e névoa não podem vazar vida");
+  {
+    // vidaCompartilhada ON prova que nem o compartilhamento total
+    // contorna o filtro canônico — oculto/névoa precedem a projeção.
+    const cfgJOn = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`,
+      { cookie: ids.cookieMestre, body: { vtt: { vidaCompartilhada: true } } });
+    t("J. ativa vidaCompartilhada para vetores oculto/névoa", cfgJOn.status === 200);
+
+    // 1) Token manual OCULTO: não-mestres não recebem o token — e
+    // hpManual jamais sai bruto em nenhum destinatário.
+    const rOc = await emitirCb(sM, "mesa:vtt:token", {
+      sessionId: sid, acao: "criar",
+      token: { id: "tkman-oc", nome: "Manual Oculto", cor: "#334455", x: 0.6, y: 0.6,
+        oculto: true, hpManual: { atual: 7, maximo: 9 } },
+    });
+    t("J. mestre cria token manual oculto", rOc?.ok === true, JSON.stringify(rOc).slice(0, 140));
+    const vMoc = await sincronizar(sM);
+    const tmOcM = tok(vMoc?.vtt, "tkman-oc");
+    t("J. mestre vê token oculto com vida.hp manual",
+      tmOcM?.vida?.hp?.atual === 7 && tmOcM?.vida?.hp?.maximo === 9 && !("hpManual" in tmOcM), JSON.stringify(tmOcM?.vida));
+    const [vJoc, vJoc2, vEoc] = await Promise.all([sincronizar(sA), sincronizar(sB), sincronizar(sE)]);
+    t("J. oculto: jogador1 não recebe o token manual",
+      tok(vJoc?.vtt, "tkman-oc") === undefined);
+    t("J. oculto: jogador2 não recebe o token manual",
+      tok(vJoc2?.vtt, "tkman-oc") === undefined);
+    t("J. oculto: espectador não recebe o token manual",
+      tok(vEoc?.vtt, "tkman-oc") === undefined);
+    const httpOc = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}`,
+      { cookie: c.jogadores.jogador1.cookie });
+    const httpOcVtt = typeof httpOc.json?.sessao?.vttState === "string"
+      ? JSON.parse(httpOc.json.sessao.vttState) : httpOc.json?.sessao?.vttState;
+    t("J. HTTP oculto: jogador não recebe token nem vida",
+      tok(httpOcVtt, "tkman-oc") === undefined);
+    const httpOcM = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}`,
+      { cookie: ids.cookieMestre });
+    const httpOcMVtt = typeof httpOcM.json?.sessao?.vttState === "string"
+      ? JSON.parse(httpOcM.json.sessao.vttState) : httpOcM.json?.sessao?.vttState;
+    const tmOcHttpM = tok(httpOcMVtt, "tkman-oc");
+    t("J. HTTP mestre recebe vida.hp, nunca hpManual",
+      tmOcHttpM?.vida?.hp?.maximo === 9 && !("hpManual" in (tmOcHttpM ?? {})));
+
+    // 2) Névoa ativa sem regiões: token manual fora da área visível
+    // some para não-mestres; tornar visível não contorna OFF/ON.
+    const rNv = await emitirCb(sM, "mesa:vtt:nevoa", { sessionId: sid, acao: "ocultarTudo" });
+    t("J. mestre ativa névoa sem regiões", rNv?.ok === true, JSON.stringify(rNv).slice(0, 120));
+    const rNvTok = await emitirCb(sM, "mesa:vtt:token", {
+      sessionId: sid, acao: "criar",
+      token: { id: "tkman-nv", nome: "Manual Nevoa", cor: "#556677", x: 0.5, y: 0.5,
+        hpManual: { atual: 5, maximo: 8 } },
+    });
+    t("J. mestre cria token manual sob névoa", rNvTok?.ok === true);
+    const [vNvA, vNvB, vNvE] = await Promise.all([sincronizar(sA), sincronizar(sB), sincronizar(sE)]);
+    t("J. névoa: jogador1 não recebe token manual fora da área",
+      tok(vNvA?.vtt, "tkman-nv") === undefined, `tokens=${(vNvA?.vtt?.tokens ?? []).map((x) => x.id).join(",")}`);
+    t("J. névoa: jogador2 não recebe token manual fora da área",
+      tok(vNvB?.vtt, "tkman-nv") === undefined);
+    t("J. névoa: espectador não recebe token manual fora da área",
+      tok(vNvE?.vtt, "tkman-nv") === undefined);
+    const vNvM = await sincronizar(sM);
+    const tmNvM = tok(vNvM?.vtt, "tkman-nv");
+    t("J. névoa: mestre segue vendo com vida.hp",
+      tmNvM?.vida?.hp?.atual === 5 && tmNvM?.vida?.hp?.maximo === 8 && !("hpManual" in tmNvM));
+
+    // O token manual do PRÓPRIO jogador permanece visível sob névoa
+    // (exceção do dono) — e a política ON decide se a vida aparece.
+    const tkUserNv = tok(vNvA?.vtt, "tkman-002");
+    t("J. névoa: jogador mantém o próprio token manual com vida",
+      !!tkUserNv && tkUserNv.vida?.hp?.maximo === 20, JSON.stringify(tkUserNv?.vida));
+
+    // revelarTudo: visível de novo — ON entrega vida.hp; OFF remove.
+    const rRv = await emitirCb(sM, "mesa:vtt:nevoa", { sessionId: sid, acao: "revelarTudo" });
+    t("J. mestre desativa névoa", rRv?.ok === true);
+    const vRvA = await sincronizar(sA);
+    t("J. visível com ON: jogador recebe vida.hp do token manual",
+      tok(vRvA?.vtt, "tkman-nv")?.vida?.hp?.maximo === 8);
+    const cfgJOff = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`,
+      { cookie: ids.cookieMestre, body: { vtt: { vidaCompartilhada: false } } });
+    t("J. volta vidaCompartilhada OFF", cfgJOff.status === 200);
+    const vRvOff = await sincronizar(sA);
+    const tkRvOff = tok(vRvOff?.vtt, "tkman-nv");
+    t("J. visível com OFF: token entregue sem vida (visibilidade ≠ compartilhamento)",
+      !!tkRvOff && tkRvOff.vida == null && !("hpManual" in tkRvOff));
+  }
 } catch (e) {
   fail++;
   console.log("  FALHOU exceção:", String(e?.stack ?? e).slice(0, 800));

@@ -558,13 +558,13 @@ try {
   t("mapa visível aos 4 participantes", true);
 
   // tokens: Ana (dono jogador1) e Beto (dono jogador2)
-  await pgM.locator(".vtt-controles input").fill("Ana");
+  await pgM.locator('.vtt-controles input[placeholder="Nome do token"]').fill("Ana");
   await pgM.locator(".vtt-controles select").selectOption(c.jogadores.jogador1.id);
   await pgM.locator(".vtt-controles button.primario").click();
   // espera o ACK limpar o formulário e o token chegar antes do próximo
-  await pgM.waitForFunction(() => (document.querySelector(".vtt-controles input")?.value ?? "") === "", null, { timeout: 8000 });
+  await pgM.waitForFunction(() => (document.querySelector('.vtt-controles input[placeholder="Nome do token"]')?.value ?? "") === "", null, { timeout: 8000 });
   await pgM.locator(".vtt-token").first().waitFor({ timeout: 8000 });
-  await pgM.locator(".vtt-controles input").fill("Beto");
+  await pgM.locator('.vtt-controles input[placeholder="Nome do token"]').fill("Beto");
   await pgM.locator(".vtt-controles select").selectOption(c.jogadores.jogador2.id);
   await pgM.locator(".vtt-controles button.primario").click();
   await pgM.waitForFunction(() => document.querySelectorAll(".vtt-token").length === 2, null, { timeout: 8000 });
