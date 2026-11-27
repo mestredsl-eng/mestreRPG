@@ -8,7 +8,7 @@
 // Protocolo:
 //   adquirir — ANTES de tocar no lock, resolve a porta efetiva do
 //     servidor com a MESMA precedência de servidor/src/config.ts
-//     (configuracao/servidor.json > MESTRE_PORTA > 3001) e sonda
+//     (MESTRE_PORTA > configuracao/servidor.json > 3001) e sonda
 //     /api/health: se já responde, sai com código 20 sem adquirir nada
 //     — cobre o caso do lock ter sido apagado externamente.
 //   Depois: criação atômica (open 'wx') de um arquivo de lock FORA
@@ -116,29 +116,33 @@ export function caminhoLock(dir, baseOverride) {
 /**
  * Porta efetiva do servidor — MESMA precedência de
  * servidor/src/config.ts:
- *   padrão = Number(MESTRE_PORTA) || 3001
- *   se configuracao/servidor.json existe e é JSON válido →
- *     json.porta ?? padrao.porta  (a porta do JSON prevalece)
- *   JSON ausente ou inválido → padrão.
+ *   envNum = Number(MESTRE_PORTA) || null   (inválida/ausente → null)
+ *   jsonPorta = servidor.json.porta se o arquivo existir, for JSON
+ *     válido e tiver o campo; JSON ausente/inválido → null
+ *   porta = envNum ?? jsonPorta ?? 3001
+ * Manter sincronizado com config.ts — divergência faz o lock sondar
+ * uma porta e o servidor escutar outra (ver contrato em
+ * teste-runtime-processos-298.mjs, seção C10).
  * Fail-closed: porta resolvida que não for inteiro 1..65535 é erro —
  * nunca assumir 3001 silenciosamente.
  * Retorno: { ok:true, porta, origem } ou { ok:false, motivo }.
  */
 export function resolverPortaServidor(cwd) {
-  const padrao = Number(process.env.MESTRE_PORTA) || PORTA_PADRAO;
-  const origemPadrao = Number(process.env.MESTRE_PORTA) ? "MESTRE_PORTA" : "padrao";
+  const envNum = Number(process.env.MESTRE_PORTA) || null;
   const arquivo = join(cwd, "configuracao", "servidor.json");
   let json = null;
   try {
     if (existsSync(arquivo)) json = JSON.parse(readFileSync(arquivo, "utf8"));
   } catch {
-    json = null; // inválido → padrão (config.ts avisa e usa padrões)
+    json = null; // inválido → ignorado (config.ts avisa e usa padrões)
   }
-  const temJson = json && typeof json === "object" && json.porta != null;
-  const porta = temJson ? json.porta : padrao;
-  const origem = temJson ? "servidor.json" : origemPadrao;
+  const jsonPorta = json && typeof json === "object" && json.porta != null ? json.porta : null;
+  // Cadeia || idêntica a config.ts: env inválida/ausente (NaN→null),
+  // json.porta falsy (0/""/false) e ausente caem no próximo degrau.
+  const porta = envNum || jsonPorta || PORTA_PADRAO;
+  const origem = envNum ? "MESTRE_PORTA" : (jsonPorta ? "servidor.json" : "padrao");
   if (!Number.isInteger(porta) || porta < 1 || porta > 65535) {
-    return { ok: false, motivo: `porta-invalida:${origem}=${String(json?.porta ?? process.env.MESTRE_PORTA)}` };
+    return { ok: false, motivo: `porta-invalida:${origem}=${String(jsonPorta ?? process.env.MESTRE_PORTA)}` };
   }
   return { ok: true, porta, origem };
 }
