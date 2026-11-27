@@ -24,27 +24,44 @@ Fora de escopo (fatias próprias): notícias/matérias W4/W5 (inclui gate
 D8 `profissao:jornalista`), classificados W6/W7, posts/perfil W9–W11,
 mensageiro privado, export/import D6, eventos de socket em tempo real.
 
-## Autorização — pilha fail-closed
+## Autorização — dois atores, fail-closed
 
-Toda rota de escrita exige, em ordem:
+Toda operação exige sessão autenticada e membership ativa na campanha,
+com `requirePapel("mestre","jogador")`. A autorização de escrita separa
+dois atores — não confundir permissão administrativa do Mestre com
+acesso diegético de personagem.
 
-1. `requirePapel("mestre","jogador")` + membership ativa na campanha
-   (padrão dos routers existentes; `espectador` fora — mesmo critério de
-   `personagemAutorizadoInternet`);
-2. Conta resolvida por `contaAutorizadaPara` — titularidade ATUAL via
-   `characters.membershipId → memberships.userId`, **sem bypass de
-   mestre** para ações de ownership. Transferência P7 é herdada
-   automaticamente (nova titular passa, anterior perde — sem migração);
-3. `internet_accounts.status = "ativa"`;
-4. Regra de ownership da tabela abaixo;
-5. Gate P5 cumulativo (`gateInternetDoPersonagem` /
-   `avaliarElegibilidadeInternet`) **em toda mutação**, inclusive
-   rascunho, edição de metadados, publicação, retirada, arquivamento,
-   restauração e moderação. Sem exceção por estado privado.
+**Ação em nome de personagem (jogador ou Mestre usando personagem):**
 
-Mestre nunca escreve conteúdo como se fosse autor: moderação é endpoint
-separado, auditado com `papel: "mestre"`, e jamais altera `corpo`,
-`titulo` ou `nome`/`descricao` (D14).
+1. Resolver a conta vinculada ao personagem com
+   `contaAutorizadaPara(contaId, userId)` em cada request.
+2. Revalidar conta `ativa`, campanha/personagem coerentes, personagem
+   não arquivado, membership ativa e titularidade ATUAL via
+   `characters.membershipId → memberships.userId` (P7).
+3. Revalidar gate P5 cumulativo (dispositivo + requisito de ficha
+   configurado) em toda mutação: criar/editar site, criar/editar página
+   e publicar/retirar/arquivar/restaurar como autor.
+4. Aplicar ownership/autoria: dono administra metadados do site;
+   somente dono cria páginas no site próprio; somente autor edita o
+   conteúdo de sua página.
+
+**Ação administrativa do Mestre (moderação):**
+
+- Validar membership ativa com papel `mestre` por
+  `mestreLeitorDaCampanha(campaignId, userId)`; não exige conta de
+  personagem nem dispositivo, pois não é uma ação diegética.
+- Permitir somente arquivar/restaurar site ou página, sempre com
+  auditoria atômica. O Mestre não cria site/página por privilégio
+  administrativo, não edita metadados em nome do dono e nunca
+  reescreve `corpo`, `titulo` ou autoria de conteúdo alheio.
+- Não permitir que uma chamada alterne implicitamente entre ator
+  Mestre e ator personagem; cada rota identifica e audita o papel usado.
+
+Nenhuma rota confia em `ownerContaId`, `autorContaId`, `userId`,
+`characterId`, papel ou elegibilidade enviados pelo cliente. Toda
+falha de autenticação, membership, ownership, autoria ou gate é negada
+antes da mutação. Transferência P7 é herdada automaticamente para o
+ator personagem: novo titular passa, anterior perde acesso à conta.
 
 ## Matriz de permissões (D14)
 
@@ -240,25 +257,27 @@ Limites de tamanho (valores de contrato): `titulo` ≤ 200 chars,
 `corpo` ≤ 50.000 chars, `nome` de site ≤ 120, `descricao` ≤ 1.000,
 `slug` conforme regex acima. Excedido → `400 dados_invalidos`.
 
-## Gate P5 — obrigatório em toda mutação
+## Gate P5 — obrigatório em toda mutação de personagem
 
-`contaAutorizadaPara(contaId, userId)` é a fonte server-side de
-autorização e deve ser executada novamente em **cada operação de
-escrita**. Ela revalida conta ativa, personagem não arquivado,
-membership ativa, titularidade atual após P7 e elegibilidade canônica
-(dispositivo + requisito de ficha configurado). Não reutilizar um
-resultado anterior nem confiar em um gate calculado pelo cliente.
+`contaAutorizadaPara(contaId, userId)` é a fonte server-side da
+autorização diegética e deve ser executada novamente em **cada operação
+de escrita feita em nome de personagem**. Ela revalida conta ativa,
+personagem não arquivado, membership ativa, titularidade atual após P7
+e elegibilidade canônica (dispositivo + requisito de ficha configurado).
+Não reutilizar resultado anterior nem confiar em gate calculado pelo
+cliente.
 
-A exigência cobre criação e edição de site, criação de rascunho ou página
-publicada, edição de conteúdo, publicação, retirada, arquivamento,
-restauração e ações de moderação. Rascunho não é uma rota de escrita
+A exigência cobre criação/edição de site, criação de rascunho ou página
+publicada, edição de conteúdo, publicação, retirada e ações de arquivo/
+restauração feitas pelo próprio titular/autor. Rascunho não é uma rota
 privilegiada: perder dispositivo, requisito ou titularidade bloqueia
 também a manutenção do rascunho até a elegibilidade ser recuperada.
 
-O papel de Mestre amplia somente as ações de moderação expressamente
-permitidas (arquivar/restaurar); não permite reescrever conteúdo nem
-contornar a validação de autorização da camada diegética. Toda falha de
-autorização/elegibilidade é negada antes da mutação e da auditoria.
+**Exceção administrativa estrita:** moderação feita como Mestre usa
+membership ativa de papel `mestre` via `mestreLeitorDaCampanha`, sem
+conta de personagem; limita-se a arquivar/restaurar site ou página.
+Essa exceção não autoriza criar sites/páginas, editar metadados ou
+reescrever conteúdo. O evento registra `papel: "mestre"`.
 
 ## Invariantes preservadas (testes devem provar)
 
