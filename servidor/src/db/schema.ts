@@ -908,6 +908,50 @@ export const internetMessages = sqliteTable("internet_messages", {
   index("internet_msg_campaign_idx").on(t.campaignId, t.createdAt),
 ]);
 
+// Internet pública 1.1.2 (#365, fatia W1/W3 — somente leitura): sites
+// e páginas de campanha. Site = espaço nomeado do personagem
+// (ownerContaId administra); página = conteúdo publicado derivado no
+// menu do site (D13-a). Fronteira de campanha absoluta (D1) e sites
+// descobríveis por todos os elegíveis da campanha (D2) — conteúdo com
+// escopo `contatos` NÃO existe nesta fatia. `campaignId`
+// desnormalizado em páginas para escopo sem join (mesmo padrão de
+// internet_messages). Criação/edição depende de decisão de produto
+// pendente — nesta fatia as tabelas só são lidas.
+export const internetSites = sqliteTable("internet_sites", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  slug: text("slug").notNull(),
+  nome: text("nome").notNull(),
+  descricao: text("descricao"),
+  ownerContaId: text("owner_conta_id").notNull().references(() => internetAccounts.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("ativo"), // ativo|arquivado
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex("internet_sites_slug_idx").on(t.campaignId, t.slug),
+  index("internet_sites_campaign_idx").on(t.campaignId),
+]);
+
+export const internetPages = sqliteTable("internet_pages", {
+  id: id(),
+  siteId: text("site_id").notNull().references(() => internetSites.id, { onDelete: "cascade" }),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  slug: text("slug").notNull(),
+  titulo: text("titulo").notNull(),
+  corpo: text("corpo").notNull(),
+  formato: text("formato").notNull().default("texto"), // texto|markdown-subset
+  status: text("status").notNull().default("publicado"), // rascunho|publicado|retirado|arquivado
+  version: integer("version").notNull().default(1),
+  autorContaId: text("autor_conta_id").notNull().references(() => internetAccounts.id, { onDelete: "cascade" }),
+  publishedAt: integer("published_at", { mode: "timestamp_ms" }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex("internet_pages_slug_idx").on(t.siteId, t.slug),
+  index("internet_pages_site_idx").on(t.siteId, t.status),
+  index("internet_pages_campaign_idx").on(t.campaignId),
+]);
+
 // Transferência de personagem (P7, contrato #349): convite do titular
 // atual + aceite explícito do novo titular. No máximo 1 `pendente` por
 // personagem (índice parcial). Conta diegética e histórico acompanham

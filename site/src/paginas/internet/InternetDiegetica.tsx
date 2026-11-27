@@ -15,14 +15,15 @@ import type { ConexaoRealtime, ConversaResumo } from "./tipos";
 import { aoTeclarAbas, AbaBotao } from "./abas";
 import ContaInternet from "./ContaInternet";
 import Contatos from "./Contatos";
+import Explorar from "./Explorar";
 import Mensagens from "./Mensagens";
 import Conversa from "./Conversa";
 import "./estilos-internet.css";
 
-type Aba = "mensagens" | "conta";
+type Aba = "mensagens" | "explorar" | "conta";
 type SubAbaMensagens = "caixa" | "contatos";
 
-const ABAS_PRINCIPAIS = ["mensagens", "conta"] as const;
+const ABAS_PRINCIPAIS = ["mensagens", "explorar", "conta"] as const;
 const SUBABAS_MENSAGENS = ["caixa", "contatos"] as const;
 
 interface ConversaAberta {
@@ -34,9 +35,14 @@ interface ConversaAberta {
 export default function InternetDiegetica({
   adaptador = adaptadorInternetIndisponivel,
   conexao = "conectado",
+  campaignId,
 }: {
   adaptador?: AdaptadorInternet;
   conexao?: ConexaoRealtime;
+  /** Necessário para a camada pública (Explorar, #365): endpoints
+   *  `/internet/sites*` são por campanha. Sem ele a aba Explorar não
+   *  renderiza conteúdo — fail-closed. */
+  campaignId?: string;
 }) {
   const [aba, setAba] = useState<Aba>("mensagens");
   const [subAba, setSubAba] = useState<SubAbaMensagens>("caixa");
@@ -65,8 +71,19 @@ export default function InternetDiegetica({
         onKeyDown={(e) => aoTeclarAbas(e, [...ABAS_PRINCIPAIS], aba, (id) => { setAba(id as Aba); setConversa(null); })}
       >
         <AbaBotao id="mensagens" rotulo="Mensagens" ativo={aba === "mensagens"} controles="painel-mensagens" aoClicar={() => { setAba("mensagens"); setConversa(null); }} />
+        <AbaBotao id="explorar" rotulo="Explorar" ativo={aba === "explorar"} controles="painel-explorar" aoClicar={() => { setAba("explorar"); setConversa(null); }} />
         <AbaBotao id="conta" rotulo="Conta" ativo={aba === "conta"} controles="painel-conta" aoClicar={() => { setAba("conta"); setConversa(null); }} />
       </div>
+
+      {aba === "explorar" && (
+        <div role="tabpanel" id="painel-explorar" aria-labelledby="aba-explorar">
+          {campaignId ? (
+            <Explorar campaignId={campaignId} />
+          ) : (
+            <p className="meta">A camada pública não está disponível neste contexto.</p>
+          )}
+        </div>
+      )}
 
       {aba === "conta" ? (
         <div role="tabpanel" id="painel-conta" aria-labelledby="aba-conta">

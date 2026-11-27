@@ -406,7 +406,7 @@ export default function Internet({ characterId, campaignId, itemInicial, aoItemC
           {/* Internet diegética (#352): mensagens/conta/contatos sobre o
               contrato F2/F3. Conta ausente e falhas de API viram estados
               honestos dentro do módulo — nunca dados simulados. */}
-          <InternetDiegetica adaptador={adaptadorInternet} conexao={conexaoRede} />
+          <InternetDiegetica adaptador={adaptadorInternet} conexao={conexaoRede} campaignId={campaignId} />
         </div>
       )}
 

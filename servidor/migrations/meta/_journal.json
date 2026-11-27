@@ -302,6 +302,13 @@
       "when": 1795762198287,
       "tag": "0042_panoramic_silverclaw",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1795787658241,
+      "tag": "0043_demonic_zombie",
+      "breakpoints": true
     }
   ]
 }

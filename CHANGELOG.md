@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Novidades
+
+- **Internet pública — Explorar (W1/W3, #365):** diretório somente-leitura dos sites da campanha dentro da camada diegética (Internet → Rede → Explorar), com busca por prefixo, paginação keyset, detalhe de site com menu derivado das páginas publicadas e leitura de página — estados de carregamento, erro, vazio e "indisponível" honestos (migração 0043: `internet_sites` + `internet_pages`).
+
+### Integridade e segurança
+
+- **Gate do leitor público fail-closed:** toda leitura exige conta Internet autorizada (titularidade + perícia/dispositivo revalidados a cada chamada) ou papel mestre na campanha; sites/páginas de outra campanha e conteúdo não publicado respondem 404 idêntico a inexistente (anti-enumeração).
+
 ## [1.1.1] - 2026-11-26
 
 ### Novidades
