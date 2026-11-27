@@ -1,6 +1,8 @@
 # Suplemento UX — decisões DP-1…DP-9 (#366, contrato v2.6)
 
-**Status**: documentação de fechamento — PR #371 permanece **Draft**.
+**Status**: DP-1…DP-9 **TODAS DECIDIDAS** pelo proprietário em #365
+(`comentário 7220007287`, 27/11 — "aceito é fogo no parquinho! arroxa").
+Este suplemento registra o fechamento; PR #371 permanece **Draft**.
 **Base**: `ESPECIFICACAO.md` @ `4e08cb8` + contrato v2.6 (#365, APROVADO
 INTERMEDIÁRIO) + pacote de deliberação DP-1…DP-9 v2.7 do PAI (#365,
 14:58 — recomendações idênticas às aqui descritas) + matriz de QA (#369). Nenhuma tela paralela; tudo dentro do
@@ -12,14 +14,14 @@ módulo Rede → Explorar, reutilizando `abas.tsx`, `estados.tsx`,
 | DP | Tema | Estado | Telas/controles/estados que mudam conforme a decisão |
 |----|------|--------|------------------------------------------------------|
 | **DP-1** | Trilha de desanonimização admin | **DECIDIDA (fechada)** | Nenhuma superfície nova. A consulta excepcional de identidade anônima é backend/admin plataforma — **a UI do jogador nunca exibe** que houve consulta, justificativa ou auditoria. Wireframe não desenha nada |
-| **DP-2** | Prazo de contestação | Recomendação PAI v2.7 **(a) 7 dias** | W7/W5: estado "removido" do autor ganha contador "contestar até DD/MM"; após o prazo, ação some. Se prazo for outro, só o número muda — estrutura congelável |
-| **DP-3** | Limiar de auto-remoção | Recomendação PAI v2.7 **(a) ≥2 denúncias distintas OU 1+`denunciaGrave`** | Contador de denúncias **nunca** visível ao autor (anti-oráculo). Afeta apenas o tempo até "removido pelo sistema" aparecer — UX idêntica, timing diferente |
-| **DP-4** | Perfil segue o personagem (`characterId`) | Recomendação PAI v2.7 **(a)** | W9/W10 após transferência P7: perfil migra com o personagem; novo titular herda edição. Se decidisse "segue conta", W9 mostraria perfil órfão — **recomendo a opção do contrato** |
-| **DP-5** | Perfil de morto somente-leitura | Recomendação PAI v2.7 **(a)** (converge INTERMEDIÁRIO, fecha TN-04) | W9 de morto: campos de edição **desabilitados com motivo** "personagem falecido"; publicações do morto não editáveis/apagáveis pelo titular. Leitura normal |
-| **DP-6** | Tipos com anonimato | Recomendação PAI v2.7 **(a): `classificado`+`anuncio` sim; `noticia`, `post_perfil`, páginas não** | W8: opção "Anônimo" aparece **somente** quando o tipo selecionado permite; nos demais tipos o seletor nem renderiza a opção (não é disabled — é ausente, pois a regra é do tipo, não do usuário). `pseudoNome` é campo próprio da publicação, não `displayName` do perfil |
-| **DP-7** | Avatar via pipeline `arquivos` | Recomendação PAI v2.7 **(a)** | W10/W9: campo avatar = upload pelo pipeline existente (mesma moderação/ownership dos arquivos); estados de upload (enviando/erro/tamanho) reutilizam componentes de arquivo já homologados |
-| **DP-8** | Reversão de morte (ressurreição) | Recomendação PAI v2.7 **(a)** (v2.6) | W9: após reversão auditada, perfil **reabre escrita**; estado "personagem falecido" some; notícia antiga **permanece** (fato consumado); correção de causa = nova publicação, nunca edição retroativa |
-| **DP-9** | Causa enriquecida pós-morte | Recomendação PAI v2.7 **(a)** (v2.6) | Não cria tela nova: mestre publica **nova** matéria/notícia complementando a causa; a notícia automática original não é editável por ninguém |
+| **DP-2** | Prazo de contestação | **ACEITA (7220007287): 7 dias** | W7/W5: estado "removido" do autor ganha contador "contestar até DD/MM"; após o prazo, ação some. Se prazo for outro, só o número muda — estrutura congelável |
+| **DP-3** | Limiar de auto-remoção | **ACEITA (7220007287): ≥2 denúncias de contas distintas OU 1 `denunciaGrave`** | Contador de denúncias **nunca** visível ao autor (anti-oráculo). Afeta apenas o tempo até "removido pelo sistema" aparecer — UX idêntica, timing diferente |
+| **DP-4** | Perfil segue o personagem (`characterId`) | **ACEITA (7220007287): perfil vinculado ao `characterId`, acompanha o personagem** | W9/W10 após transferência P7: perfil migra com o personagem; novo titular herda edição. Se decidisse "segue conta", W9 mostraria perfil órfão — **recomendo a opção do contrato** |
+| **DP-5** | Perfil de morto somente-leitura | **ACEITA (7220007287): somente-leitura enquanto houver morte ativa, enforcement server-side** | W9 de morto: campos de edição **desabilitados com motivo** "personagem falecido"; publicações do morto não editáveis/apagáveis pelo titular. Leitura normal |
+| **DP-6** | Tipos com anonimato | **ACEITA (7220007287): anonimato somente em `classificado` e `anuncio`; nunca em notícia, página/site ou post de perfil** | W8: opção "Anônimo" aparece **somente** quando o tipo selecionado permite; nos demais tipos o seletor nem renderiza a opção (não é disabled — é ausente, pois a regra é do tipo, não do usuário). `pseudoNome` é campo próprio da publicação, não `displayName` do perfil |
+| **DP-7** | Avatar via pipeline `arquivos` | **ACEITA (7220007287): avatar usa o pipeline de arquivos existente, sem armazenamento paralelo** | W10/W9: campo avatar = upload pelo pipeline existente (mesma moderação/ownership dos arquivos); estados de upload (enviando/erro/tamanho) reutilizam componentes de arquivo já homologados |
+| **DP-8** | Reversão de morte (ressurreição) | **ACEITA (7220007287): somente ação mestre auditada `personagem_ressuscitado`; `revertidaEm`, épocas/histórico preservados, notícia não apagada** | W9: após reversão auditada, perfil **reabre escrita**; estado "personagem falecido" some; notícia antiga **permanece** (fato consumado); correção de causa = nova publicação, nunca edição retroativa |
+| **DP-9** | Causa enriquecida pós-morte | **ACEITA (7220007287): correção só por nova publicação; nunca editar `__morte.causa` nem a notícia automática** | Não cria tela nova: mestre publica **nova** matéria/notícia complementando a causa; a notícia automática original não é editável por ninguém |
 
 **Observação INTERMEDIÁRIO (DP-8 dele, proposta distinta)**: "mestre perde
 retirada preventiva" — coerente com o fluxo atual (denúncia→remoção
@@ -32,20 +34,20 @@ como dependência de deliberação, não implementado.
 | Item | Estado |
 |------|--------|
 | DP-1 trilha admin | **DECIDIDA** — sem UI |
-| DP-2 prazo contestação | Recomendação 7d — muda só número no W7/W5 |
-| DP-3 limiar denúncia | Recomendação ≥2/1+grave — muda só timing, não layout |
-| DP-4 perfil→personagem | Recomendação contrato — afeta W9 pós-P7 |
-| DP-5 morto somente-leitura | Recomendação convergente — afeta W9/W8 |
-| DP-6 anonimato por tipo | Recomendação — afeta seletor W8 |
-| DP-7 avatar pipeline | Recomendação — afeta W10/W9 |
-| DP-8 reversão morte | Recomendação v2.6 — afeta W9 |
-| DP-9 causa pós-morte | Recomendação v2.6 — sem tela nova |
+| DP-2 prazo contestação | **ACEITA — 7 dias** |
+| DP-3 limiar denúncia | **ACEITA — ≥2 distintas ou 1+`denunciaGrave`** |
+| DP-4 perfil→personagem | **ACEITA — `characterId`** |
+| DP-5 morto somente-leitura | **ACEITA — somente-leitura com morte ativa** |
+| DP-6 anonimato por tipo | **ACEITA — só `classificado`/`anuncio`** |
+| DP-7 avatar pipeline | **ACEITA — pipeline `arquivos` existente** |
+| DP-8 reversão morte | **ACEITA — `personagem_ressuscitado` auditada** |
+| DP-9 causa pós-morte | **ACEITA — só nova publicação** |
 
-**Decisões que bloqueiam o congelamento dos wireframes**: DP-2 (número no
-estado de contestação), DP-5 (campos editáveis vs. somente-leitura no W9 de
-morto), DP-6 (presença da opção Anônimo no W8 por tipo). DP-3, DP-4, DP-7,
-DP-8, DP-9 têm recomendação convergente e **não mudam estrutura** — podem
-congelar com a recomendação e ajustar número/regra depois.
+**Nenhuma pendência de produto restante**: todas as DP foram aceitas
+integralmente em #365 `7220007287` (27/11). Os wireframes podem congelar
+com os valores decididos — DP-2 fixa o número 7d no estado de
+contestação; DP-5 fixa somente-leitura no W9 de morto; DP-6 fixa a
+presença/ausência da opção Anônimo por tipo no W8.
 
 ## 3. Matriz de estados — denúncia/contestação/remoção (contrato v2.6)
 
