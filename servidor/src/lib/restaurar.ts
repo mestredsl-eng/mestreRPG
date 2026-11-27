@@ -7,8 +7,13 @@ import {
   ruleSets, ruleDefinitions, itemTemplates, inventoryEntries, equipmentEntries, vehicles,
   financialAccounts, moneyTransactions, shops, shopManagers, shopOffers, shopOrders,
   sessions, turns, chatMessages, rolls, tests, notes, files, folders, noteAttachments,
-  users,
+  users, internetPublicacoes, auditLogs,
+  internetAccounts, internetContacts, internetConversations,
+  internetDenuncias, internetMessages, internetPages,
+  internetParticipantes, internetSites,
 } from "../db/schema.js";
+import { avaliarMorte, noticiaMorteTexto, CHAVE_MORTE } from "./morte.js";
+import { lerHp } from "./vida.js";
 import type { EstadoCampanha } from "./estado.js";
 import { obterChaveAssinatura } from "./assinatura-xp.js";
 import {
@@ -140,6 +145,20 @@ function acumulou(r: SaneamentoPersonagem): boolean {
  * passam "interna" e preservam os metadados reservados integralmente.
  * Retorna o RelatorioSaneamento (vazio quando origem="interna").
  */
+/** Último evento de HP negativo do histórico saneado — aproximação do
+ *  evento letal para datar a epoch de morte importada (em/causa). */
+function eventoLetalHp(d: Record<string, unknown>): { em: string; causa: string | null } | null {
+  const hp = lerHp(d);
+  if (!hp) return null;
+  for (let i = hp.historico.length - 1; i >= 0; i--) {
+    const e = hp.historico[i];
+    if (typeof e.quantidade === "number" && e.quantidade < 0 && typeof e.em === "string") {
+      return { em: e.em, causa: typeof e.motivo === "string" ? e.motivo : null };
+    }
+  }
+  return null;
+}
+
 export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: OrigemEstado; chaveAssinatura?: Buffer | null; campanhaIdOrigem?: string | null } = {}): RelatorioSaneamento {
   const origem: OrigemEstado = opts.origem ?? "externa";
   const rel = relatorioSaneamentoVazio(origem);
@@ -152,6 +171,12 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: Or
     for (const r of chars) removerCredenciaisTransporte(r);
   }
 
+  // __morte é server-managed (Internet pública v2.6 + DP-8/9): pacote
+  // externo não forja epochs — descartadas e re-derivadas do __hp
+  // saneado. HP≤0 ⇒ epoch + notícia de sistema na mesma tx (apenas
+  // primeira morte da ficha). Snapshots internos (origem='interna')
+  // não passam por aqui — estado confiável preservado integralmente.
+  const mortesImportadas: { charId: string; nome: string; cid: string; em: string; causa: string | null }[] = [];
   if (origem === "externa" && chars.length) {
     // autoria: autorId precisa existir nesta instalação para manter o nome
     const autores = new Map<string, string | null>();
@@ -169,6 +194,32 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: Or
       rep.personagemId = String(row.id ?? "");
       rep.nome = typeof row.name === "string" ? row.name : null;
       sanearPersonagemImportado(row, ctx, rep);
+      const dadosRow = row.data;
+      if (dadosRow && typeof dadosRow === "object" && !Array.isArray(dadosRow)) {
+        const d = dadosRow as Record<string, unknown>;
+        delete d[CHAVE_MORTE];
+        const hpAtual = lerHp(d)?.atual ?? null;
+        if (hpAtual !== null && hpAtual <= 0) {
+          const letal = eventoLetalHp(d);
+          const r = avaliarMorte(d, {
+            hpAtual,
+            em: letal?.em ?? new Date().toISOString(),
+            causa: letal?.causa ?? null,
+          });
+          if (r.morteNova) {
+            row.data = r.dados;
+            if (r.primeiraMorte) {
+              mortesImportadas.push({
+                charId: String(row.id ?? ""),
+                nome: String(row.name ?? "Personagem"),
+                cid: String(row.campaignId ?? ""),
+                em: r.morteNova.em,
+                causa: r.morteNova.causa ?? null,
+              });
+            }
+          }
+        }
+      }
       if (!acumulou(rep)) continue;
       rel.personagens.push(rep);
       const t = rel.totais as TotaisSaneamento;
@@ -197,6 +248,30 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: Or
   inserir(tx, sheetTemplates, dados.sheetTemplates);
   inserir(tx, sheetVersions, dados.sheetVersions);
   inserir(tx, characters, dados.characters);
+  // Notícias automáticas de morte geradas pela re-derivação de __morte
+  // (somente origem externa — ver bloco de saneamento acima). Na mesma
+  // tx da importação; publicadoEm = instante letal do histórico.
+  for (const m of mortesImportadas) {
+    if (!m.charId || !m.cid) continue;
+    const { titulo, corpo } = noticiaMorteTexto(m.nome, m.causa);
+    const pubId = crypto.randomUUID();
+    const emDate = new Date(m.em);
+    const agora = new Date();
+    tx.insert(internetPublicacoes).values({
+      id: pubId, campaignId: m.cid, tipo: "noticia", titulo, corpo,
+      formato: "texto", status: "publicado", visibilidade: "campanha",
+      autorModo: "identificado", autorContaId: null, origem: "sistema",
+      fonteRef: `morte:${m.charId}`, personagemId: m.charId,
+      publicadoEm: Number.isNaN(emDate.getTime()) ? agora : emDate,
+      createdAt: agora, updatedAt: agora,
+    }).run();
+    tx.insert(auditLogs).values({
+      id: crypto.randomUUID(), actorId: null, campaignId: m.cid, guildId: null,
+      action: "personagem_morreu",
+      detail: { characterId: m.charId, publicacaoId: pubId, morteEm: m.em, origem: "importacao" },
+      createdAt: agora,
+    }).run();
+  }
   inserir(tx, characterFields, dados.characterFields);
   inserir(tx, ruleSets, dados.ruleSets);
   inserir(tx, ruleDefinitions, dados.ruleDefinitions);
@@ -282,6 +357,23 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
     limpar(notes, eq(notes.campaignId, campaignId));
     limpar(files, eq(files.campaignId, campaignId));
     limpar(folders, eq(folders.campaignId, campaignId));
+    // Domínio Internet diegética/pública (1.1.1/1.1.2): o pacote de
+    // exportação NÃO carrega estas tabelas (P9; export do domínio
+    // público é decisão D6 pendente). Sem a limpeza, contas/personagens
+    // referenciados bloqueiam o delete de characters por FK — e o
+    // estado restaurado fica incoerente. Ordem filhas→pais.
+    limpar(internetDenuncias, eq(internetDenuncias.campaignId, campaignId));
+    limpar(internetPublicacoes, eq(internetPublicacoes.campaignId, campaignId));
+    limpar(internetMessages, eq(internetMessages.campaignId, campaignId));
+    // participantes não têm campaign_id — resolve via conversas da campanha
+    const convIds = tx.select({ id: internetConversations.id }).from(internetConversations)
+      .where(eq(internetConversations.campaignId, campaignId)).all().map((r) => r.id);
+    if (convIds.length) limpar(internetParticipantes, inArray(internetParticipantes.conversaId, convIds));
+    limpar(internetConversations, eq(internetConversations.campaignId, campaignId));
+    limpar(internetContacts, eq(internetContacts.campaignId, campaignId));
+    limpar(internetPages, eq(internetPages.campaignId, campaignId));
+    limpar(internetSites, eq(internetSites.campaignId, campaignId));
+    limpar(internetAccounts, eq(internetAccounts.campaignId, campaignId));
     limpar(characters, eq(characters.campaignId, campaignId));
     if (tplIds.length) limpar(sheetVersions, inArray(sheetVersions.templateId, tplIds));
     limpar(sheetTemplates, eq(sheetTemplates.campaignId, campaignId));

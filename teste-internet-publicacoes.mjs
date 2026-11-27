@@ -316,6 +316,38 @@ try {
   const mortes2 = JSON.parse(dbM2.prepare("select data from characters where id=?").get(charJ1).data).__morte;
   t("__morte tem 2 epochs (vigente + revertida)", mortes2.length === 2, JSON.stringify(mortes2.map((m) => !!m.revertidaEm)));
   dbM2.close();
+
+  // ================= IMPORTAÇÃO — __morte re-derivada (v2.6) =========
+  sec("I. Importação — morte re-derivada do __hp saneado");
+
+  // exporta a campanha (charJ1 está morto: hp≤0, __morte com 2 epochs)
+  const exp = await req(BASE, "GET", `/campaigns/${campId}/exportar`, { cookie: C.cookieMestre });
+  t("exportação 200", exp.status === 200, `status=${exp.status}`);
+  const pacote = exp.json;
+  // modo "substituir" sobre a MESMA campanha (mesma instalação — ids do
+  // pacote já existem; "nova" exigiria instalação limpa). origem externa
+  // ⇒ __morte strippada e re-derivada do __hp saneado.
+  const charVivoPkg = pacote.estado.characters.find((c) => c.name === "Beto Foca");
+  charVivoPkg.data = { ...(charVivoPkg.data ?? {}), __morte: [{ em: "2099-01-01T00:00:00.000Z" }] };
+
+  const imp = await req(BASE, "POST", "/campaigns/importar", {
+    cookie: C.cookieMestre,
+    body: { pacote, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+  });
+  t("importação substituir → 200", imp.status === 200, JSON.stringify(imp.json).slice(0, 200));
+
+  const dbImp = abrirDb(BANCO);
+  const charImpMorto = dbImp.prepare("select id, data from characters where campaign_id=? and name='Ada Foca'").get(campId);
+  const mortesImp = charImpMorto ? JSON.parse(charImpMorto.data).__morte : null;
+  t("morto reimportado: __morte re-derivada com 1 epoch", Array.isArray(mortesImp) && mortesImp.length === 1, JSON.stringify(mortesImp));
+  const charImpVivo = dbImp.prepare("select data from characters where campaign_id=? and name='Beto Foca'").get(campId);
+  const mortesImpVivo = charImpVivo ? JSON.parse(charImpVivo.data).__morte : "ausente";
+  t("__morte forjado em vivo é removido", mortesImpVivo === undefined || mortesImpVivo === null || (Array.isArray(mortesImpVivo) && mortesImpVivo.length === 0), JSON.stringify(mortesImpVivo));
+  // substituir zerou o domínio Internet (pacote não o carrega) e a
+  // re-derivação regenerou exatamente 1 notícia para a morte vigente
+  const noticiaImp = dbImp.prepare("select * from internet_publicacoes where campaign_id=? and personagem_id=? and origem='sistema'").all(campId, charImpMorto?.id);
+  t("notícia de morte regenerada na reimportação", noticiaImp.length === 1, `veio ${noticiaImp.length}`);
+  dbImp.close();
 } finally {
   if (proc) await encerrarServidor(proc);
   console.log(`\n${pass} ok, ${fail} falhas`);
