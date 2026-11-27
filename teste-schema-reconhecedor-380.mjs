@@ -125,10 +125,13 @@ const comDb = (dbPath, fn) => {
 // ---------- sonda do reconhecedor (adaptador) ----------
 // Escreve um probe .ts descartável que importa o módulo configurado e
 // imprime RESULT:<json>. Contrato: reconhecerSchema(db, migDir).
-const PROBE = join(BASE, "probe-380.ts");
+// .mts: fora do pacote, tsx compilava .ts como CJS e o top-level await
+// quebrava a sonda ("Transform failed ... cjs output format").
+const PROBE = join(BASE, "probe-380.mts");
 writeFileSync(PROBE, `
-import { pathToFileURL } from "node:url";
-const mod = await import(pathToFileURL(process.env.MESTRE_MOD_380!).href);
+// MESTRE_MOD_380 já chega como file URL (pathToFileURL no spawn) —
+// importar direto; pathToFileURL de novo gerava "file:///...file:/...".
+const mod = await import(process.env.MESTRE_MOD_380!);
 const fn = mod.reconhecerSchema ?? mod.default;
 const r = await fn(process.argv[2], process.argv[3]);
 console.log("RESULT:" + JSON.stringify(r ?? null));
