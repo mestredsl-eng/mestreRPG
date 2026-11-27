@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import { getDb } from "../db/index.js";
-import { characters, memberships, users, xpLotes } from "../db/schema.js";
+import { characters, memberships, sessions, users, xpLotes } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
@@ -20,6 +20,9 @@ const MAX_ITENS = 500;
 const loteSchema = z.object({
   requestId: z.string().trim().min(1).max(100),
   motivo: z.string().trim().min(1).max(300),
+  // XP por sessão (#185): referência lógica opcional — validada contra
+  // a campanha; viaja em cada evento __xp do lote para rastreio.
+  sessaoId: z.string().min(1).max(100).optional(),
   itens: z.array(z.object({
     characterId: z.string().min(1).max(100),
     quantidade: z.number().int().min(1).max(1_000_000),
@@ -31,9 +34,10 @@ type ItemResultado = ItemLote & { saldoResultante: number };
 
 /** Hash canônico do payload (itens ordenados) — distingue retry
  *  idêntico de requestId reutilizado com conteúdo divergente. */
-function hashPayload(motivo: string, itens: ItemLote[]): string {
+function hashPayload(motivo: string, itens: ItemLote[], sessaoId?: string): string {
   const canon = JSON.stringify({
     motivo,
+    sessaoId: sessaoId ?? null,
     itens: [...itens].sort((a, b) => a.characterId.localeCompare(b.characterId) || a.quantidade - b.quantidade),
   });
   return createHash("sha256").update(canon).digest("hex");
@@ -80,8 +84,18 @@ xpLoteRouter.post("/:campaignId/xp-lote", requirePapel("mestre"), async (req, re
     res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
     return;
   }
-  const { requestId, motivo, itens } = body.data;
-  const hash = hashPayload(motivo, itens);
+  const { requestId, motivo, itens, sessaoId } = body.data;
+  const hash = hashPayload(motivo, itens, sessaoId);
+
+  // sessaoId é referência lógica à sessão da MESMA campanha — nunca FK.
+  if (sessaoId) {
+    const [s] = await db.select({ id: sessions.id }).from(sessions)
+      .where(and(eq(sessions.id, sessaoId), eq(sessions.campaignId, campaignId))).limit(1).all();
+    if (!s) {
+      res.status(404).json({ erro: "Sessão não encontrada nesta campanha" });
+      return;
+    }
+  }
 
   // characterId duplicado no mesmo lote tornaria o resultado ambíguo —
   // rejeitado antes de qualquer leitura.
@@ -163,6 +177,7 @@ xpLoteRouter.post("/:campaignId/xp-lote", requirePapel("mestre"), async (req, re
           autorId: req.usuario!.id,
           autorNome,
           loteRequestId: requestId,
+          sessaoId: sessaoId ?? null,
         });
         tx.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, plano.id)).run();
         resultados.push({ characterId: plano.id, quantidade: plano.quantidade, saldoResultante: estado.saldo });

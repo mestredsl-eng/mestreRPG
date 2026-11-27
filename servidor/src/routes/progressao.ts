@@ -4,7 +4,7 @@ import { z } from "zod";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getDb } from "../db/index.js";
-import { characters, memberships, sheetVersions, users } from "../db/schema.js";
+import { characters, memberships, sessions, sheetVersions, users, xpEstornos } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireLeasePersonagem } from "../lib/permissoes.js";
 import { carregarPersonagemComAcesso } from "./personagens.js";
@@ -33,8 +33,10 @@ import {
   lerXp,
   resumoProgressao,
   simularCompraNivel,
+  simularEstornoNivel,
   type EventoXp,
 } from "../lib/progressao.js";
+import { createHash } from "node:crypto";
 
 const db = getDb();
 export const progressaoRouter = Router({ mergeParams: true });
@@ -124,9 +126,17 @@ progressaoRouter.get("/:characterId/progressao", async (req, res) => {
   const historico = ehMestre
     ? resumo.xp.historico
     : resumo.xp.historico.map((ev: EventoXp) => {
-        if (ev.tipo !== "compra" || !ev.compra || campoVisivelId(ev.compra.campoId)) return ev;
-        const { compra: _compraOculta, ...resto } = ev;
-        return { ...resto, motivo: "Compra de nível" };
+        if (ev.tipo === "compra" && ev.compra && !campoVisivelId(ev.compra.campoId)) {
+          const { compra: _compraOculta, ...resto } = ev;
+          return { ...resto, motivo: "Compra de nível" };
+        }
+        // Estorno tem o mesmo vetor: nome/key/campoId do elemento vivem
+        // em `estorno` — campo oculto perde os detalhes como na compra.
+        if (ev.tipo === "estorno" && ev.estorno && !campoVisivelId(ev.estorno.campoId)) {
+          const { estorno: _estornoOculto, estornoDe: _estornoDeOculto, ...resto } = ev;
+          return { ...resto, motivo: "Estorno de nível" };
+        }
+        return ev;
       });
   // `ancora` (Issue #185 P3): saldo anterior ao primeiro evento retido
   // quando o ledger truncou no teto de 500 — sem ela a UI apresentaria
@@ -148,7 +158,19 @@ const xpSchema = z.object({
   acao: z.enum(["conceder", "remover"]),
   quantidade: z.number().int().min(1).max(1_000_000),
   motivo: z.string().trim().min(1).max(300),
+  // XP por sessão (#185): referência lógica opcional — validada contra
+  // a campanha do personagem antes de gravar no evento do ledger.
+  sessaoId: z.string().min(1).max(100).optional(),
 });
+
+/** sessaoId informado precisa existir e pertencer à campanha do
+ *  personagem — referência lógica, nunca FK (a sessão pode sumir). */
+async function sessaoValidaNaCampanha(sessaoId: string | undefined, campaignId: string): Promise<boolean> {
+  if (!sessaoId) return true;
+  const [s] = await db.select({ id: sessions.id }).from(sessions)
+    .where(and(eq(sessions.id, sessaoId), eq(sessions.campaignId, campaignId))).limit(1).all();
+  return !!s;
+}
 
 /**
  * POST /api/characters/:characterId/xp — concessão/remoção de XP.
@@ -176,6 +198,10 @@ progressaoRouter.post("/:characterId/xp", requireLeasePersonagem(), async (req, 
   const body = xpSchema.safeParse(req.body);
   if (!body.success) {
     res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
+    return;
+  }
+  if (!(await sessaoValidaNaCampanha(body.data.sessaoId, p.campaignId))) {
+    res.status(404).json({ erro: "Sessão não encontrada nesta campanha" });
     return;
   }
   const delta = body.data.acao === "conceder" ? body.data.quantidade : -body.data.quantidade;
@@ -215,6 +241,7 @@ progressaoRouter.post("/:characterId/xp", requireLeasePersonagem(), async (req, 
       motivo: body.data.motivo,
       autorId: req.usuario!.id,
       autorNome,
+      sessaoId: body.data.sessaoId ?? null,
     });
     tx.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id)).run();
     return { tipo: "ok", saldo: estado.saldo, historico: estado.historico };
@@ -234,6 +261,7 @@ progressaoRouter.post("/:characterId/xp", requireLeasePersonagem(), async (req, 
   await audit(req, "personagem.xp", {
     characterId: p.id, acao: body.data.acao, quantidade: body.data.quantidade,
     motivo: body.data.motivo, saldoResultante: resultado.saldo,
+    ...(body.data.sessaoId ? { sessaoId: body.data.sessaoId } : {}),
   });
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
   res.json({ ok: true, xp: { saldo: resultado.saldo, historico: resultado.historico } });
@@ -454,4 +482,207 @@ progressaoRouter.post("/:characterId/comprar-ponto", requireLeasePersonagem(), l
   });
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
   res.json({ ok: true, xp: { saldo: resultado.saldo }, compra: resultado.compra });
+});
+
+// ---------- POST /api/characters/:characterId/estorno-nivel ----------
+
+const estornoSchema = z.object({
+  kind: z.string().min(1).max(40),
+  key: z.string().min(1).max(80).regex(/^[a-z0-9_]+$/, "Use letras minúsculas, números e _"),
+  // Trava otimista do cliente: quando informado deve ser o nivelNovo
+  // da compra vigente — divergência = 409 (a compra mudou desde a leitura).
+  nivelAlvo: z.number().int().min(0).max(100).optional(),
+  motivo: z.string().trim().min(1).max(300),
+  // Idempotência opcional por personagem (mesmo padrão xp_lotes).
+  requestId: z.string().trim().min(1).max(100).optional(),
+});
+
+/** Hash canônico do payload do estorno — distingue retry idêntico de
+ *  requestId reutilizado com conteúdo divergente. */
+function hashPayloadEstorno(kind: string, key: string, nivelAlvo: number | undefined, motivo: string): string {
+  return createHash("sha256").update(JSON.stringify({ kind, key, nivelAlvo: nivelAlvo ?? null, motivo })).digest("hex");
+}
+
+type ResultadoEstornoRegistro = {
+  estorno: unknown;
+  saldo: number;
+  compraEstornada: { em: string; custoXp: number };
+};
+
+/**
+ * POST /api/characters/:characterId/estorno-nivel — estorno auditado
+ * de compra de nível (Issue #185 item 1). SOMENTE mestre; personagem
+ * arquivado é somente leitura; ficha selada NÃO é exigida (reversão de
+ * estado, não concessão — mesmo critério de `ajuste`/`remocao`).
+ *
+ * Reverte a ÚLTIMA compra vigente do elemento (kind:key): devolve o
+ * nível a nivelAnterior, reconcilia `financiado` e credita o custoXp
+ * debitado — tudo num ÚNICO evento `estorno` append-only que referencia
+ * a compra por timestamp (`estornoDe.em`). A compra original nunca é
+ * apagada; `validarRegras` rejeita o resultado se o nível estornado
+ * sustenta pré-requisito de compra posterior (409).
+ *
+ * Idempotência: `requestId` opcional com UNIQUE (characterId,
+ * requestId) na tabela xp_estornos — retry mesmo payload devolve o
+ * resultado gravado; payload divergente → 409. Sem requestId, um
+ * segundo estorno do mesmo elemento falha com `sem_compra_vigente`
+ * (fail-closed, sem duplicação).
+ */
+progressaoRouter.post("/:characterId/estorno-nivel", requireLeasePersonagem(), limiteUsuario({ nome: "estorno-nivel", janelaMs: 5 * 60_000, max: 120 }), async (req, res) => {
+  const acesso = await carregarPersonagemComAcesso(req);
+  if ("erro" in acesso) {
+    res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
+    return;
+  }
+  const { personagem: p, ehMestre } = acesso;
+  if (!ehMestre) {
+    res.status(403).json({ erro: "Apenas o mestre pode estornar níveis" });
+    return;
+  }
+  if (p.status === "arquivado") {
+    res.status(403).json({ erro: "Personagem arquivado — restaure-o antes de alterar" });
+    return;
+  }
+  const body = estornoSchema.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
+    return;
+  }
+  const { kind, key, nivelAlvo, motivo } = body.data;
+  const requestId = body.data.requestId;
+  const hash = requestId ? hashPayloadEstorno(kind, key, nivelAlvo, motivo) : null;
+
+  const { estrutura, regras } = await carregarContextoRegras(p);
+  if (!estrutura) {
+    res.status(400).json({ erro: "Personagem sem ficha configurada", codigo: "sem_ficha" });
+    return;
+  }
+  const impPreCarga = impressaoDigitalRegras(regras!);
+  const autorNome = await nomeUsuario(req.usuario!.id);
+  const agora = new Date();
+
+  type Resultado =
+    | { tipo: "ok"; saldo: number; estorno: unknown; compraEstornada: { em: string; custoXp: number } }
+    | { tipo: "repetido"; registro: typeof xpEstornos.$inferSelect }
+    | { tipo: "divergente" }
+    | { tipo: "ausente" }
+    | { tipo: "sem_permissao" }
+    | { tipo: "falha"; status: number; corpo: Record<string, unknown> };
+
+  let resultado: Resultado;
+  try {
+    resultado = db.transaction((tx): Resultado => {
+      // Revalidação transacional do papel — mesmo padrão de POST /xp.
+      const [vinculo] = tx.select().from(memberships)
+        .where(and(
+          eq(memberships.campaignId, p.campaignId),
+          eq(memberships.userId, req.usuario!.id),
+          eq(memberships.status, "ativo"),
+        ))
+        .limit(1).all();
+      if (!vinculo || vinculo.role !== "mestre") return { tipo: "sem_permissao" };
+      const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
+      if (!atual || atual.campaignId !== p.campaignId) return { tipo: "ausente" };
+      if (atual.status === "arquivado") {
+        return { tipo: "falha", status: 403, corpo: { erro: "Personagem arquivado — restaure-o antes de alterar" } };
+      }
+
+      // Idempotência: requestId já gravado para este personagem.
+      if (requestId && hash) {
+        const [existente] = tx.select().from(xpEstornos)
+          .where(and(eq(xpEstornos.characterId, p.id), eq(xpEstornos.requestId, requestId)))
+          .limit(1).all();
+        if (existente) {
+          return existente.payloadHash === hash
+            ? { tipo: "repetido", registro: existente }
+            : { tipo: "divergente" };
+        }
+      }
+
+      // Consistência transacional das regras — mesmo fingerprint da
+      // compra: preço/custo devolvido e validarRegras do resultado
+      // precisam pertencer à mesma versão vigente.
+      const regrasTx = carregarRegrasSincrono(tx, p.campaignId);
+      if (!regrasTx || impressaoDigitalRegras(regrasTx) !== impPreCarga) {
+        return { tipo: "falha", status: 409, corpo: { ...CONFLITO_REGRAS_409 } };
+      }
+
+      const dados = (atual.data ?? {}) as Record<string, unknown>;
+      const estorno = simularEstornoNivel(
+        estrutura!, dados, regrasTx, kind, key, nivelAlvo,
+        { id: req.usuario!.id, nome: autorNome },
+      );
+      if (!estorno.ok || !estorno.dados) {
+        const status = estorno.codigo === "regras" ? 409 : 400;
+        return {
+          tipo: "falha", status,
+          corpo: { erro: estorno.erro, codigo: estorno.codigo, detalhes: estorno.detalhes },
+        };
+      }
+
+      tx.update(characters).set({ data: estorno.dados, updatedAt: agora }).where(eq(characters.id, p.id)).run();
+      if (requestId && hash) {
+        const resultadoRegistro: ResultadoEstornoRegistro = {
+          estorno: estorno.estorno,
+          saldo: estorno.estadoXp?.saldo ?? 0,
+          compraEstornada: estorno.compraEstornada ?? { em: "", custoXp: 0 },
+        };
+        tx.insert(xpEstornos).values({
+          id: crypto.randomUUID(),
+          characterId: p.id,
+          requestId,
+          payloadHash: hash,
+          resultado: resultadoRegistro,
+          createdBy: req.usuario!.id,
+          createdAt: agora,
+        }).run();
+      }
+      return {
+        tipo: "ok",
+        saldo: estorno.estadoXp?.saldo ?? 0,
+        estorno: estorno.estorno,
+        compraEstornada: estorno.compraEstornada ?? { em: "", custoXp: 0 },
+      };
+    });
+  } catch (e) {
+    // Corrida de requestId: a UNIQUE rejeitou o segundo insert — relê o
+    // registro vencedor e responde conforme o payload (padrão xp_lotes).
+    if (requestId) {
+      const [vencedor] = db.select().from(xpEstornos)
+        .where(and(eq(xpEstornos.characterId, p.id), eq(xpEstornos.requestId, requestId)))
+        .limit(1).all();
+      if (vencedor) {
+        resultado = vencedor.payloadHash === hash
+          ? { tipo: "repetido", registro: vencedor }
+          : { tipo: "divergente" };
+      } else {
+        throw e;
+      }
+    } else {
+      throw e;
+    }
+  }
+
+  if (resultado.tipo === "sem_permissao") { res.status(403).json({ erro: "Sem permissão para estornar níveis deste personagem" }); return; }
+    if (resultado.tipo === "divergente") {
+    res.status(409).json({ erro: "requestId já utilizado com payload divergente", codigo: "requestId_divergente" });
+    return;
+  }
+  if (resultado.tipo === "repetido") {
+    const reg = resultado.registro.resultado as ResultadoEstornoRegistro;
+    res.json({ ok: true, repetido: true, estorno: reg.estorno, xp: { saldo: reg.saldo }, compraEstornada: reg.compraEstornada });
+    return;
+  }
+  if (resultado.tipo === "ausente") { res.status(404).json({ erro: "Personagem não encontrado" }); return; }
+  if (resultado.tipo === "falha") { res.status(resultado.status).json(resultado.corpo); return; }
+
+  await audit(req, "personagem.estorno_nivel", {
+    characterId: p.id, kind, key, nivelAlvo,
+    motivo, requestId: requestId ?? null,
+    estorno: resultado.estorno,
+    compraEstornada: resultado.compraEstornada,
+    saldoResultante: resultado.saldo,
+  });
+  emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
+  res.json({ ok: true, estorno: resultado.estorno, xp: { saldo: resultado.saldo }, compraEstornada: resultado.compraEstornada });
 });
