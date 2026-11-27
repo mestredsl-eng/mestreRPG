@@ -4,7 +4,8 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
-import { characters, sheetTemplates, sheetVersions, memberships, users, tests, moneyTransactions, financialAccounts, files, characterTransfers } from "../db/schema.js";
+import { characters, sheetTemplates, sheetVersions, memberships, users, tests, moneyTransactions, financialAccounts, files, characterTransfers, auditLogs, internetPublicacoes } from "../db/schema.js";
+import { avaliarMorte, noticiaMorteTexto, reverterMorte } from "../lib/morte.js";
 import { CHAVE_NPC_VISIVEL, npcFichaVisivel } from "../lib/npc-visibility.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, requireLeasePersonagem, getMembership, permissoesDe } from "../lib/permissoes.js";
@@ -1126,6 +1127,37 @@ personagensRouter.post("/:characterId/hp", requireLeasePersonagem(), async (req,
         }
       }
     }
+    // Morte (Internet pública v2.6 + DP-8/DP-9, #365): avaliador único
+    // sobre o HP resultante — cobre este caminho de escrita de __hp.
+    // Primeira morte ⇒ notícia automática de sistema NA MESMA TX
+    // (imutável, origem='sistema', visibilidade='campanha').
+    const morte = avaliarMorte(novosDados, {
+      hpAtual: lerHp(novosDados)?.atual ?? null,
+      em: agora.toISOString(),
+      causa: motivo?.trim() || null,
+    });
+    if (morte.morteNova) {
+      novosDados = morte.dados;
+      if (morte.primeiraMorte) {
+        const { titulo, corpo } = noticiaMorteTexto(atual.name, morte.morteNova.causa ?? null);
+        const pubId = crypto.randomUUID();
+        tx.insert(internetPublicacoes).values({
+          id: pubId, campaignId: p.campaignId, tipo: "noticia",
+          titulo, corpo, formato: "texto", status: "publicado",
+          visibilidade: "campanha", autorModo: "identificado",
+          autorContaId: null, origem: "sistema",
+          fonteRef: `morte:${p.id}`, personagemId: p.id,
+          publicadoEm: agora, createdAt: agora, updatedAt: agora,
+        }).run();
+        tx.insert(auditLogs).values({
+          id: crypto.randomUUID(), actorId: req.usuario?.id ?? null,
+          campaignId: p.campaignId, guildId: null,
+          action: "personagem_morreu",
+          detail: { characterId: p.id, publicacaoId: pubId, morteEm: morte.morteNova.em },
+          createdAt: agora,
+        }).run();
+      }
+    }
     tx.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id)).run();
     resposta = { hp: resumoHp(cfg, estrutura, novosDados), deltaHp: deltaEfetivo, vitalidade: vitalidadeNova, ferimento };
   });
@@ -1138,6 +1170,60 @@ personagensRouter.post("/:characterId/hp", requireLeasePersonagem(), async (req,
   await audit(req, "personagem.hp", { characterId: p.id, acao, delta: resposta!.deltaHp, ferimento: resposta!.ferimento ?? null });
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
   res.json({ ok: true, hp: resposta!.hp, vitalidade: resposta!.vitalidade, ferimento: resposta!.ferimento });
+});
+
+const ressuscitarSchema = z.object({
+  motivo: z.string().trim().max(300).optional(),
+}).strict();
+
+/** POST /api/characters/:characterId/ressuscitar — ação mestre auditada
+ *  (DP-8, Internet pública v2.6): marca `revertidaEm` na epoch vigente
+ *  de `__morte`. NÃO apaga nem edita a notícia de sistema — ela
+ *  permanece publicada; correção de causa só por nova publicação
+ *  (DP-9). Exige morte vigente — personagem vivo → 409. */
+personagensRouter.post("/:characterId/ressuscitar", requireLeasePersonagem(), async (req, res) => {
+  const acesso = await carregarPersonagemComAcesso(req);
+  if ("erro" in acesso) {
+    res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
+    return;
+  }
+  const { personagem: p, ehMestre } = acesso;
+  if (!ehMestre) { res.status(403).json({ erro: "Somente o mestre pode registrar ressurreição" }); return; }
+  if (p.status === "arquivado") {
+    res.status(403).json({ erro: "Personagem arquivado — restaure-o antes de alterar" });
+    return;
+  }
+  const body = ressuscitarSchema.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
+    return;
+  }
+  const agora = new Date();
+  let revertidaEm: string | null = null;
+  let semMorte = false;
+  await db.transaction((tx) => {
+    const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
+    if (!atual) { semMorte = true; return; }
+    const dadosTx = (atual.data ?? {}) as Record<string, unknown>;
+    const r = reverterMorte(dadosTx, agora.toISOString());
+    if (!r.revertida) { semMorte = true; return; }
+    revertidaEm = r.revertida.em;
+    tx.update(characters).set({ data: r.dados, updatedAt: agora }).where(eq(characters.id, p.id)).run();
+    tx.insert(auditLogs).values({
+      id: crypto.randomUUID(), actorId: req.usuario!.id,
+      campaignId: p.campaignId, guildId: null,
+      action: "personagem_ressuscitado",
+      detail: {
+        characterId: p.id, morteEm: r.revertida.em,
+        motivo: body.data.motivo?.trim() || null,
+      },
+      createdAt: agora,
+    }).run();
+  });
+  if (semMorte) { res.status(409).json({ erro: "sem_morte_vigente" }); return; }
+  await audit(req, "personagem.ressuscitado", { characterId: p.id, morteEm: revertidaEm });
+  emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
+  res.json({ ok: true });
 });
 
 const vitalidadeSchema = z.object({ nivel: z.number().int().min(0), motivo: z.string().max(300).optional() });

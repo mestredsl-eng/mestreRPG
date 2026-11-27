@@ -20,8 +20,8 @@ import { z } from "zod";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import {
-  auditLogs, characters, internetAccounts, internetPages,
-  internetSites, memberships,
+  auditLogs, characters, internetAccounts, internetDenuncias,
+  internetPages, internetPublicacoes, internetSites, memberships,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
@@ -828,3 +828,266 @@ internetEscritaRouter.get("/sites/:slug/paginas", requirePapel("mestre", "jogado
     })),
   });
 });
+
+// ---------- Publicações (W4/W5/W8-subset — contrato CONTRATO-W4W5) ----------
+//
+// `internet_publicacoes`: noticias e post_perfil nesta fatia. Autoria
+// server-side (autorContaId/origem/publicadoEm nunca do body); anônimo
+// rejeitado (DP-6: só classificado/anuncio — W6/W7); origem='sistema'
+// (notícia de morte) é somente-leitura para todos.
+
+const publicacaoCriarSchema = z.object({
+  tipo: z.enum(["noticia", "post_perfil"]),
+  titulo: z.string().trim().min(1).max(200),
+  corpo: z.string().max(50_000),
+  formato: z.enum(["texto", "markdown-subset"]).optional(),
+  visibilidade: z.enum(["campanha", "contatos"]).optional(),
+  autorModo: z.enum(["identificado", "pseudonimo"]).optional(),
+  pseudoNome: z.string().trim().min(2).max(60).optional(),
+  contaId: z.string().min(1).optional(),
+  statusInicial: z.enum(["rascunho", "publicado"]).optional(),
+}).strict();
+
+const publicacaoPatchSchema = z.object({
+  titulo: z.string().trim().min(1).max(200).optional(),
+  corpo: z.string().max(50_000).optional(),
+  formato: z.enum(["texto", "markdown-subset"]).optional(),
+  visibilidade: z.enum(["campanha", "contatos"]).optional(),
+  autorModo: z.enum(["identificado", "pseudonimo"]).optional(),
+  pseudoNome: z.string().trim().min(2).max(60).nullable().optional(),
+  status: z.enum(["rascunho", "publicado"]).optional(),
+  expectedVersion: z.number().int().min(1),
+}).strict();
+
+const denunciaSchema = z.object({
+  motivo: z.enum(["spam", "ofensa", "ilegal", "outro"]),
+}).strict();
+
+async function publicacaoPorId(cid: string, id: string) {
+  const [p] = await db.select().from(internetPublicacoes)
+    .where(and(eq(internetPublicacoes.id, id), eq(internetPublicacoes.campaignId, cid)))
+    .limit(1);
+  return p ?? null;
+}
+
+function publicacaoSerializada(p: typeof internetPublicacoes.$inferSelect) {
+  return {
+    id: p.id, tipo: p.tipo, titulo: p.titulo, corpo: p.corpo,
+    formato: p.formato, status: p.status, visibilidade: p.visibilidade,
+    autorModo: p.autorModo, pseudoNome: p.pseudoNome,
+    autorContaId: p.autorContaId, origem: p.origem,
+    fonteRef: p.fonteRef, personagemId: p.personagemId,
+    publicadoEm: p.publicadoEm, retiradoEm: p.retiradoEm,
+    retiradoMotivo: p.retiradoMotivo, version: p.version,
+    criadoEm: p.createdAt, atualizadoEm: p.updatedAt,
+  };
+}
+
+/** POST /publicacoes — criar notícia/post de perfil. Ator: conta
+ *  elegível do requisitante (gate P5 via contaAutorizadaPara).
+ *  visibilidade é declaração do formulário W8 (default 'campanha'). */
+internetEscritaRouter.post("/publicacoes", requirePapel("mestre", "jogador"), async (req, res) => {
+  const cid = campanhaId(req);
+  const body = publicacaoCriarSchema.safeParse(req.body);
+  if (!body.success) { erroHttp(res, 400, "Dados inválidos", { detalhes: body.error.issues }); return; }
+  const d = body.data;
+  const formato = d.formato ?? "markdown-subset";
+  const invalido = formato === "markdown-subset" ? formatoInvalido(d.corpo) : null;
+  if (invalido) { erroHttp(res, 400, "formato_invalido", { motivo: invalido }); return; }
+  const autorModo = d.autorModo ?? "identificado";
+  if (autorModo === "pseudonimo" && !d.pseudoNome) {
+    erroHttp(res, 400, "pseudo_nome_obrigatorio"); return;
+  }
+
+  const auth = await resolverContaCriacao(req, res, cid, d.contaId);
+  if (!auth) return;
+
+  const agora = new Date();
+  const id = crypto.randomUUID();
+  const status = d.statusInicial ?? "rascunho";
+  if (negaSemCota(req, res)) return;
+  let commitado = false;
+  let falhaTitular = false;
+  await db.transaction((tx) => {
+    if (!titularNaTx(tx, auth.conta.id, req.usuario!.id, cid)) { falhaTitular = true; return; }
+    tx.insert(internetPublicacoes).values({
+      id, campaignId: cid, tipo: d.tipo, titulo: d.titulo, corpo: d.corpo,
+      formato, status, visibilidade: d.visibilidade ?? "campanha",
+      autorModo, pseudoNome: autorModo === "pseudonimo" ? d.pseudoNome! : null,
+      autorContaId: auth.conta.id, origem: "usuario",
+      publicadoEm: status === "publicado" ? agora : null,
+      createdAt: agora, updatedAt: agora,
+    }).run();
+    auditTx(tx, req, cid, "publicacao.criada", {
+      publicacaoId: id, tipo: d.tipo, status, visibilidade: d.visibilidade ?? "campanha",
+      autorModo, contaId: auth.conta.id,
+    });
+    commitado = true;
+  });
+  if (falhaTitular) { erroHttp(res, 403, "Titularidade da conta não confirmada"); return; }
+  if (!commitado) { erroHttp(res, 500, "Falha ao criar publicação"); return; }
+  consumirMutacao(req);
+  const [pub] = await db.select().from(internetPublicacoes).where(eq(internetPublicacoes.id, id)).limit(1);
+  res.status(201).json({ ok: true, publicacao: publicacaoSerializada(pub) });
+});
+
+/** PATCH /publicacoes/:id — editar conteúdo/visibilidade ou transitar
+ *  rascunho↔publicado. Edição de conteúdo = titular da conta autora
+ *  (mesma fronteira D14 do W3: mestre não reescreve conteúdo alheio —
+ *  aqui recebe 404, anti-oráculo). retirado/removido são estados de
+ *  moderação, nunca patcháveis pelo autor. */
+internetEscritaRouter.patch("/publicacoes/:id", requirePapel("mestre", "jogador"), async (req, res) => {
+  const cid = campanhaId(req);
+  const pub = await publicacaoPorId(cid, req.params.id);
+  // Inexistente / campanha errada / origem='sistema' → 404 uniforme
+  // (a notícia de morte é imutável — não vaza que a linha é especial).
+  if (!pub || pub.origem === "sistema" || !pub.autorContaId) {
+    erroHttp(res, 404, "Publicação não encontrada"); return;
+  }
+  const auth = await contaAutorizadaPara(pub.autorContaId, req.usuario!.id);
+  if (!auth) { erroHttp(res, 404, "Publicação não encontrada"); return; }
+
+  const body = publicacaoPatchSchema.safeParse(req.body);
+  if (!body.success) { erroHttp(res, 400, "Dados inválidos", { detalhes: body.error.issues }); return; }
+  const d = body.data;
+  const corpoFinal = d.corpo ?? pub.corpo;
+  const formatoFinal = d.formato ?? pub.formato;
+  if (formatoFinal === "markdown-subset") {
+    const invalido = formatoInvalido(corpoFinal);
+    if (invalido) { erroHttp(res, 400, "formato_invalido", { motivo: invalido }); return; }
+  }
+  const modoFinal = d.autorModo ?? pub.autorModo;
+  const pseudoFinal = d.pseudoNome === undefined ? pub.pseudoNome : d.pseudoNome;
+  if (modoFinal === "pseudonimo" && !pseudoFinal) {
+    erroHttp(res, 400, "pseudo_nome_obrigatorio"); return;
+  }
+  const statusFinal = d.status ?? pub.status;
+  if (statusFinal !== "rascunho" && statusFinal !== "publicado") {
+    erroHttp(res, 400, "status_invalido"); return;
+  }
+  if (pub.status !== "rascunho" && pub.status !== "publicado") {
+    erroHttp(res, 409, "publicacao_encerrada"); return;
+  }
+  const mudou =
+    (d.titulo !== undefined && d.titulo !== pub.titulo) ||
+    (d.corpo !== undefined && d.corpo !== pub.corpo) ||
+    (d.formato !== undefined && d.formato !== pub.formato) ||
+    (d.visibilidade !== undefined && d.visibilidade !== pub.visibilidade) ||
+    (d.autorModo !== undefined && d.autorModo !== pub.autorModo) ||
+    (d.pseudoNome !== undefined && pseudoFinal !== pub.pseudoNome) ||
+    (d.status !== undefined && d.status !== pub.status);
+  if (!mudou) {
+    res.json({ ok: true, publicacao: publicacaoSerializada(pub) });
+    return;
+  }
+
+  const agora = new Date();
+  if (negaSemCota(req, res)) return;
+  let commitado = false;
+  let falhaTitular = false;
+  let conflitoVersao = false;
+  await db.transaction((tx) => {
+    if (!titularNaTx(tx, pub.autorContaId!, req.usuario!.id, cid)) { falhaTitular = true; return; }
+    const sets: Record<string, unknown> = {
+      titulo: d.titulo ?? pub.titulo,
+      corpo: corpoFinal,
+      formato: formatoFinal,
+      visibilidade: d.visibilidade ?? pub.visibilidade,
+      autorModo: modoFinal,
+      pseudoNome: modoFinal === "pseudonimo" ? pseudoFinal : null,
+      status: statusFinal,
+      // publicadoEm = PRIMEIRA publicação (não reescreve ao republicar)
+      publicadoEm: statusFinal === "publicado" && !pub.publicadoEm ? agora : pub.publicadoEm,
+      version: pub.version + 1,
+      updatedAt: agora,
+    };
+    const r = tx.update(internetPublicacoes).set(sets)
+      .where(and(
+        eq(internetPublicacoes.id, pub.id),
+        eq(internetPublicacoes.version, d.expectedVersion),
+      )).run();
+    if (r.changes === 0) { conflitoVersao = true; return; }
+    auditTx(tx, req, cid, "publicacao.editada", {
+      publicacaoId: pub.id, version: pub.version + 1,
+      campos: Object.keys(d).filter((k) => k !== "expectedVersion"),
+    });
+    commitado = true;
+  });
+  if (falhaTitular) { erroHttp(res, 403, "Titularidade da conta não confirmada"); return; }
+  if (conflitoVersao) { erroHttp(res, 409, "Versão desatualizada — recarregue e tente novamente"); return; }
+  if (!commitado) { erroHttp(res, 500, "Falha ao editar publicação"); return; }
+  consumirMutacao(req);
+  const [atualizada] = await db.select().from(internetPublicacoes)
+    .where(eq(internetPublicacoes.id, pub.id)).limit(1);
+  res.json({ ok: true, publicacao: publicacaoSerializada(atualizada) });
+});
+
+/** POST /publicacoes/:id/denunciar — denúncia de conta elegível.
+ *  Limiar DP-3: ≥2 denúncias distintas OU 1 grave (motivo='ilegal')
+ *  ⇒ remoção automática NA MESMA TX. Uma denúncia por par
+ *  (publicação, conta) via UNIQUE. */
+internetEscritaRouter.post("/publicacoes/:id/denunciar", requirePapel("mestre", "jogador"), async (req, res) => {
+  const cid = campanhaId(req);
+  const body = denunciaSchema.safeParse(req.body);
+  if (!body.success) { erroHttp(res, 400, "Dados inválidos", { detalhes: body.error.issues }); return; }
+
+  const pub = await publicacaoPorId(cid, req.params.id);
+  if (!pub || pub.status !== "publicado" || !pub.autorContaId) {
+    erroHttp(res, 404, "Publicação não encontrada"); return;
+  }
+  const minhas = await contasDoUsuario(cid, req.usuario!.id);
+  const elegiveis: ContaAutorizada[] = [];
+  for (const conta of minhas) {
+    if (conta.id === pub.autorContaId) continue;
+    const auth = await contaAutorizadaPara(conta.id, req.usuario!.id);
+    if (auth) elegiveis.push(auth);
+  }
+  if (!elegiveis.length) { erroHttp(res, 403, "internet_sem_conta_ou_elegibilidade"); return; }
+  const denunciante = elegiveis[0];
+  const grave = body.data.motivo === "ilegal" ? 1 : 0;
+
+  const agora = new Date();
+  const id = crypto.randomUUID();
+  if (negaSemCota(req, res)) return;
+  let commitado = false;
+  let jaDenunciou = false;
+  let removida = false;
+  await db.transaction((tx) => {
+    const [atual] = tx.select().from(internetPublicacoes)
+      .where(eq(internetPublicacoes.id, pub.id)).limit(1).all();
+    if (!atual || atual.status !== "publicado") return;
+    try {
+      tx.insert(internetDenuncias).values({
+        id, campaignId: cid, publicacaoId: pub.id,
+        denuncianteContaId: denunciante.conta.id,
+        motivo: body.data.motivo, denunciaGrave: grave, status: "aberta",
+        createdAt: agora, updatedAt: agora,
+      }).run();
+    } catch {
+      jaDenunciou = true; return;
+    }
+    const abertas = atual.denunciaAberta + 1;
+    const graves = atual.denunciaGrave + grave;
+    const deveRemover = abertas >= 2 || graves >= 1;
+    tx.update(internetPublicacoes).set({
+      denunciaAberta: abertas,
+      denunciaGrave: graves,
+      ...(deveRemover ? {
+        status: "removido", retiradoEm: agora, retiradoMotivo: "denuncia",
+        version: atual.version + 1,
+      } : {}),
+      updatedAt: agora,
+    }).where(eq(internetPublicacoes.id, pub.id)).run();
+    auditTx(tx, req, cid, "publicacao.denunciada", {
+      publicacaoId: pub.id, denunciaId: id, motivo: body.data.motivo,
+      denuncianteContaId: denunciante.conta.id, removida: deveRemover,
+    });
+    removida = deveRemover;
+    commitado = true;
+  });
+  if (jaDenunciou) { erroHttp(res, 409, "denuncia_ja_registrada"); return; }
+  if (!commitado) { erroHttp(res, 404, "Publicação não encontrada"); return; }
+  consumirMutacao(req);
+  res.status(201).json({ ok: true, denunciaId: id, removida });
+});
+
