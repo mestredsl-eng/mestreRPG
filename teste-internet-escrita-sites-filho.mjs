@@ -1,24 +1,18 @@
 #!/usr/bin/env node
-// FILHO — suíte black-box W3 escrita/ownership (#365, matriz SITE-01..12,
-// VER-01..03). Contrato-fonte: docs/CONTRATO-ESCRITA-SITES-PAGINAS-365.md
-// (branch docs/1.1.2-vereditos-proprietario) + MATRIZ-TESTES-1.1.2.md.
+// FILHO — suíte black-box W3 escrita/ownership (#365), conforme contrato
+// W3-write e matriz integrada SITE-01..14 / VER-01..06.
 //
-// DECISÃO ADOTADA: SITE-12 aprovada = modelo RESTRITO (só o dono do site
-// cria páginas no próprio site). O contrato em revisão propõe multi-autoria
-// irrestrita como "questão em aberto" — este teste codifica o estado
-// aprovado; se o Dono deliberar o contrário, o assert muda com a decisão.
+// Decisões fechadas: SITE-12 = criação de página somente no site próprio;
+// sem colaboração/convite nesta versão. P5 é revalidado em cada mutação
+// diegética de personagem (inclui rascunhos, edições e transições).
+// Mestre administrativo, sem conta de personagem, pode somente arquivar/
+// restaurar via membership ativa; nunca cria ou reescreve conteúdo.
 //
-// Cobertura pretendida:
-//   SITE-01/02 criação só por conta elegível (P5 na estreia pública)
-//   SITE-03/04 metadados só do dono; SITE-08 mestre modera sem reescrever
-//   SITE-05/12 página só no próprio site; autor derivado da sessão
-//   SITE-06/07 edição só do autor; VER-01 version+1 e audit
-//   SITE-09/10 P7: titular novo opera, anterior perde na hora
-//   SITE-11 concorrência/retry sem lost-update
-//   VER-02/03 sem histórico recuperável; audit não é cópia do corpo
-//   markdown-subset whitelist → 400 formato_invalido (nunca sanitiza)
-//   rate limit escrita 30/min → 429
-//   PUB-03 / EXP-06/11/12 → SKIP (fatias futuras, contrato ainda não existe)
+// Cobertura: ownership/autoria, gate por operação, transfer P7, version +
+// expectedVersion em conteúdo e transições, auditoria atômica (falha do
+// insert deve reverter a mutação), ausência de snapshots/rollback,
+// moderação restrita, concorrência/retry, validação e rate limit.
+// PUB-03 / EXP-06/11/12 seguem SKIP por pertencerem a fatias posteriores.
 //
 // Estado esperado AGORA: rotas de escrita ainda não existem → FAIL/TDD.
 // Fixtures 100% descartáveis; produção intocada.
@@ -54,6 +48,10 @@ const comDb = (fn) => {
 };
 const audits = (actionLike) => comDb((db) =>
   db.prepare("select * from audit_logs where action like ? order by created_at").all(`%${actionLike}%`));
+const snapshotPagina = (siteSlug, pageSlug) => comDb((db) =>
+  db.prepare("select p.corpo,p.version,p.status from internet_pages p join internet_sites s on s.id=p.site_id where s.slug=? and p.slug=?")
+    .get(siteSlug, pageSlug));
+const versionPagina = (siteSlug, pageSlug) => snapshotPagina(siteSlug, pageSlug)?.version;
 
 try {
   sec("0. Servidor + cenário base");
@@ -225,44 +223,91 @@ try {
     // SITE-07: dona do site que não é autora não edita (criar página de j2 no site da j2 primeiro? usar página de j1)
     const rNaoAutor = await api(BASE, C.campId, J2, "PATCH", `/sites/${siteA.slug}/paginas/capitulo-1`, { corpo: "sequestro" });
     t("SITE-07: não-autor não edita (404 uniforme)", rNaoAutor.status === 404 || rNaoAutor.status === 403, `status=${rNaoAutor.status}`);
-    // audit da edição
+    // auditoria registra metadados, nunca o corpo anterior/atual.
     const au = audits("pagina_editada");
     t("audit internet.pagina_editada gravado", au.length >= 1, `n=${au.length}`);
     const auV = au.find((a) => JSON.stringify(a).includes('"version"'));
     t("VER-03: audit carrega versão resultante (não é cópia do corpo)", !!auV && !JSON.stringify(auV).includes("Era uma vez, v2".slice(0, 10)), JSON.stringify(auV ?? {}).slice(0, 160));
+
+    // VER-05: falha forçada do INSERT de auditoria deve reverter a página.
+    const antes = snapshotPagina(siteA.slug, "capitulo-1");
+    comDb((db) => db.exec(`
+      CREATE TRIGGER teste_falha_audit_w3
+      BEFORE INSERT ON audit_logs
+      WHEN NEW.action = 'internet.pagina_editada'
+      BEGIN SELECT RAISE(ABORT, 'falha de auditoria simulada'); END;
+    `));
+    let rFalhaAudit;
+    try {
+      rFalhaAudit = await api(BASE, C.campId, J1, "PATCH", `/sites/${siteA.slug}/paginas/capitulo-1`,
+        { corpo: "NAO PERSISTIR - audit falhou", expectedVersion: antes.version });
+    } finally {
+      comDb((db) => db.exec("DROP TRIGGER IF EXISTS teste_falha_audit_w3"));
+    }
+    const depois = snapshotPagina(siteA.slug, "capitulo-1");
+    t("VER-05: falha de audit devolve erro", rFalhaAudit && rFalhaAudit.status >= 400, `status=${rFalhaAudit?.status}`);
+    t("VER-05: falha de audit reverte corpo, status e versão",
+      depois?.corpo === antes?.corpo && depois?.status === antes?.status && depois?.version === antes?.version,
+      `antes=${JSON.stringify(antes)} depois=${JSON.stringify(depois)}`);
   }
 
   // ---------- E5. Transições de status ----------
-  sec("E5. Status — publicar/retirar/arquivar/restaurar");
+  sec("E5. Status — expectedVersion, version+1 e audit atômica");
   {
-    // publicar rascunho
-    const rPub = await api(BASE, C.campId, J1, "POST", `/sites/${siteA.slug}/paginas/capitulo-1/publicar`);
-    t("publicar rascunho → 200", rPub.status === 200 || rPub.status === 201, `status=${rPub.status} ${JSON.stringify(rPub.json).slice(0, 140)}`);
+    const transicao = async (rota, rotulo) => {
+      const antes = versionPagina(siteA.slug, "capitulo-1");
+      const r = await api(BASE, C.campId, J1, "POST", `/sites/${siteA.slug}/paginas/capitulo-1/${rota}`,
+        { expectedVersion: antes });
+      const depois = versionPagina(siteA.slug, "capitulo-1");
+      t(`${rotulo}: transição incrementa version uma vez`,
+        (r.status === 200 || r.status === 201) && depois === antes + 1,
+        `status=${r.status} version=${antes}→${depois}`);
+      return r;
+    };
+
+    // expectedVersion stale em transição também deve conflitar.
+    const versaoInicial = versionPagina(siteA.slug, "capitulo-1");
+    const rStale = await api(BASE, C.campId, J1, "POST",
+      `/sites/${siteA.slug}/paginas/capitulo-1/publicar`,
+      { expectedVersion: versaoInicial - 1 });
+    t("VER-04: transição com expectedVersion antiga → 409", rStale.status === 409,
+      `status=${rStale.status}`);
+
+    await transicao("publicar", "publicar rascunho");
     const rLeitura = await api(BASE, C.campId, J3, "GET", `/sites/${siteA.slug}/paginas/capitulo-1`);
     t("após publicar, leitura pública 200", rLeitura.status === 200, `status=${rLeitura.status}`);
-    const rRet = await api(BASE, C.campId, J1, "POST", `/sites/${siteA.slug}/paginas/capitulo-1/retirar`);
-    t("retirar → 200", rRet.status === 200 || rRet.status === 201, `status=${rRet.status}`);
+
+    await transicao("retirar", "retirar página");
     const rLeitura2 = await api(BASE, C.campId, J3, "GET", `/sites/${siteA.slug}/paginas/capitulo-1`);
     t("retirado some da leitura pública (404)", rLeitura2.status === 404, `status=${rLeitura2.status}`);
-    // re-publicar: publishedAt preserva a primeira
-    const rRep = await api(BASE, C.campId, J1, "POST", `/sites/${siteA.slug}/paginas/capitulo-1/publicar`);
-    t("re-publicar retirado → 200", rRep.status === 200 || rRep.status === 201, `status=${rRep.status}`);
-    // arquivar → restaura para publicado (publishedAt existe)
-    const rArq = await api(BASE, C.campId, J1, "POST", `/sites/${siteA.slug}/paginas/capitulo-1/arquivar`);
-    t("arquivar página → 200", rArq.status === 200 || rArq.status === 201, `status=${rArq.status}`);
-    const rRest = await api(BASE, C.campId, J1, "POST", `/sites/${siteA.slug}/paginas/capitulo-1/restaurar`);
-    t("restaurar página publicada → volta a publicado", rRest.status === 200 || rRest.status === 201, `status=${rRest.status}`);
+
+    await transicao("publicar", "re-publicar retirado");
+    await transicao("arquivar", "arquivar página");
+    await transicao("restaurar", "restaurar página publicada");
+
+    const audStatus = audits("pagina_status");
+    const audArchive = audits("pagina_arquivada");
+    const audRestore = audits("pagina_restaurada");
+    t("VER-06: cada tipo de transição deixou trilha", audStatus.length >= 3 && audArchive.length >= 1 && audRestore.length >= 1,
+      `status=${audStatus.length} archive=${audArchive.length} restore=${audRestore.length}`);
   }
 
   // ---------- E6. Moderação do mestre (SITE-08) ----------
   sec("E6. Mestre modera/arquiva — nunca reescreve");
   {
-    const rPatchMestre = await api(BASE, C.campId, M, "PATCH", `/sites/${siteA.slug}/paginas/capitulo-1`, { corpo: "reescrita do mestre" });
+    const vMestre = versionPagina(siteA.slug, "capitulo-1");
+    const rPatchMestre = await api(BASE, C.campId, M, "PATCH", `/sites/${siteA.slug}/paginas/capitulo-1`,
+      { corpo: "reescrita do mestre", expectedVersion: vMestre });
     t("mestre NÃO edita conteúdo de página alheia", rPatchMestre.status === 403 || rPatchMestre.status === 404, `status=${rPatchMestre.status}`);
-    const rArqM = await api(BASE, C.campId, M, "POST", `/sites/${siteA.slug}/paginas/capitulo-1/arquivar`);
-    t("mestre arquiva página alheia", rArqM.status === 200 || rArqM.status === 201, `status=${rArqM.status}`);
-    const rRestM = await api(BASE, C.campId, M, "POST", `/sites/${siteA.slug}/paginas/capitulo-1/restaurar`);
-    t("mestre restaura página", rRestM.status === 200 || rRestM.status === 201, `status=${rRestM.status}`);
+    const rArqM = await api(BASE, C.campId, M, "POST", `/sites/${siteA.slug}/paginas/capitulo-1/arquivar`,
+      { expectedVersion: vMestre });
+    t("SITE-08/SITE-14: Mestre sem conta arquiva por papel administrativo",
+      rArqM.status === 200 || rArqM.status === 201, `status=${rArqM.status}`);
+    const vMestreRest = versionPagina(siteA.slug, "capitulo-1");
+    const rRestM = await api(BASE, C.campId, M, "POST", `/sites/${siteA.slug}/paginas/capitulo-1/restaurar`,
+      { expectedVersion: vMestreRest });
+    t("SITE-14: Mestre sem conta restaura por papel administrativo",
+      rRestM.status === 200 || rRestM.status === 201, `status=${rRestM.status}`);
     // audit com papel mestre
     const auM = audits("pagina_arquivada");
     t("audit de arquivamento pelo mestre registrado", auM.length >= 1 && JSON.stringify(auM).includes('"mestre"'), `n=${auM.length}`);
@@ -324,19 +369,24 @@ try {
   // ---------- E10. Concorrência / idempotência (SITE-11) ----------
   sec("E10. Concorrência — expectedVersion evita lost-update");
   {
-    // duas edições "simultâneas" com mesma base version=3 → só uma vence
+    const baseVersion = versionPagina(siteA.slug, "capitulo-1");
     const [rA, rB] = await Promise.all([
-      api(BASE, C.campId, J1, "PATCH", `/sites/${siteA.slug}/paginas/capitulo-1`, { corpo: "concorrente A", expectedVersion: 3 }),
-      api(BASE, C.campId, J1, "PATCH", `/sites/${siteA.slug}/paginas/capitulo-1`, { corpo: "concorrente B", expectedVersion: 3 }),
+      api(BASE, C.campId, J1, "PATCH", `/sites/${siteA.slug}/paginas/capitulo-1`,
+        { corpo: "concorrente A", expectedVersion: baseVersion }),
+      api(BASE, C.campId, J1, "PATCH", `/sites/${siteA.slug}/paginas/capitulo-1`,
+        { corpo: "concorrente B", expectedVersion: baseVersion }),
     ]);
     const oks = [rA, rB].filter((r) => r.status === 200).length;
     const conflicts = [rA, rB].filter((r) => r.status === 409).length;
-    t("SITE-11: corrida → exatamente 1 sucesso + 1 conflito (ou ambos consistentes)", oks + conflicts === 2 && oks <= 2, `A=${rA.status} B=${rB.status}`);
-    // retry da mesma edição com versão já consumida → 409 (não duplica efeito)
-    const antes = comDb((db) => db.prepare("select version from internet_pages where site_id=(select id from internet_sites where slug=?) and slug='capitulo-1'").get(siteA.slug)?.version);
-    const rRetry = await api(BASE, C.campId, J1, "PATCH", `/sites/${siteA.slug}/paginas/capitulo-1`, { corpo: "retry", expectedVersion: 3 });
-    const depois = comDb((db) => db.prepare("select version from internet_pages where site_id=(select id from internet_sites where slug=?) and slug='capitulo-1'").get(siteA.slug)?.version);
-    t("SITE-11b: retry com versão velha não incrementa", rRetry.status === 409 || depois === antes, `retry=${rRetry.status} v:${antes}→${depois}`);
+    t("SITE-11: corrida → exatamente 1 sucesso + 1 conflito",
+      oks === 1 && conflicts === 1, `A=${rA.status} B=${rB.status}`);
+    const antesRetry = versionPagina(siteA.slug, "capitulo-1");
+    const rRetry = await api(BASE, C.campId, J1, "PATCH", `/sites/${siteA.slug}/paginas/capitulo-1`,
+      { corpo: "retry", expectedVersion: baseVersion });
+    const depoisRetry = versionPagina(siteA.slug, "capitulo-1");
+    t("SITE-11b: retry com versão consumida não incrementa",
+      rRetry.status === 409 && depoisRetry === antesRetry,
+      `retry=${rRetry.status} v:${antesRetry}→${depoisRetry}`);
   }
 
   // ---------- E11. Sem histórico recuperável (VER-02) ----------
