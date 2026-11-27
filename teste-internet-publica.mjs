@@ -202,6 +202,8 @@ try {
   t("site arquivado → 404", (await API("GET", "/sites/site-morto", j1.cookie)).status === 404);
 
   // ================= PÁGINA =================
+  // só `publicado` é legível para não-privilegiado; autor/mestre têm
+  // prévia estendida (coberta pela suíte W3-escrita do FILHO).
   sec("F. Página — só publicado é legível");
 
   const pg = await API("GET", "/sites/taberna-do-mestre/paginas/menu", j1.cookie);
@@ -209,8 +211,12 @@ try {
   t("corpo entregue", pg.json?.pagina?.corpo?.includes("Sopa da bruxa"));
   t("site de contexto no payload", pg.json?.site?.slug === "taberna-do-mestre");
   t("autor público expõe handle", pg.json?.pagina?.autor?.handle === "ada.site");
-  t("rascunho → 404", (await API("GET", "/sites/taberna-do-mestre/paginas/diario", j1.cookie)).status === 404);
-  t("retirada → 404", (await API("GET", "/sites/taberna-do-mestre/paginas/antigo", j1.cookie)).status === 404);
+  // j2 não é autor das páginas de contaJ1 → 404 idêntico ao inexistente
+  t("rascunho → 404 p/ não-autor", (await API("GET", "/sites/taberna-do-mestre/paginas/diario", j2.cookie)).status === 404);
+  t("retirada → 404 p/ não-autor", (await API("GET", "/sites/taberna-do-mestre/paginas/antigo", j2.cookie)).status === 404);
+  // prévia estendida: o AUTOR da página lê rascunho/retirado (W3 escrita)
+  const rascAutor = await API("GET", "/sites/taberna-do-mestre/paginas/diario", j1.cookie);
+  t("autor lê próprio rascunho → 200", rascAutor.status === 200 && rascAutor.json?.pagina?.status === "rascunho", `status=${rascAutor.status}`);
   t("página inexistente → 404", (await API("GET", "/sites/taberna-do-mestre/paginas/nada", j1.cookie)).status === 404);
   t("site arquivado → página 404", (await API("GET", "/sites/site-morto/paginas/x", j1.cookie)).status === 404);
 

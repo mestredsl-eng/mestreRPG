@@ -29,6 +29,7 @@ import { convitesGuildaAdminRouter, convitesGuildaRouter } from "./routes/convit
 import { servidorRouter } from "./routes/admin-servidor.js";
 import { internetRouter } from "./routes/internet.js";
 import { internetPublicaRouter } from "./routes/internet-publica.js";
+import { internetEscritaRouter } from "./routes/internet-escrita.js";
 import { configurarSockets } from "./sockets/index.js";
 import { errorHandler } from "./middleware/error.js";
 import { headersSeguranca } from "./middleware/headers.js";
@@ -97,7 +98,7 @@ const routers: Router[] = [
   defeitosRouter,
   sessoesRouter, anotacoesRouter, snapshotsRouter, arquivosRouter, bibliotecaRouter,
   novidadesRouter, novidadesAdminRouter, guildasRouter,
-  convitesGuildaAdminRouter, convitesGuildaRouter, internetRouter, internetPublicaRouter,
+  convitesGuildaAdminRouter, convitesGuildaRouter, internetRouter, internetPublicaRouter, internetEscritaRouter,
 ];
 for (const r of routers) {
   blindar(r);
@@ -125,6 +126,9 @@ app.use("/api/characters/:characterId", patrimonioRouter);
 app.use("/api/characters/:characterId/comercio", comercioPersonagemRouter);
 app.use("/api/campaigns/:campaignId/comercio", comercioLojasRouter);
 app.use("/api/campaigns/:campaignId/internet", internetRouter);
+// escrita ANTES da pública: GET /sites/meus precisa preceder
+// GET /sites/:slug do router público (senão "meus" cai como slug)
+app.use("/api/campaigns/:campaignId/internet", internetEscritaRouter);
 app.use("/api/campaigns/:campaignId/internet", internetPublicaRouter);
 app.use("/api/campaigns/:campaignId/inventario", catalogoRouter);
 app.use("/api/campaigns/:campaignId/sessoes", sessoesRouter);
