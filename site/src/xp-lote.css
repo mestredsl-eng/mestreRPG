@@ -44,7 +44,7 @@
   width: 90px;
   padding: 6px 8px;
   border-radius: 6px;
-  border: 1px solid var(--borda, #2a2f3f);
+  border: 1px solid var(--horror-vinho-claro, #b85c69);
   background: var(--fundo-cartao, #161a26);
   color: inherit;
   font-variant-numeric: tabular-nums;

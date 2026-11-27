@@ -144,7 +144,7 @@ const emitirCb = (sock, ev, payload) => new Promise((res) => sock.emit(ev, paylo
   await p.waitForTimeout(900);
   await p.locator(".cartao-campanha", { hasText: "teste-mestree" }).first().click();
   await p.waitForTimeout(1200);
-  await p.getByRole("button", { name: /Mesa/ }).click();
+  await p.getByRole("tab", { name: /Mesa/ }).click();
   await p.waitForTimeout(1000);
   await p.locator("tr", { hasText: "Sessão D10" }).first().click();
   await p.waitForTimeout(1500);
@@ -182,7 +182,7 @@ const emitirCb = (sock, ev, payload) => new Promise((res) => sock.emit(ev, paylo
   await p3.waitForTimeout(700);
   await p3.locator(".cartao-campanha", { hasText: "teste-mestree" }).first().click();
   await p3.waitForTimeout(1000);
-  await p3.getByRole("button", { name: /Mesa/ }).click();
+  await p3.getByRole("tab", { name: /Mesa/ }).click();
   await p3.waitForTimeout(800);
   await p3.locator("tr", { hasText: "Sessão D10" }).first().click();
   await p3.waitForTimeout(1500);

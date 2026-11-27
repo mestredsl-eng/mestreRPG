@@ -190,7 +190,7 @@ label {
 
 input {
   background: #14161a;
-  border: 1px solid #2c3038;
+  border: 1px solid var(--horror-vinho-claro, #b85c69);
   color: #e8e6e3;
   padding: 0.55rem 0.7rem;
   border-radius: 6px;
@@ -200,6 +200,23 @@ input {
 input:focus {
   outline: none;
   border-color: #3b5bdb;
+}
+
+/* #132 — busca de Arquivos: o placeholder default do navegador media
+   ~3,9:1 sobre o fundo do input e a borda ~1,3:1 (SC 1.4.1/1.4.11).
+   --texto-fraco (#8b93a7) ≈ 5,9:1; --horror-*-claro ≥ 3,8:1 em todas as
+   paletas de destaque (a variante clara de cada tema é mais clara que
+   o vinho base). */
+.campo-pesquisa::placeholder {
+  color: var(--texto-fraco, #8b93a7);
+  opacity: 1;
+}
+.campo-pesquisa {
+  border-color: var(--horror-vinho-claro, #b85c69);
+}
+.campo-pesquisa:focus {
+  outline: 2px solid var(--horror-vinho-claro, #b85c69);
+  outline-offset: 1px;
 }
 
 label.checkbox {
@@ -212,6 +229,108 @@ label.checkbox {
 
 label.checkbox input {
   width: auto;
+}
+
+/* #322 — estado marcado de checkbox/radio segue o acento do tema;
+   fora de .formulario o controle segue nativo (accent-color).
+   Dentro de formulário, o checkbox usa caixa autoral (#132, parecer
+   INTERMEDIÁRIO 7184…): appearance:none + todos os estados desenhados
+   — a fronteira UA media ~1,2:1 e falhava SC 1.4.11. */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--horror-vinho-claro, #b85c69);
+}
+
+.formulario .checkbox input[type="checkbox"],
+input[type="checkbox"].caixa-autoral {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  box-sizing: border-box;
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0;
+  padding: 0;
+  border: 2px solid var(--horror-vinho-claro, #b85c69);
+  border-radius: 4px;
+  background-color: var(--fundo-input, #0f1219);
+  cursor: pointer;
+  display: inline-grid;
+  place-content: center;
+  vertical-align: -3px;
+}
+
+.formulario .checkbox input[type="checkbox"]:checked,
+input[type="checkbox"].caixa-autoral:checked {
+  background-color: var(--horror-vinho-claro, #b85c69);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.2 6.4 4.8 8.9 9.8 3.4' fill='none' stroke='%230f1219' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-size: 75% 75%;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.formulario .checkbox input[type="checkbox"]:focus-visible,
+input[type="checkbox"].caixa-autoral:focus-visible {
+  outline: 2px solid var(--horror-vinho-claro, #b85c69);
+  outline-offset: 2px;
+}
+
+.formulario .checkbox input[type="checkbox"]:disabled,
+input[type="checkbox"].caixa-autoral:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+/* #132 fatia 2 — rádio nativo em formulário/modal: mesmo defeito ~1,2:1
+   (Acervo, decisão de importação). Caixa autoral circular + ponto. */
+.formulario input[type="radio"],
+.modal input[type="radio"] {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  box-sizing: border-box;
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0;
+  padding: 0;
+  border: 2px solid var(--horror-vinho-claro, #b85c69);
+  border-radius: 50%;
+  background-color: var(--fundo-input, #0f1219);
+  cursor: pointer;
+  display: inline-grid;
+  place-content: center;
+  vertical-align: -3px;
+}
+
+.formulario input[type="radio"]:checked,
+.modal input[type="radio"]:checked {
+  background-color: var(--horror-vinho-claro, #b85c69);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Ccircle cx='6' cy='6' r='2.6' fill='%230f1219'/%3E%3C/svg%3E");
+  background-size: 45% 45%;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.formulario input[type="radio"]:focus-visible,
+.modal input[type="radio"]:focus-visible {
+  outline: 2px solid var(--horror-vinho-claro, #b85c69);
+  outline-offset: 2px;
+}
+
+.formulario input[type="radio"]:disabled,
+.modal input[type="radio"]:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+@media (forced-colors: active) {
+  .formulario .checkbox input[type="checkbox"],
+  input[type="checkbox"].caixa-autoral,
+  .formulario input[type="radio"],
+  .modal input[type="radio"] {
+    appearance: auto;
+    -webkit-appearance: auto;
+  }
 }
 
 .grade-2 {
@@ -300,7 +419,7 @@ tr.arquivado td {
 select,
 textarea {
   background: #14161a;
-  border: 1px solid #2c3038;
+  border: 1px solid var(--horror-vinho-claro, #b85c69);
   color: #e8e6e3;
   padding: 0.55rem 0.7rem;
   border-radius: 6px;
@@ -391,6 +510,17 @@ textarea {
   color: #c9cdd3;
   padding: 0.45rem 0.9rem;
   font-size: 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* Issue #233 — ícones das abas de campanha: mesmo traço do shell,
+   herdam a cor do botão (ativo/inativo) e não encolhem o rótulo. */
+.abas button .icone-interface {
+  width: 15px;
+  height: 15px;
+  flex: none;
 }
 
 .abas button.ativo {
@@ -1446,7 +1576,7 @@ code {
 .acoes-modal { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 .grade-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
 .grade-form label, .formulario label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
-.formulario input, .formulario select, .formulario textarea { padding: 7px 9px; border-radius: 6px; border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); color: inherit; }
+.formulario input, .formulario select, .formulario textarea { padding: 7px 9px; border-radius: 6px; border: 1px solid var(--horror-vinho-claro, #b85c69); background: var(--fundo-input, #0f1219); color: inherit; }
 .checkbox { display: flex; flex-direction: row !important; align-items: center; gap: 8px; }
 
 /* ---- Etapa 7: mesa em tempo real ---- */
@@ -1466,7 +1596,7 @@ code {
 .chat-hora { font-size: 11px; color: var(--texto-fraco, #8b93a7); margin-left: 8px; }
 .chat-conteudo { white-space: pre-wrap; word-break: break-word; margin-top: 2px; }
 .chat-form { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
-.chat-form input { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); color: inherit; }
+.chat-form input { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--horror-vinho-claro, #b85c69); background: var(--fundo-input, #0f1219); color: inherit; }
 .check { display: flex; flex-direction: row; align-items: center; gap: 5px; font-size: 13px; min-height: 28px; cursor: pointer; }
 .tag-atual { background: #2e5c3a; color: #aef0c0; }
 .timer-display { font-size: 2rem; font-variant-numeric: tabular-nums; text-align: center; padding: 8px; border-radius: 8px; background: var(--fundo-input, #0f1219); }
@@ -1493,7 +1623,7 @@ code {
 .d10-form { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .d10-controles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .d10-controles label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--texto-fraco, #8b93a7); }
-.d10-controles input { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); color: inherit; }
+.d10-controles input { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--horror-vinho-claro, #b85c69); background: var(--fundo-input, #0f1219); color: inherit; }
 .d10-dados { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 6px; }
 /* Dados com forma geométrica própria (SVG) — cores via preferências do usuário */
 .dado-shape {
@@ -1547,7 +1677,7 @@ code {
 .abas-dados button.ativo { background: #2b3350; border-color: #46538a; color: #e8ecf7; }
 .rolagem-controles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 8px; }
 .rolagem-controles label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--texto-fraco, #8b93a7); }
-.rolagem-controles input, .rolagem-controles select { padding: 7px 9px; border-radius: 6px; border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); color: inherit; }
+.rolagem-controles input, .rolagem-controles select { padding: 7px 9px; border-radius: 6px; border: 1px solid var(--horror-vinho-claro, #b85c69); background: var(--fundo-input, #0f1219); color: inherit; }
 .rolagem-form .linha input { flex: 1; min-width: 0; }
 .rolagem-resultado { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 
@@ -1558,7 +1688,7 @@ code {
 .cores-dados-controles label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--texto-fraco, #8b93a7); }
 .cores-dados-controles input[type="color"] {
   width: 52px; height: 34px; padding: 2px; border-radius: 6px;
-  border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); cursor: pointer;
+  border: 1px solid var(--horror-vinho-claro, #b85c69); background: var(--fundo-input, #0f1219); cursor: pointer;
 }
 .cores-contraste-aviso { color: #e8c96a; }
 @media (max-width: 600px) {
@@ -2412,7 +2542,7 @@ textarea:focus-visible,
 .chat-voz-identidade { display: inline-block; margin-left: 7px; color: var(--texto-fraco, #8b93a7); font-size: 11px; }
 .chat-ler { padding: 3px 8px; font-size: 11px; flex: 0 0 auto; }
 .chat-falar-como { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
-.chat-falar-como select { min-width: 180px; max-width: 100%; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); color: inherit; }
+.chat-falar-como select { min-width: 180px; max-width: 100%; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--horror-vinho-claro, #b85c69); background: var(--fundo-input, #0f1219); color: inherit; }
 @media (max-width: 640px) {
   .chat-cabecalho { align-items: flex-start; }
   .chat-voz-controles { width: 100%; }
@@ -2433,4 +2563,45 @@ textarea:focus-visible,
   position: absolute; top: -6px; right: -6px; min-width: 16px; height: 16px;
   border-radius: 8px; background: #b03a2e; color: #fff; font-size: 10px; font-weight: 700;
   display: flex; align-items: center; justify-content: center; padding: 0 4px;
+}
+
+/* ---- Movimento reduzido (Issue #132) ----
+   Duas fontes, um único resultado: prefers-reduced-motion do SO já é
+   tratado pelo bloco global em identidade-visual.css; aqui cobrimos a
+   preferência do app. data-movimento-efetivo="reduzido" é aplicado por
+   visualUsuario.ts e já incorpora a redução do SO (o SO sempre
+   prevalece — temasVisuais.movimentoEfetivo). A neutralização replica
+   o bloco do SO: estados finais continuam visíveis (cores, bordas e
+   textos mudam instantaneamente), apenas o movimento decorativo some.
+   Foco de teclado (:focus-visible) não é uma animação e não é afetado. */
+[data-movimento-efetivo="reduzido"] *,
+[data-movimento-efetivo="reduzido"] *::before,
+[data-movimento-efetivo="reduzido"] *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
+/* Issue #236 — estados vazios ilustrados: ícone decorativo grande e
+   discreto, texto como conteúdo principal; centralizado, sem overflow. */
+.estado-vazio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 1.6rem 1rem;
+  text-align: center;
+  color: #9aa3b2;
+}
+
+.estado-vazio-icone {
+  width: 44px;
+  height: 44px;
+  opacity: 0.55;
+}
+
+.estado-vazio-texto {
+  margin: 0;
+  font-size: 0.95rem;
 }

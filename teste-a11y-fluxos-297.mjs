@@ -9,6 +9,7 @@
 // Patrimônio ainda embutido na ficha — regressão, não separação 1.1.x).
 import { chromium } from "playwright";
 import { join } from "node:path";
+import { writeFileSync } from "node:fs";
 import { avaliarWcag, avaliarFocoIndicador } from "./wcag-avaliador-297.mjs";
 import { auditarNomes } from "./nomes-acessiveis-297.mjs";
 import {
@@ -216,6 +217,178 @@ async function checarTela(page, rotulo) {
   });
 }
 
+// ---------- #132 — busca de Arquivos: nome, contraste e foco medidos ----------
+// O achado #297 media placeholder ~3,9:1 e borda ~1,3:1. Aqui medimos o
+// DOM renderizado (computed styles) e calculamos a razão WCAG — nada de
+// estimativa. Placeholder exige 4,5:1 (texto); borda e indicador de foco
+// exigem 3:1 contra as cores adjacentes (SC 1.4.11).
+const _lum = (rgb) => {
+  const [r, g, b] = rgb.map((v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const _ratio = (a, b) => {
+  const l1 = _lum(a), l2 = _lum(b);
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+};
+const _rgb = (css) => {
+  const m = String(css).match(/[\d.]+/g);
+  return m && m.length >= 3 ? m.slice(0, 3).map(Number) : null;
+};
+
+async function checarBuscaArquivos(page, rotulo) {
+  const busca = page.locator('input[aria-label="Pesquisar arquivos"]').first();
+  const n = await busca.count();
+  t(`${rotulo}: busca de arquivos com nome acessível persistente`, n === 1, `encontrados=${n}`);
+  if (n !== 1) return;
+  const m = await busca.evaluate((el) => {
+    const cs = getComputedStyle(el);
+    const ph = getComputedStyle(el, "::placeholder");
+    el.focus();
+    const f = getComputedStyle(el);
+    return {
+      phColor: ph.color,
+      bg: cs.backgroundColor,
+      borda: cs.borderTopColor,
+      bordaW: parseFloat(cs.borderTopWidth),
+      focoEstilo: `${f.outlineStyle} ${f.outlineWidth} ${f.outlineColor}`,
+    };
+  });
+  const bg = _rgb(m.bg), ph = _rgb(m.phColor), borda = _rgb(m.borda);
+  t(`${rotulo}: placeholder ≥4,5:1`, !!(ph && bg) && _ratio(ph, bg) >= 4.5,
+    ph && bg ? `ratio=${_ratio(ph, bg).toFixed(2)}:1 (${m.phColor} sobre ${m.bg})` : `ph=${m.phColor} bg=${m.bg}`);
+  t(`${rotulo}: borda do controle ≥3:1`, !!(borda && bg) && m.bordaW >= 1 && _ratio(borda, bg) >= 3,
+    borda && bg ? `ratio=${_ratio(borda, bg).toFixed(2)}:1 (${m.borda} sobre ${m.bg})` : `borda=${m.borda} bg=${m.bg}`);
+  const fm = m.focoEstilo.match(/(\S+) (\S+) (.+)/);
+  const focoCor = fm ? _rgb(fm[3]) : null;
+  t(`${rotulo}: foco visível (outline ≥2px, ≥3:1)`,
+    !!(fm && fm[1] === "solid" && parseFloat(fm[2]) >= 2 && focoCor && bg && _ratio(focoCor, bg) >= 3),
+    m.focoEstilo);
+
+  // Temas de destaque (#132): a borda/foco usam --horror-vinho-claro, que
+  // cada paleta redefine. Medimos a razão real nas 4 variantes — a troca
+  // do token não pode derrubar a identificação do controle.
+  const TEMAS = [
+    ["vinho", "#b85c69"], ["ambar", "#e3c98f"],
+    ["violeta", "#b9a4d6"], ["cinza-frio", "#c3c9d4"],
+  ];
+  for (const [tema, claro] of TEMAS) {
+    const mm = await busca.evaluate((el, cor) => {
+      document.documentElement.style.setProperty("--horror-vinho-claro", cor);
+      const cs = getComputedStyle(el);
+      el.focus();
+      const f = getComputedStyle(el);
+      return { borda: cs.borderTopColor, foco: f.outlineColor };
+    }, claro);
+    const bordaT = _rgb(mm.borda), focoT = _rgb(mm.foco);
+    t(`${rotulo}: tema ${tema} — borda ≥3:1 e foco ≥3:1`,
+      !!(bordaT && focoT && bg && _ratio(bordaT, bg) >= 3 && _ratio(focoT, bg) >= 3),
+      `borda=${mm.borda} foco=${mm.foco} bg=${m.bg}`);
+  }
+  await busca.evaluate(() => document.documentElement.style.removeProperty("--horror-vinho-claro"));
+}
+
+// ---------- #132 — checkbox "Exigir aprovação do mestre" (SC 1.4.11) ----------
+// Protótipo aprovado pelo INTERMEDIÁRIO: appearance:none + caixa autoral
+// com o token de destaque. Aqui medimos o DOM real — borda ≥3:1 contra
+// o fundo do próprio controle e contra o cartão adjacente, glifo checked,
+// foco ≥3:1 e fallback forced-colors — nas 4 paletas de destaque.
+async function checarCaixaAutoral(page, seletor, rotulo, tipo = "checkbox") {
+  const base = page.locator(seletor);
+  const n = await base.count();
+  t(`${rotulo}: ${tipo} autoral presente`, n >= 1, `encontrados=${n}`);
+  if (n < 1) return;
+  const cb = base.first();
+  const m = await cb.evaluate((el) => {
+    // fundo próprio só é comparável desmarcado (checked preenche com o
+    // acento — borda e fundo ficam da mesma cor por construção)
+    const estavaChecked = el.checked;
+    if (estavaChecked) el.checked = false;
+    const cs = getComputedStyle(el);
+    // primitivos na hora — CSSStyleDeclaration é vivo
+    const appearance = cs.appearance || cs.webkitAppearance;
+    const borda = cs.borderTopColor, bordaW = parseFloat(cs.borderTopWidth);
+    const raio = cs.borderTopLeftRadius, bg = cs.backgroundColor;
+    let adj = null;
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const b = getComputedStyle(p).backgroundColor;
+      if (b && b !== "rgba(0, 0, 0, 0)" && b !== "transparent") { adj = b; break; }
+    }
+    if (estavaChecked) el.checked = true;
+    return { appearance, borda, bordaW, raio, bg, adj };
+  });
+  // checked/disabled: getComputedStyle é vivo — ler primitivos na hora.
+  const estados = await cb.evaluate((el) => {
+    el.checked = true;
+    const checkedBg = getComputedStyle(el).backgroundImage;
+    const checkedFill = getComputedStyle(el).backgroundColor;
+    el.checked = false;
+    el.disabled = true;
+    const disabledOpacity = parseFloat(getComputedStyle(el).opacity);
+    const disabledCursor = getComputedStyle(el).cursor;
+    el.disabled = false;
+    return { checkedBg, checkedFill, disabledOpacity, disabledCursor };
+  });
+  Object.assign(m, estados);
+  // foco via teclado real (Tab) — :focus-visible não dispara em focus() programático
+  await page.evaluate(() => document.activeElement?.blur());
+  let focou = false;
+  for (let i = 0; i < 60 && !focou; i++) {
+    await page.keyboard.press("Tab");
+    focou = await cb.evaluate((el) => document.activeElement === el);
+  }
+  const foco = focou ? await cb.evaluate((el) => {
+    const f = getComputedStyle(el);
+    return { estilo: `${f.outlineStyle} ${f.outlineWidth} ${f.outlineColor}`, fv: el.matches(":focus-visible") };
+  }) : { estilo: "não focou", fv: false };
+  m.focoEstilo = foco.estilo;
+  const bg = _rgb(m.bg), adj = _rgb(m.adj), borda = _rgb(m.borda);
+  const raioPx = parseFloat(m.raio);
+  t(`${rotulo}: ${tipo} appearance:none (caixa autoral)`, m.appearance === "none", m.appearance);
+  t(`${rotulo}: ${tipo} borda 2px token`, m.bordaW === 2, `width=${m.bordaW}`);
+  t(`${rotulo}: ${tipo} formato ${tipo === "radio" ? "circular" : "4px"}`,
+    tipo === "radio" ? raioPx >= 7 : raioPx >= 3 && raioPx <= 6, `raio=${m.raio}`);
+  t(`${rotulo}: ${tipo} borda ≥3:1 vs fundo próprio`, !!(borda && bg) && _ratio(borda, bg) >= 3,
+    borda && bg ? `ratio=${_ratio(borda, bg).toFixed(2)}:1` : `borda=${m.borda} bg=${m.bg}`);
+  t(`${rotulo}: ${tipo} borda ≥3:1 vs cartão adjacente`, !!(borda && adj) && _ratio(borda, adj) >= 3,
+    borda && adj ? `ratio=${_ratio(borda, adj).toFixed(2)}:1 adj=${m.adj}` : `adj=${m.adj}`);
+  t(`${rotulo}: ${tipo} checked desenha glifo`, m.checkedBg.includes("svg") && m.checkedBg.includes("data:image"),
+    m.checkedBg.slice(0, 60));
+  const fm = m.focoEstilo.match(/(\S+) (\S+) (.+)/);
+  const focoCor = fm ? _rgb(fm[3]) : null;
+  t(`${rotulo}: ${tipo} foco visível (outline ≥2px, ≥3:1)`,
+    !!(fm && fm[1] === "solid" && parseFloat(fm[2]) >= 2 && focoCor && bg && _ratio(focoCor, bg) >= 3),
+    m.focoEstilo);
+  t(`${rotulo}: ${tipo} disabled visível porém inerte`, m.disabledOpacity <= 0.6 && m.disabledCursor === "not-allowed",
+    `opacity=${m.disabledOpacity} cursor=${m.disabledCursor}`);
+
+  // 4 paletas de destaque: a borda nunca pode cair abaixo de 3:1.
+  const TEMAS = [
+    ["vinho", "#b85c69"], ["ambar", "#e3c98f"],
+    ["violeta", "#b9a4d6"], ["cinza-frio", "#c3c9d4"],
+  ];
+  for (const [tema, claro] of TEMAS) {
+    const mm = await cb.evaluate((el, cor) => {
+      document.documentElement.style.setProperty("--horror-vinho-claro", cor);
+      const cs = getComputedStyle(el);
+      return { borda: cs.borderTopColor, bg: cs.backgroundColor, adj: (() => {
+        for (let p = el.parentElement; p; p = p.parentElement) {
+          const b = getComputedStyle(p).backgroundColor;
+          if (b && b !== "rgba(0, 0, 0, 0)" && b !== "transparent") return b;
+        }
+        return null;
+      })() };
+    }, claro);
+    const bT = _rgb(mm.borda), bgT = _rgb(mm.bg), adjT = _rgb(mm.adj);
+    t(`${rotulo}: ${tipo} tema ${tema} — borda ≥3:1`,
+      !!(bT && bgT && adjT) && _ratio(bT, bgT) >= 3 && _ratio(bT, adjT) >= 3,
+      `borda=${mm.borda} bg=${mm.bg} adj=${mm.adj}`);
+  }
+  await cb.evaluate(() => document.documentElement.style.removeProperty("--horror-vinho-claro"));
+}
+
 let browser, proc;
 try {
   await prepararBanco(BANCO);
@@ -298,6 +471,8 @@ try {
       await aba(page, nomeAba);
       await page.waitForTimeout(400);
       await checarTela(page, `aba ${nomeAba}`);
+      if (nomeAba === "Arquivos") await checarBuscaArquivos(page, `viewport ${vp.nome}`);
+      if (nomeAba === "Convites") await checarCaixaAutoral(page, 'form.formulario input[type="checkbox"]', `viewport ${vp.nome}`);
     }
 
     // Ficha: abrir personagem → detalhe (leitura) + patrimônio (regressão)
@@ -491,6 +666,36 @@ try {
         } else t("popover: botão Editar ficha presente", false);
       } else t("popover: personagem fixture visível na lista", false);
     } else t("popover: fixture de personagem presente", false);
+
+    // ---------- #132 fatia 2 — Acervo: filtro admin + rádios da prévia ----------
+    // Fixture real: livro criado via API + envelope exportado com `sistema`
+    // alterado → prévia de importação exibe metadadosAlterados com rádios.
+    sec("Acervo — controles nativos (filtro + rádio de prévia)");
+    const novoLivro = await req(BASE, "POST", "/biblioteca/livros", {
+      cookie: cenario.cookieMestre,
+      body: { titulo: "Livro Radio A11y", tipo: "livro" },
+    });
+    t("fixture: livro p/ prévia de importação", novoLivro.status < 300 && !!novoLivro.json?.livro?.id,
+      `status=${novoLivro.status}`);
+    const exp = await req(BASE, "GET", "/biblioteca/exportar", { cookie: cenario.cookieMestre });
+    const alvo = exp.json?.livros?.find?.((l) => l.titulo === "Livro Radio A11y");
+    t("fixture: livro presente no envelope exportado", !!alvo && exp.status === 200,
+      `status=${exp.status}`);
+    if (alvo) {
+      alvo.sistema = "Sistema Radio A11y";
+      const arqImport = join(DIR, "import-a11y-radio.json");
+      writeFileSync(arqImport, JSON.stringify(exp.json));
+      await page.getByRole("button", { name: "Acervo", exact: true }).first().click();
+      await page.waitForTimeout(800);
+      await checarCaixaAutoral(page, 'input[type="checkbox"].caixa-autoral', "acervo filtro");
+      await page.locator('input[type="file"][accept*=".json"]').setInputFiles(arqImport);
+      const radio = page.locator(".modal input[type='radio']");
+      await radio.first().waitFor({ timeout: 8000 }).catch(() => {});
+      await page.waitForTimeout(300);
+      await checarCaixaAutoral(page, ".modal input[type='radio']", "acervo prévia", "radio");
+      const btnCancelar = page.getByRole("button", { name: "Cancelar", exact: true });
+      if (await btnCancelar.count()) { await btnCancelar.first().click(); await page.waitForTimeout(300); }
+    }
     await ctx.close();
   }
 

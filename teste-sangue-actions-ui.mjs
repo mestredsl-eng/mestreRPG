@@ -252,7 +252,7 @@ try {
     await page.goto(BASE, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Campanhas" }).first().click();
     await page.locator(".cartao-campanha", { hasText: "Campanha Sangue Ações UI" }).click();
-    await page.getByRole("button", { name: "Personagens", exact: true }).click();
+    await page.getByRole("tab", { name: "Personagens", exact: true }).click();
     await page.locator("tr.clicavel", { hasText: nome }).first().click();
     await page.waitForSelector(".painel-sangue-leitura", { timeout: 15000 });
     await page.waitForFunction(() => {
@@ -620,7 +620,7 @@ try {
     await page.goto(BASE, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Campanhas" }).first().click();
     await page.locator(".cartao-campanha", { hasText: "Campanha Sangue Ações UI" }).click();
-    await page.getByRole("button", { name: "Mesa", exact: true }).click();
+    await page.getByRole("tab", { name: "Mesa", exact: true }).click();
     await page.waitForTimeout(800);
     const sessaoRow = page.locator("table.tabela tbody tr.clicavel", { hasText: "Sessão Posse" }).first();
     t("UI. corrida: sessão encontrada", (await sessaoRow.count()) === 1);
@@ -661,7 +661,7 @@ try {
     await page.goto(BASE, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Campanhas" }).first().click();
     await page.locator(".cartao-campanha", { hasText: "Campanha Sangue Ações UI" }).click();
-    await page.getByRole("button", { name: "Mesa", exact: true }).click();
+    await page.getByRole("tab", { name: "Mesa", exact: true }).click();
     await page.waitForTimeout(800);
     const sessaoRow = page.locator("table.tabela tbody tr.clicavel", { hasText: "Sessão Posse" }).first();
     t("UI. fail-closed: sessão encontrada", (await sessaoRow.count()) === 1);

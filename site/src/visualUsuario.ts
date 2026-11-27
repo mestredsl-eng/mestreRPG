@@ -42,6 +42,16 @@ export function aplicarPreferenciasVisuais(preferencias: PreferenciasVisuais): v
   raiz.setAttribute("data-movimento-efetivo", movimentoEfetivo(preferencias, sistemaPrefereReducao()));
 }
 
+/** true quando o movimento deve ser reduzido: SO pede reduce OU a
+ *  preferência efetiva do app está em "reduzido" (data-movimento-efetivo
+ *  já incorpora as duas fontes; o matchMedia cobre o instante anterior
+ *  à aplicação dos atributos). */
+export function movimentoReduzido(): boolean {
+  if (sistemaPrefereReducao()) return true;
+  if (typeof document === "undefined") return false;
+  return document.documentElement.dataset.movimentoEfetivo === "reduzido";
+}
+
 /** Remove overrides inline — usado no logout para não vazar tema entre usuários. */
 export function limparPreferenciasVisuais(): void {
   const raiz = document.documentElement;

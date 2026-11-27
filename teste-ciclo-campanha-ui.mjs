@@ -83,7 +83,7 @@ try {
     const cx = await ctx(cookieMestre);
     const p = await cx.newPage();
     await abrirCampanha(p);
-    await p.getByRole("button", { name: /Participantes/ }).click();
+    await p.getByRole("tab", { name: /Participantes/ }).click();
     await p.waitForSelector("text=ui_jogador1", { timeout: 15000 });
 
     const linhas = await p.locator(".tabela-responsiva tbody tr").count();
@@ -101,7 +101,7 @@ try {
     // reload prova persistência server-side (SPA volta à home — re-navega)
     await p.reload({ waitUntil: "networkidle" });
     await abrirCampanha(p);
-    await p.getByRole("button", { name: /Participantes/ }).click();
+    await p.getByRole("tab", { name: /Participantes/ }).click();
     await p.waitForSelector('select[aria-label="Papel de ui_jogador2"]', { timeout: 15000 });
     ok("U1. papel espectador persiste após reload", (await p.locator('select[aria-label="Papel de ui_jogador2"]').first().inputValue()) === "espectador");
     await cx.close();
@@ -114,9 +114,9 @@ try {
     await abrirCampanha(p);
     const meta = await p.locator(".meta").first().textContent();
     ok("U2. espectador vê 'Você é Espectador'", /Espectador/.test(meta ?? ""), meta ?? "");
-    ok("U2. espectador NÃO tem aba Personagens", await p.getByRole("button", { name: "Personagens", exact: true }).count() === 0);
-    ok("U2. espectador NÃO tem abas de mestre", await p.getByRole("button", { name: /Participantes|Convites|Fichas|Regras/ }).count() === 0);
-    ok("U2. espectador mantém abas de leitura", await p.getByRole("button", { name: "Diário" }).count() === 1);
+    ok("U2. espectador NÃO tem aba Personagens", await p.getByRole("tab", { name: "Personagens", exact: true }).count() === 0);
+    ok("U2. espectador NÃO tem abas de mestre", await p.getByRole("tab", { name: /Participantes|Convites|Fichas|Regras/ }).count() === 0);
+    ok("U2. espectador mantém abas de leitura", await p.getByRole("tab", { name: "Diário" }).count() === 1);
     await cx.close();
   }
 
@@ -126,8 +126,8 @@ try {
     const p = await cx.newPage();
     await abrirCampanha(p);
     ok("U3. jogador vê 'Você é Jogador'", /Jogador/.test(await p.locator(".meta").first().textContent() ?? ""));
-    ok("U3. jogador tem aba Personagens", await p.getByRole("button", { name: "Personagens", exact: true }).count() === 1);
-    ok("U3. jogador NÃO tem aba Participantes", await p.getByRole("button", { name: /Participantes/ }).count() === 0);
+    ok("U3. jogador tem aba Personagens", await p.getByRole("tab", { name: "Personagens", exact: true }).count() === 1);
+    ok("U3. jogador NÃO tem aba Participantes", await p.getByRole("tab", { name: /Participantes/ }).count() === 0);
     await cx.close();
   }
 
@@ -136,7 +136,7 @@ try {
     const cxM = await ctx(cookieMestre);
     const pM = await cxM.newPage();
     await abrirCampanha(pM);
-    await pM.getByRole("button", { name: /Participantes/ }).click();
+    await pM.getByRole("tab", { name: /Participantes/ }).click();
     await pM.waitForSelector('select[aria-label="Status de ui_jogador1"]', { timeout: 15000 });
     await pM.locator('select[aria-label="Status de ui_jogador1"]').first().selectOption("bloqueado");
     await pM.waitForTimeout(800);
@@ -158,7 +158,7 @@ try {
     const cxM = await ctx(cookieMestre);
     const pM = await cxM.newPage();
     await abrirCampanha(pM);
-    await pM.getByRole("button", { name: /Participantes/ }).click();
+    await pM.getByRole("tab", { name: /Participantes/ }).click();
     await pM.waitForSelector('select[aria-label="Status de ui_jogador1"]', { timeout: 15000 });
     await pM.locator('select[aria-label="Status de ui_jogador1"]').first().selectOption("ativo");
     await pM.waitForTimeout(800);
@@ -170,7 +170,7 @@ try {
 
     // remoção via modal de confirmação — re-navega (reload volta à home)
     await abrirCampanha(pM);
-    await pM.getByRole("button", { name: /Participantes/ }).click();
+    await pM.getByRole("tab", { name: /Participantes/ }).click();
     await pM.waitForSelector('select[aria-label="Status de ui_jogador1"]', { timeout: 15000 });
     // botão Remover da linha de ui_jogador1 na tabela (cartões são ocultos no desktop)
     const linha = pM.locator(".tabela-responsiva tbody tr", { hasText: "ui_jogador1" }).first();
@@ -199,9 +199,9 @@ try {
     const p = await cx.newPage();
     await p.route("**/api/campaigns/*/members", (r) => r.abort());
     await abrirCampanha(p);
-    await p.getByRole("button", { name: /Participantes/ }).click();
-    await p.waitForSelector(".erro", { timeout: 15000 });
-    const erroTxt = await p.locator(".erro").first().textContent();
+    await p.getByRole("tab", { name: /Participantes/ }).click();
+    await p.waitForSelector(".estado-feedback-erro", { timeout: 15000 });
+    const erroTxt = await p.locator(".estado-feedback-erro .estado-feedback-texto").first().textContent();
     ok("U6. falha em /members exibe erro na tela", !!erroTxt && erroTxt.length > 0, (erroTxt ?? "").slice(0, 60));
     // sem estado falso: tabela vazia não deve ser apresentada como "sem membros"
     const linhas = await p.locator(".tabela-responsiva tbody tr").count();
@@ -277,7 +277,7 @@ try {
       const cx = await ctx(cookieMestre);
       const p = await cx.newPage();
       await abrirCampanha(p);
-      await p.getByRole("button", { name: /Participantes/ }).click();
+      await p.getByRole("tab", { name: /Participantes/ }).click();
       await p.waitForSelector("text=Aguardando aprovação", { timeout: 15000 });
       const linhaPend = p.locator("tr", { hasText: "ui_pendente" }).first();
       await linhaPend.getByRole("button", { name: "Aprovar" }).click();
@@ -350,9 +350,9 @@ try {
     const p1 = await cx.newPage();
     const p2 = await cx.newPage();
     await abrirCampanha(p1);
-    await p1.getByRole("button", { name: /Participantes/ }).click();
+    await p1.getByRole("tab", { name: /Participantes/ }).click();
     await abrirCampanha(p2);
-    await p2.getByRole("button", { name: /Participantes/ }).click();
+    await p2.getByRole("tab", { name: /Participantes/ }).click();
     await p2.waitForSelector('select[aria-label="Status de ui_jogador2"]', { timeout: 15000 });
 
     // p1 bloqueia j2; p2 deve refletir via socket sem reload

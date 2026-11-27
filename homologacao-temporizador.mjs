@@ -42,7 +42,7 @@ try {
     await p.waitForTimeout(700);
     await p.locator(".cartao-campanha", { hasText: "Campanha Timer E2E" }).first().click();
     await p.waitForTimeout(1000);
-    await p.getByRole("button", { name: /^Mesa/ }).click();
+    await p.getByRole("tab", { name: /^Mesa/ }).click();
     await p.waitForTimeout(800);
     await p.locator("tr.clicavel", { hasText: "Mesa Timer E2E" }).first().click();
     await p.waitForSelector(".timer-display", { timeout: 10000 });

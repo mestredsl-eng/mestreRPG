@@ -113,7 +113,7 @@ try {
     // Campanhas → campanha → Personagens → primeiro personagem
     await page.getByRole("button", { name: "Campanhas" }).click();
     await page.locator(".cartao-campanha", { hasText: campanha.name }).first().click();
-    await page.getByRole("button", { name: "Personagens" }).click();
+    await page.getByRole("tab", { name: "Personagens" }).click();
     await page.locator("table.tabela tbody tr.clicavel").first().click();
     await page.locator(".ficha").waitFor({ timeout: 15000 });
     await page.waitForTimeout(600); // fontes/layout settle
