@@ -260,6 +260,12 @@ jobs:
             echo "::error::Suítes obrigatórias com falha: ${falhas[*]}"
             exit 1
           fi
+      # Diagnóstico temporário (issue #365): reproduz a corrida C7 de
+      # cold-start 25× com monitor de /proc/locks para identificar o
+      # detentor da .trava quando ambos os processos falham.
+      - name: Diagnóstico C7 — corrida de trava de instância (#365)
+        shell: bash
+        run: node diagnostico-c7-ci.mjs 25 2
       - name: Suítes da stack #189 — Servidor sem navegador
         shell: bash
         run: |
