@@ -11,7 +11,7 @@
 import { ApiError } from "../../api";
 import type {
   MinhaPublicacao, PaginaPagina, PaginaPublica, PerfilProprio,
-  PerfilPublico, PerfilResumoBusca, PublicacaoDetalhe,
+  LiveResumo, PerfilPublico, PerfilResumoBusca, PublicacaoDetalhe,
   PublicacaoNova, PublicacaoResumo, SitePublico, SitePublicoResumo,
   TipoPublicacao,
 } from "./tipos-publica";
@@ -184,6 +184,39 @@ export function criarAdaptadorInternetPublica({ campaignId }: { campaignId: stri
           body: JSON.stringify({ characterId, ...dados }),
         });
       return r.perfil;
+    },
+
+    // ---------- Live simulado + métricas (ordem 7232090197 item 3) ----------
+
+    /** Diretório de lives vigentes — gate de leitor no servidor. */
+    async listarLives(): Promise<LiveResumo[]> {
+      const r = await requisicao<{ lives: LiveResumo[] }>(`${base}/ao-vivo`);
+      return r.lives;
+    },
+
+    /** Entrar ao vivo — exige personagem streamer (gate servidor). */
+    async entrarAoVivo(characterId: string, titulo: string, descricao?: string): Promise<{ id: string }> {
+      const r = await requisicao<{ live: { id: string; vigente: boolean; expiraEm: string } }>(
+        `${base}/ao-vivo`, { method: "POST", body: JSON.stringify({ characterId, titulo, descricao }) });
+      return r.live;
+    },
+
+    async sairAoVivo(liveId: string): Promise<void> {
+      await requisicao(`${base}/ao-vivo/${encodeURIComponent(liveId)}/sair`, { method: "POST", body: "{}" });
+    },
+
+    /** Aresta de seguidor idempotente — contador derivado no servidor.
+     *  origemContaId explícito quando o usuário tem mais de uma conta. */
+    async seguirConta(handle: string, origemContaId?: string): Promise<{ seguidores: number }> {
+      return requisicao<{ seguidores: number }>(
+        `${base}/contas/${encodeURIComponent(handle)}/seguir`,
+        { method: "POST", body: JSON.stringify(origemContaId ? { origemContaId } : {}) });
+    },
+
+    async deixarDeSeguirConta(handle: string, origemContaId?: string): Promise<{ seguidores: number }> {
+      return requisicao<{ seguidores: number }>(
+        `${base}/contas/${encodeURIComponent(handle)}/deixar-de-seguir`,
+        { method: "POST", body: JSON.stringify(origemContaId ? { origemContaId } : {}) });
     },
 
     async obterPagina(siteSlug: string, pageSlug: string): Promise<{ pagina: PaginaPublica; site: { slug: string; nome: string } }> {

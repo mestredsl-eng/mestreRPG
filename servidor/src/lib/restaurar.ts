@@ -10,7 +10,7 @@ import {
   users, internetPublicacoes,
   internetAccounts, internetContacts, internetConversations,
   internetDenuncias, internetMessages, internetPages,
-  internetParticipantes, internetPatrocinios, internetPerfis, internetSites,
+  internetParticipantes, internetPatrocinios, internetPerfis, internetSeguidores, internetSites,
 } from "../db/schema.js";
 import { avaliarMorte, CHAVE_MORTE } from "./morte.js";
 import { lerHp } from "./vida.js";
@@ -155,6 +155,7 @@ type PublicacaoInternet = typeof internetPublicacoes.$inferSelect;
 type DenunciaInternet = typeof internetDenuncias.$inferSelect;
 type PerfilInternet = typeof internetPerfis.$inferSelect;
 type PatrocinioInternet = typeof internetPatrocinios.$inferSelect;
+type SeguidorInternet = typeof internetSeguidores.$inferSelect;
 type PersonagemRef = { id: string; name: string; membershipId: string; isNpc: boolean | null; createdAt: Date | null; updatedAt: Date | null };
 type MembershipRow = typeof memberships.$inferSelect;
 
@@ -170,6 +171,7 @@ interface DominioInternetPreservado {
   denuncias: DenunciaInternet[];
   perfis: PerfilInternet[];
   patrocinios: PatrocinioInternet[];
+  seguidores: SeguidorInternet[];
   personagens: PersonagemRef[];
   memberships: MembershipRow[];
 }
@@ -193,6 +195,7 @@ function capturarDominioInternet(tx: Tx, campaignId: string): DominioInternetPre
     denuncias: tx.select().from(internetDenuncias).where(eq(internetDenuncias.campaignId, campaignId)).all(),
     perfis: tx.select().from(internetPerfis).where(eq(internetPerfis.campaignId, campaignId)).all(),
     patrocinios: tx.select().from(internetPatrocinios).where(eq(internetPatrocinios.campaignId, campaignId)).all(),
+    seguidores: tx.select().from(internetSeguidores).where(eq(internetSeguidores.campaignId, campaignId)).all(),
     personagens: tx.select({
       id: characters.id, name: characters.name, membershipId: characters.membershipId,
       isNpc: characters.isNpc, createdAt: characters.createdAt, updatedAt: characters.updatedAt,
@@ -275,6 +278,11 @@ function validarIntegridadeDominioInternet(d: DominioInternetPreservado, campaig
     // 7232390928 crit. 3-4) e avatar cross-campanha vira NULL — nenhum
     // descarte silencioso (contagem no log da restauração).
   }
+  for (const g of d.seguidores) {
+    if (g.campaignId !== campaignId) falha("internet_seguidores.campaign_id", g.campaignId);
+    if (!contaIds.has(g.seguidorContaId)) falha("internet_seguidores.seguidor_conta_id", g.seguidorContaId);
+    if (!contaIds.has(g.alvoContaId)) falha("internet_seguidores.alvo_conta_id", g.alvoContaId);
+  }
   for (const a of d.patrocinios) {
     if (a.campaignId !== campaignId) falha("internet_patrocinios.campaign_id", a.campaignId);
     // partes/contas NÃO abortam aqui: acordo com parte ou conta
@@ -294,7 +302,8 @@ function validarIntegridadeDominioInternet(d: DominioInternetPreservado, campaig
 function restaurarDominioInternet(tx: Tx, campaignId: string, d: DominioInternetPreservado) {
   const vazio = !d.contas.length && !d.contatos.length && !d.conversas.length &&
     !d.mensagens.length && !d.sites.length && !d.paginas.length &&
-    !d.publicacoes.length && !d.denuncias.length && !d.perfis.length && !d.patrocinios.length;
+    !d.publicacoes.length && !d.denuncias.length && !d.perfis.length && !d.patrocinios.length &&
+    !d.seguidores.length;
   if (vazio) return;
 
   const charsPresentes = new Set(
@@ -346,6 +355,12 @@ function restaurarDominioInternet(tx: Tx, campaignId: string, d: DominioInternet
   }
 
   inserir(tx, internetAccounts, contas);
+  // Seguidores (métricas, ordem 7232090197): aresta social privada —
+  // preservada como contatos. Validação já garantiu as duas pontas
+  // dentro do conjunto de contas restauradas. internet_ao_vivo NÃO
+  // entra: presença efêmera com TTL absoluto — as linhas morrem por
+  // cascade com as contas e ressuscitá-las seria estado falso.
+  inserir(tx, internetSeguidores, d.seguidores);
   inserir(tx, internetContacts, d.contatos);
   inserir(tx, internetConversations, d.conversas);
   inserir(tx, internetParticipantes, d.participantes);

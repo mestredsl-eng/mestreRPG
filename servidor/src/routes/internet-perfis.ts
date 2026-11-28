@@ -21,11 +21,11 @@
 //    marcadas `anonima`; `contatos` só com aresta aceita vigente.
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { and, desc, eq, like, lt, ne, or } from "drizzle-orm";
+import { and, desc, eq, inArray, like, lt, ne, or, sql } from "drizzle-orm";
 import { existsSync, createReadStream } from "node:fs";
 import { getDb } from "../db/index.js";
 import {
-  characters, files, internetAccounts, internetPages, internetPerfis,
+  characters, files, internetAccounts, internetPages, internetPerfis, internetSeguidores,
   internetPublicacoes, internetSites, memberships,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -465,6 +465,22 @@ internetPerfisRouter.get("/perfis/:handle", requirePapel("mestre", "jogador"), l
   const ehTitular = await contaAutorizadaPara(alvo.conta.id, req.usuario!.id)
     .then((a) => !!a);
   const dados = await timelineDoPerfil(cid, alvo.conta, leitor, ehTitular);
+  // Métricas (ordem 7232090197 item 3; M7): seguidores = COUNT
+  // derivado da aresta — nunca campo incrementável, nunca exposto o
+  // grafo (quem segue quem permanece privado).
+  const [seg] = await db.select({ n: sql<number>`count(*)` }).from(internetSeguidores)
+    .where(and(eq(internetSeguidores.campaignId, cid), eq(internetSeguidores.alvoContaId, alvo.conta.id)));
+  // `seguindoVoce`: o GRAFO segue privado (M7) — só um booleano
+  // sobre as contas autorizadas do próprio leitor, nunca a lista.
+  const meusIds = leitor.contas.map((c) => c.id);
+  const [segue] = meusIds.length
+    ? await db.select({ id: internetSeguidores.id }).from(internetSeguidores)
+        .where(and(
+          eq(internetSeguidores.campaignId, cid),
+          eq(internetSeguidores.alvoContaId, alvo.conta.id),
+          inArray(internetSeguidores.seguidorContaId, meusIds),
+        )).limit(1)
+    : [undefined];
   const falecido = morteVigente(
     (typeof alvo.personagem.data === "string"
       ? JSON.parse(alvo.personagem.data)
@@ -478,6 +494,8 @@ internetPerfisRouter.get("/perfis/:handle", requirePapel("mestre", "jogador"), l
       descricao: alvo.perfil.descricao,
       avatar: alvo.perfil.avatarFileId ? { arquivoId: alvo.perfil.avatarFileId } : null,
       personagemFalecido: falecido,
+      seguidores: seg?.n ?? 0,
+      seguindoVoce: !!segue,
       publicacoes: dados,
     },
   });

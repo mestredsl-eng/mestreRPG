@@ -988,6 +988,10 @@ export const internetPublicacoes = sqliteTable("internet_publicacoes", {
   retiradoMotivo: text("retirado_motivo"),
   denunciaAberta: integer("denuncia_aberta").notNull().default(0),
   denunciaGrave: integer("denuncia_grave").notNull().default(0),
+  // views brutas (M6/M12 — sem dedupe por decisão TG: unique-view é
+  // over-engineering p/ 1.1.2). Incremento atômico na leitura de
+  // matéria publicada; nunca exposto em conteúdo restrito/removido.
+  viewsCount: integer("views_count").notNull().default(0),
   version: integer("version").notNull().default(1),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
@@ -1083,6 +1087,46 @@ export const internetPatrocinios = sqliteTable("internet_patrocinios", {
   index("internet_patrocinios_pagador_idx").on(t.pagadorCharacterId),
   index("internet_patrocinios_beneficiario_idx").on(t.beneficiarioCharacterId),
   uniqueIndex("internet_patrocinios_prop_req_idx").on(t.campaignId, t.propostaRequestId),
+]);
+
+// Sessão AO VIVO simulada (Streamer — ordem Dono 7232090197 item 3;
+// threat model M1–M5/M30–M33): presença efêmera com texto básico, SEM
+// mídia real. Não é publicação — expira por TTL derivado na leitura
+// (mesmo padrão expiresAt D11, sem job). Gate fail-closed:
+// pericia:streamer OU profissao:streamer no ruleset ativo + requisitos
+// reais da ficha. Live é identidade de perfil — anônimo proibido (M5).
+export const internetAoVivo = sqliteTable("internet_ao_vivo", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  contaId: text("conta_id").notNull().references(() => internetAccounts.id, { onDelete: "cascade" }),
+  personagemId: text("personagem_id").notNull().references(() => characters.id),
+  titulo: text("titulo").notNull(),
+  descricao: text("descricao"),
+  iniciadoEm: integer("iniciado_em", { mode: "timestamp_ms" }).notNull(),
+  expiraEm: integer("expira_em", { mode: "timestamp_ms" }).notNull(),
+  encerradoEm: integer("encerrado_em", { mode: "timestamp_ms" }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  index("internet_ao_vivo_campaign_idx").on(t.campaignId, t.encerradoEm),
+  // no máximo 1 live aberta por conta (índice parcial — encerrado_em
+  // NULL = vigente; corridas de "entrar" perdem no UNIQUE).
+  uniqueIndex("internet_ao_vivo_conta_viva_idx").on(t.contaId).where(sql`encerrado_em is null`),
+]);
+
+// Seguidor unidirecional (métricas básicas — M7): aresta idempotente
+// UNIQUE(seguidor,alvo); contador é COUNT derivado na leitura, nunca
+// campo incrementável. Privado como contatos — não entra no pacote
+// público D6 (grafo social não é conteúdo exportável).
+export const internetSeguidores = sqliteTable("internet_seguidores", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  seguidorContaId: text("seguidor_conta_id").notNull().references(() => internetAccounts.id, { onDelete: "cascade" }),
+  alvoContaId: text("alvo_conta_id").notNull().references(() => internetAccounts.id, { onDelete: "cascade" }),
+  createdAt: createdAt(),
+}, (t) => [
+  uniqueIndex("internet_seguidores_par_idx").on(t.seguidorContaId, t.alvoContaId),
+  index("internet_seguidores_alvo_idx").on(t.alvoContaId),
 ]);
 
 // Transferência de personagem (P7, contrato #349): convite do titular
