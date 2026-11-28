@@ -36,6 +36,7 @@ export default function InternetDiegetica({
   adaptador = adaptadorInternetIndisponivel,
   conexao = "conectado",
   campaignId,
+  characterId,
 }: {
   adaptador?: AdaptadorInternet;
   conexao?: ConexaoRealtime;
@@ -43,6 +44,8 @@ export default function InternetDiegetica({
    *  `/internet/sites*` são por campanha. Sem ele a aba Explorar não
    *  renderiza conteúdo — fail-closed. */
   campaignId?: string;
+  /** Personagem atual — habilita "Seu perfil" (W9/W10) no Explorar. */
+  characterId?: string;
 }) {
   const [aba, setAba] = useState<Aba>("mensagens");
   const [subAba, setSubAba] = useState<SubAbaMensagens>("caixa");
@@ -78,7 +81,7 @@ export default function InternetDiegetica({
       {aba === "explorar" && (
         <div role="tabpanel" id="painel-explorar" aria-labelledby="aba-explorar">
           {campaignId ? (
-            <Explorar campaignId={campaignId} />
+            <Explorar campaignId={campaignId} characterId={characterId} />
           ) : (
             <p className="meta">A camada pública não está disponível neste contexto.</p>
           )}

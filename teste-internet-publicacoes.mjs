@@ -63,7 +63,7 @@ function semearPublicacao(banco, { campId, tipo = "noticia", titulo, corpo = "co
   const id = crypto.randomUUID();
   const agora = Date.now();
   db.prepare(`insert into internet_publicacoes (id,campaign_id,tipo,titulo,corpo,formato,status,visibilidade,autor_modo,pseudo_nome,autor_conta_id,origem,fonte_ref,personagem_id,publicado_em,created_at,updated_at)
-    values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(id, campId, tipo, titulo, corpo, "texto", status, visibilidade, autorModo, pseudoNome,
       autorContaId, origem, origem === "sistema" ? "morte:x" : null, personagemId,
       status === "publicado" ? publicadoEm : null, agora, agora);
@@ -830,8 +830,25 @@ try {
         dbM.prepare("insert into memberships (id,campaign_id,user_id,role,status,created_at,updated_at) values (?,?,?,?,?,?,?)")
           .run(memB, campBId, C.jogadores.j1.id, "jogador", "ativo", agoraM, agoraM);
         const j2char = dbM.prepare("select * from characters where campaign_id=? and name='Beto Foca' limit 1").get(campId);
+        // template_version_id tem que ser de campB: apontar para a versão
+        // de campId criava aresta cross-campaign em sheet_versions e o
+        // restore "substituir" de campId falhava com FK (sheet_versions
+        // não pode ser deletada enquanto campB referencia). Clona a
+        // estrutura sob um template novo da própria campB.
+        let tplVerB = null;
+        if (j2char?.template_version_id) {
+          const verOrig = dbM.prepare("select * from sheet_versions where id=?").get(j2char.template_version_id);
+          if (verOrig) {
+            const tplB = crypto.randomUUID();
+            dbM.prepare("insert into sheet_templates (id,campaign_id,name,description,owner_id,is_active,is_default,current_version_id,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+              .run(tplB, campBId, "Ficha Nina B", null, C.adminId, 1, 0, null, agoraM, agoraM);
+            tplVerB = crypto.randomUUID();
+            dbM.prepare("insert into sheet_versions (id,template_id,version,structure,published_at,created_at) values (?,?,?,?,?,?)")
+              .run(tplVerB, tplB, 1, verOrig.structure, verOrig.published_at, agoraM);
+          }
+        }
         dbM.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,is_npc,template_version_id,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
-          .run(charB, campBId, memB, "Nina B", j2char?.data ?? "{}", j2char?.overrides ?? "{}", "aprovada", 0, j2char?.template_version_id ?? null, agoraM, agoraM);
+          .run(charB, campBId, memB, "Nina B", j2char?.data ?? "{}", j2char?.overrides ?? "{}", "aprovada", 0, tplVerB, agoraM, agoraM);
         for (const t2 of ["inventory_entries", "equipment_entries"]) {
           const cols = dbM.prepare(`select * from ${t2} where character_id=?`).all(j2char?.id);
           for (const e of cols) {
@@ -854,8 +871,145 @@ try {
     }
   }
 
+  // ========= W9/W10 — PERFIS PÚBLICOS =================
+  sec("M. W9/W10 — ativação irreversível, perfil público, ciclo de vida");
+  {
+    const PERFIL_PUB = (handle) => `/campaigns/${campId}/internet/perfis/${handle}`;
+    const BUSCA = (q) => `/campaigns/${campId}/internet/busca?q=${encodeURIComponent(q)}`;
+
+    // M1–M2: antes de ativar → 404; ativação → 201
+    const rAntes = await req(BASE, "GET", PERFIL_PUB("beto.foca"), { cookie: j1.cookie });
+    t("H1 perfil não ativado → 404", rAntes.status === 404, `status=${rAntes.status}`);
+    const rAtivar = await API("POST", "/perfil/ativar", j2.cookie, { characterId: charJ2, descricao: "Beto da vizinhança" });
+    t("H2 ativação → 201", rAtivar.status === 201, `status=${rAtivar.status} ${JSON.stringify(rAtivar.json).slice(0, 140)}`);
+    // M3: idempotente
+    const rAtivar2 = await API("POST", "/perfil/ativar", j2.cookie, { characterId: charJ2 });
+    t("H3 reativação idempotente → 200", rAtivar2.status === 200, `status=${rAtivar2.status}`);
+    // M4: leitura pública por terceiro elegível — sem ids internos
+    const rPerfil = await req(BASE, "GET", PERFIL_PUB("beto.foca"), { cookie: j1.cookie });
+    const blobPerfil = JSON.stringify(rPerfil.json);
+    t("H4 perfil público legível", rPerfil.status === 200, `status=${rPerfil.status}`);
+    t("H5 sem ids internos no perfil", !/contaId|accountId|userId|membershipId|characterId/.test(blobPerfil), blobPerfil.slice(0, 200));
+    t("H6 nome público default = personagem", rPerfil.json?.perfil?.nomePublico === "Beto Foca", JSON.stringify(rPerfil.json?.perfil?.nomePublico));
+    // M7: irreversibilidade estrutural — desativar/excluir/ocultar → 4xx/404
+    for (const [op, path, metodo] of [
+      ["desativar", "/perfil/desativar", "POST"],
+      ["excluir", "/perfil", "DELETE"],
+      ["ocultar", "/perfil/ocultar", "POST"],
+    ]) {
+      const r = await req(BASE, metodo, `/campaigns/${campId}/internet${path}`, { cookie: j2.cookie, body: { characterId: charJ2 } });
+      t(`M7 ${op} → rejeitado`, [400, 403, 404, 405].includes(r.status), `status=${r.status}`);
+    }
+    // M8: leitura sem conta própria → 403 (mesmo gate de sites/feed)
+    const semConta = await req(BASE, "GET", PERFIL_PUB("beto.foca"), { cookie: C.cookieMestre });
+    t("H8 mestre lê perfil público", semConta.status === 200, `status=${semConta.status}`);
+    // M9: não-titular não edita (j1 tenta PATCH no perfil de j2)
+    const rPatchTerceiro = await API("PATCH", "/perfil", j1.cookie, { characterId: charJ2, descricao: "hack" });
+    t("H9 terceiro não edita → 403/404", rPatchTerceiro.status === 403 || rPatchTerceiro.status === 404, `status=${rPatchTerceiro.status}`);
+    // M10: mestre não edita conteúdo diegético do perfil
+    const rPatchMestre = await API("PATCH", "/perfil", C.cookieMestre, { characterId: charJ2, descricao: "hack" });
+    t("H10 mestre não edita perfil → 403/404", rPatchMestre.status === 403 || rPatchMestre.status === 404, `status=${rPatchMestre.status}`);
+    // M11: edição legítima do titular
+    const rEdit = await API("PATCH", "/perfil", j2.cookie, { characterId: charJ2, nomePublico: "Beto Vizinho", descricao: "novo texto" });
+    t("H11 titular edita → 200", rEdit.status === 200, `status=${rEdit.status}`);
+    const rPerfil2 = await req(BASE, "GET", PERFIL_PUB("beto.foca"), { cookie: j1.cookie });
+    t("H12 nome público editado visível", rPerfil2.json?.perfil?.nomePublico === "Beto Vizinho", JSON.stringify(rPerfil2.json?.perfil?.nomePublico));
+    // M13: avatar inválido → 4xx (não 500)
+    const rAvatar = await API("POST", "/perfil/avatar", j2.cookie, { characterId: charJ2, arquivoId: crypto.randomUUID() });
+    t("H13 avatar arquivo inexistente → 4xx", rAvatar.status >= 400 && rAvatar.status < 500, `status=${rAvatar.status}`);
+    // M14: busca por handle encontra; displayName/nome público NÃO indexa
+    const rBusca = await req(BASE, "GET", BUSCA("beto.foca"), { cookie: j1.cookie });
+    t("H14 busca por handle → acha perfil", rBusca.status === 200 && JSON.stringify(rBusca.json).includes("beto.foca"), `status=${rBusca.status}`);
+    const rBuscaNome = await req(BASE, "GET", BUSCA("Beto Vizinho"), { cookie: j1.cookie });
+    t("H15 nome público NÃO indexa", !JSON.stringify(rBuscaNome.json).includes("beto.foca"), `status=${rBuscaNome.status}`);
+    // M16: P7 — perfil segue o personagem; novo titular edita, antigo não
+    const inv = await req(BASE, "POST", `/campaigns/${campId}/characters/${charJ2}/transferencias`, { cookie: j2.cookie, body: { membershipId: C.jogadores.j1.membershipId } });
+    const tid = inv.json?.transferencia?.id;
+    t("H16 transferência criada", !!tid, `status=${inv.status}`);
+    if (tid) {
+      await req(BASE, "POST", `/campaigns/${campId}/characters/transferencias/${tid}/responder`, { cookie: j1.cookie, body: { aceitar: true } });
+      await new Promise((r) => setTimeout(r, 300));
+      const rAntigo = await API("PATCH", "/perfil", j2.cookie, { characterId: charJ2, descricao: "hack" });
+      t("H17 titular anterior não edita → 403/404", rAntigo.status === 403 || rAntigo.status === 404, `status=${rAntigo.status}`);
+      const rNovo = await API("PATCH", "/perfil", j1.cookie, { characterId: charJ2, descricao: "sou o novo titular" });
+      t("H18 novo titular edita → 200", rNovo.status === 200, `status=${rNovo.status}`);
+      const rLeAntigo = await req(BASE, "GET", PERFIL_PUB("beto.foca"), { cookie: j2.cookie });
+      t("H19 titular anterior ainda LÊ perfil", rLeAntigo.status === 200 || rLeAntigo.status === 403, `status=${rLeAntigo.status}`);
+    }
+    // M20–M22: morte vigente → leitura ok + escrita negada; ressurreição reabre
+    const dano = await req(BASE, "POST", `/characters/${charJ2}/hp`, { cookie: C.cookieMestre, body: { acao: "dano", quantidade: 9999, motivo: "morte p9" } });
+    t("H20 dano letal → 200", dano.status === 200, `status=${dano.status}`);
+    if (dano.status === 200) {
+      await new Promise((r) => setTimeout(r, 300));
+      const rMorto = await req(BASE, "GET", PERFIL_PUB("beto.foca"), { cookie: j1.cookie });
+      t("H21 perfil de morto legível + flag", rMorto.status === 200 && rMorto.json?.perfil?.personagemFalecido === true, `status=${rMorto.status}`);
+      const rEditMorto = await API("PATCH", "/perfil", j1.cookie, { characterId: charJ2, descricao: "x" });
+      t("H22 escrita em morto → 403/404", rEditMorto.status === 403 || rEditMorto.status === 404, `status=${rEditMorto.status}`);
+      // TG-P2: ativação também é escrita — charJ1 morto nunca ativou
+      const rAtivarMorto = await API("POST", "/perfil/ativar", j1.cookie, { characterId: charJ1 });
+      t("H22b ativar perfil de morto → 403", rAtivarMorto.status === 403, `status=${rAtivarMorto.status}`);
+      const perfilMorto = (() => { const db = abrirDb(BANCO); const r = db.prepare("select count(*) n from internet_perfis where character_id=?").get(charJ1); db.close(); return r?.n; })();
+      t("H22c nenhuma linha de perfil criada p/ morto", perfilMorto === 0, `linhas=${perfilMorto}`);
+      const ress = await req(BASE, "POST", `/characters/${charJ2}/ressuscitar`, { cookie: C.cookieMestre, body: {} });
+      t("H23 ressurreição → 200", ress.status === 200, `status=${ress.status}`);
+      if (ress.status === 200) {
+        const rVivo = await API("PATCH", "/perfil", j1.cookie, { characterId: charJ2, descricao: "voltei" });
+        t("H24 escrita reabre após ressurreição", rVivo.status === 200, `status=${rVivo.status}`);
+      }
+    }
+    // M25: cross-campaign → 404; sem sessão → 401
+    const campM = await req(BASE, "POST", "/campaigns", { cookie: C.cookieMestre, body: { name: "CampM" } });
+    const campMId = campM.json?.campanha?.id;
+    const rCross = campMId
+      ? await req(BASE, "GET", `/campaigns/${campMId}/internet/perfis/beto.foca`, { cookie: C.cookieMestre })
+      : { status: 0 };
+    t("H25 perfil de outra campanha → 404", rCross.status === 404, `status=${rCross.status}`);
+    const rAnon = await req(BASE, "GET", PERFIL_PUB("beto.foca"), {});
+    t("H26 sem sessão → 401", rAnon.status === 401, `status=${rAnon.status}`);
+  }
+
+  // ================= RESTAURAÇÃO × PERFIS (TG P1) =================
+  sec("O. Restore substituir — perfis preservados, avatar saneado");
+  try {
+    // perfil de charJ2 já existe (seção M, titular j1 pós-P7). Cria um
+    // arquivo real e o referencia como avatar; depois o pacote de
+    // restore NÃO carrega o arquivo → avatar_file_id deve virar NULL
+    // (crit. TG 7232390928 §3), nunca restaurar aresta inválida.
+    const arquivoAvatar = crypto.randomUUID();
+    const db0 = abrirDb(BANCO);
+    const perfilAntes = db0.prepare("select * from internet_perfis where character_id=?").get(charJ2);
+    t("O0 perfil de charJ2 existe", !!perfilAntes, JSON.stringify(perfilAntes?.id));
+    const agoraO = Date.now();
+    db0.prepare(`insert into files (id,campaign_id,folder_path,display_name,file_name,mime_type,size_bytes,uploaded_by,visibility,status,created_at,updated_at)
+      values (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(arquivoAvatar, campId, "/", "Avatar O", "avatar-o.png", "image/png", 10, C.adminId, "mestre", "aprovado", agoraO, agoraO);
+    db0.prepare("update internet_perfis set avatar_file_id=? where character_id=?").run(arquivoAvatar, charJ2);
+    db0.close();
+    const expO = await req(BASE, "GET", `/campaigns/${campId}/exportar`, { cookie: C.cookieMestre });
+    // remove o arquivo do pacote → restore não o recria → aresta do
+    // avatar fica pendente e deve ser saneada para NULL.
+    if (Array.isArray(expO.json?.estado?.files)) {
+      expO.json.estado.files = expO.json.estado.files.filter((f) => f.id !== arquivoAvatar);
+    }
+    const impO = await req(BASE, "POST", "/campaigns/importar", {
+      cookie: C.cookieMestre,
+      body: { pacote: expO.json, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+    });
+    t("O1 substituir → 200", impO.status === 200, `status=${impO.status} ${JSON.stringify(impO.json).slice(0, 160)}`);
+    const db1 = abrirDb(BANCO);
+    const perfilDepois = db1.prepare("select * from internet_perfis where character_id=?").get(charJ2);
+    t("O2 perfil preservado (mesmo id, descrição intacta)",
+      !!perfilDepois && perfilDepois.id === perfilAntes?.id && perfilDepois.descricao === perfilAntes?.descricao,
+      JSON.stringify({ antes: perfilAntes?.id, depois: perfilDepois?.id }));
+    t("O3 avatar_file_id inválido → NULL", !!perfilDepois && perfilDepois.avatar_file_id === null,
+      `avatar=${perfilDepois?.avatar_file_id}`);
+    db1.close();
+    const rPerfilO = await req(BASE, "GET", `/campaigns/${campId}/internet/perfis/beto.foca`, { cookie: j1.cookie });
+    t("O4 perfil público segue legível", rPerfilO.status === 200, `status=${rPerfilO.status}`);
+  } catch (e) { console.log("  FALHOU O exceção:", String(e).slice(0, 300)); fail++; }
+
   // ================= D6 HARDENING (P1 residual + P2s) ==========
-  sec("M. D6 — linhagem dedupe, denuncianteRef, rascunho, contatos");
+  sec("L2. D6 — linhagem dedupe, denuncianteRef, rascunho, contatos");
   {
     const rExpM = await API("GET", "/exportar", C.cookieMestre);
     const pacoteM = rExpM.json;
@@ -870,7 +1024,7 @@ try {
       db.close();
     }
     const rExp2 = await API("GET", "/exportar", C.cookieMestre);
-    t("M1 export omite rascunho", !JSON.stringify(rExp2.json).includes("RASCUNHO_SECRETO"), "vazou rascunho");
+    t("L2-1 export omite rascunho", !JSON.stringify(rExp2.json).includes("RASCUNHO_SECRETO"), "vazou rascunho");
 
     // M2 (P1 residual 7232925593 / PoC Gerente 7232846030): página
     // forjada NÃO pendura em site de JOGADOR — dedupe por id não
@@ -886,20 +1040,20 @@ try {
     forjadoM.estado.publicacoes = [];
     forjadoM.estado.denuncias = [];
     const rImpM = await API("POST", "/importar", C.cookieMestre, { pacote: forjadoM, confirmacao: "IMPORTAR" });
-    t("M2 import forjado → 200", rImpM.status === 200, `status=${rImpM.status}`);
+    t("L2-2 import forjado → 200", rImpM.status === 200, `status=${rImpM.status}`);
     const pgM = (() => { const db = abrirDb(BANCO); const r = db.prepare("select id from internet_pages where id=?").get(pagForjadaM.id); db.close(); return r; })();
-    t("M2b página em site de jogador NÃO inserida", !pgM, JSON.stringify(pgM));
+    t("L2-2b página em site de jogador NÃO inserida", !pgM, JSON.stringify(pgM));
     const rejM = (rImpM.json?.rejeitadas ?? []).find((r) => r.id === pagForjadaM.id);
-    t("M2c rejeitada como site_orfao", rejM?.motivo === "site_orfao", JSON.stringify(rImpM.json?.rejeitadas).slice(0, 200));
+    t("L2-2c rejeitada como site_orfao", rejM?.motivo === "site_orfao", JSON.stringify(rImpM.json?.rejeitadas).slice(0, 200));
 
     // M3/M4 precisam de campanha com publicações importadas (origem
     //='importado' é a única âncora válida de denúncia).
     const campM = await req(BASE, "POST", "/campaigns", { cookie: C.cookieMestre, body: { name: "CampM" } });
     const campMId = campM.json?.campanha?.id;
-    t("M3 campanha M criada", !!campMId);
+    t("L2-3 campanha M criada", !!campMId);
     if (campMId) {
       const rImpM0 = await req(BASE, "POST", `/campaigns/${campMId}/internet/importar`, { cookie: C.cookieMestre, body: { pacote: pacoteM, confirmacao: "IMPORTAR" } });
-      t("M3a import pacote em M → 200", rImpM0.status === 200, `status=${rImpM0.status}`);
+      t("L2-3a import pacote em M → 200", rImpM0.status === 200, `status=${rImpM0.status}`);
 
       // M3b (P2-2): denuncianteRef forjado (UUID de conta real de
       // outra campanha) grava com prefixo pkg: — nunca colide com
@@ -915,9 +1069,9 @@ try {
         };
         pkgM3.estado.denuncias = [denM];
         const rImpM3 = await req(BASE, "POST", `/campaigns/${campMId}/internet/importar`, { cookie: C.cookieMestre, body: { pacote: pkgM3, confirmacao: "IMPORTAR" } });
-        t("M3b import denúncia → 200", rImpM3.status === 200, `status=${rImpM3.status} ${JSON.stringify(rImpM3.json).slice(0,140)}`);
+        t("L2-3b import denúncia → 200", rImpM3.status === 200, `status=${rImpM3.status} ${JSON.stringify(rImpM3.json).slice(0,140)}`);
         const denRow = (() => { const db = abrirDb(BANCO); const r = db.prepare("select denunciante_ref from internet_denuncias where id=?").get(denM.id); db.close(); return r; })();
-        t("M3c denunciante_ref prefixado pkg:", denRow?.denunciante_ref === `pkg:${contaJ1}`, JSON.stringify(denRow));
+        t("L2-3c denunciante_ref prefixado pkg:", denRow?.denunciante_ref === `pkg:${contaJ1}`, JSON.stringify(denRow));
       }
 
       // M4 (P2-4): visibilidade 'contatos' é insatisfativel sem autor
@@ -930,11 +1084,11 @@ try {
         pkgM4.estado.publicacoes = [pubCt];
         pkgM4.estado.sites = []; pkgM4.estado.paginas = []; pkgM4.estado.denuncias = [];
         const rImpM4 = await req(BASE, "POST", `/campaigns/${campMId}/internet/importar`, { cookie: C.cookieMestre, body: { pacote: pkgM4, confirmacao: "IMPORTAR" } });
-        t("M4 import contatos → 200", rImpM4.status === 200, `status=${rImpM4.status}`);
+        t("L2-4 import contatos → 200", rImpM4.status === 200, `status=${rImpM4.status}`);
         const rejCt = (rImpM4.json?.rejeitadas ?? []).find((r) => r.id === pubCt.id);
-        t("M4b rejeitada visibilidade_insatisfativel", rejCt?.motivo === "visibilidade_insatisfativel", JSON.stringify(rImpM4.json?.rejeitadas).slice(0, 200));
+        t("L2-4b rejeitada visibilidade_insatisfativel", rejCt?.motivo === "visibilidade_insatisfativel", JSON.stringify(rImpM4.json?.rejeitadas).slice(0, 200));
         const pubCtRow = (() => { const db = abrirDb(BANCO); const r = db.prepare("select id from internet_publicacoes where id=?").get(pubCt.id); db.close(); return r; })();
-        t("M4c publicação contatos NÃO inserida", !pubCtRow, JSON.stringify(pubCtRow));
+        t("L2-4c publicação contatos NÃO inserida", !pubCtRow, JSON.stringify(pubCtRow));
       }
 
       // M5 (INTERMEDIÁRIO O1 #399): contadores derivados contam só
@@ -981,6 +1135,175 @@ try {
         t("M6c nenhuma 'aberta'/'em_analise' restante", irmasM6.every((s) => s !== "aberta" && s !== "em_analise"), JSON.stringify(irmasM6));
       }
     }
+  }
+  // ================= W2/timeline — correções Dono+TG (#400) =================
+  // Pacote adjudicado: `contatos` NUNCA em busca/timeline (mesmo com
+  // aresta), expiração no SQL antes do corte, paginação keyset sem
+  // caps truncadores (L+1 por categoria), V-08 sem PK de site/página
+  // no payload, DP-5 TOCTOU com morte revalidada dentro da tx.
+  sec("Q. W2/timeline — contatos fora, caps removidos, V-08, DP-5 tx");
+  try {
+    const BUSCA_Q = (q, extra = "") => `/campaigns/${campId}/internet/busca?q=${encodeURIComponent(q)}${extra}`;
+    const agoraMs = Date.now();
+
+    // Q1: >100 publicações 'contatos' (invisíveis MESMO com aresta
+    // aceita j2→j1) mais antigas que uma 'campanha' visível — o cap
+    // antigo de 100 linhas sem filtro a escondia; agora o WHERE
+    // exclui contatos antes do LIMIT.
+    for (let i = 0; i < 110; i++) {
+      semearPublicacao(BANCO, { campId, tipo: "noticia", titulo: `QCT${i} segredo`, corpo: "corpo", status: "publicado", visibilidade: "contatos", autorContaId: contaJ1, publicadoEm: agoraMs - 100000 - i });
+    }
+    semearPublicacao(BANCO, { campId, tipo: "noticia", titulo: "QVCPUB visivel antiga", corpo: "corpo", status: "publicado", visibilidade: "campanha", autorContaId: contaJ1, publicadoEm: agoraMs - 200000 });
+    // publicação campanha EXPIRADA com o mesmo prefixo — fora da busca
+    const pubExpQ = semearPublicacao(BANCO, { campId, tipo: "noticia", titulo: "QVEXPIRADA velha", corpo: "corpo", status: "publicado", visibilidade: "campanha", autorContaId: contaJ1, publicadoEm: agoraMs - 300000 });
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update internet_publicacoes set expires_at=? where id=?").run(agoraMs - 1000, pubExpQ);
+      db.close();
+    }
+    const rQV = await req(BASE, "GET", BUSCA_Q("QV"), { cookie: j2.cookie });
+    const titulosQV = (rQV.json?.resultados ?? []).map((i) => i.titulo ?? "");
+    t("Q1a publicação campanha antiga aparece apesar de 110 contatos", rQV.status === 200 && titulosQV.some((x) => x.includes("QVCPUB")), `status=${rQV.status} n=${titulosQV.length}`);
+    t("Q1b 'contatos' NUNCA em busca mesmo com aresta aceita", !titulosQV.some((x) => x.includes("QCT")), JSON.stringify(titulosQV).slice(0, 200));
+    t("Q1c publicação expirada fora da busca", !titulosQV.some((x) => x.includes("QVEXPIRADA")), "");
+
+    // Q2a: 55 sites (> cap antigo de 50) — keyset alcança todos.
+    {
+      const db = abrirDb(BANCO);
+      const ins = db.prepare("insert into internet_sites (id,campaign_id,slug,nome,descricao,status,created_at,updated_at) values (?,?,?,?,?,?,?,?)");
+      for (let i = 0; i < 55; i++) ins.run(crypto.randomUUID(), campId, `qsite-${i}`, `QsiteVolume ${i}`, "desc QVOLSITE", "ativo", agoraMs - 500000 + i, agoraMs);
+      db.close();
+    }
+    // Q2b: 55 páginas publicadas (> cap antigo de 50).
+    {
+      const db = abrirDb(BANCO);
+      const siteId = db.prepare("select id from internet_sites where campaign_id=? and slug='qsite-0'").get(campId).id;
+      const ins = db.prepare("insert into internet_pages (id,site_id,campaign_id,slug,titulo,corpo,formato,status,version,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)");
+      for (let i = 0; i < 55; i++) ins.run(crypto.randomUUID(), siteId, campId, `qpag-${i}`, `QpagVolume ${i}`, "corpo QVOLPAG", "texto", "publicado", 1, agoraMs - 400000 + i, agoraMs);
+      db.close();
+    }
+    // Q2c: 25 perfis (> cap antigo de 20) — semeados via SQL (sem
+    // rate-limit de API): personagem + conta + perfil por handle.
+    {
+      const db = abrirDb(BANCO);
+      const membJ1 = C.jogadores.j1.membershipId;
+      const tpl = db.prepare("select template_version_id from characters where campaign_id=? limit 1").get(campId);
+      const insChar = db.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)");
+      const insAcc = db.prepare("insert into internet_accounts (id,campaign_id,character_id,handle,status,mostrar_presenca,mostrar_digitando,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)");
+      const insPerf = db.prepare("insert into internet_perfis (id,campaign_id,character_id,ativado_em,created_at,updated_at) values (?,?,?,?,?,?)");
+      for (let i = 0; i < 25; i++) {
+        const chId = crypto.randomUUID(), accId = crypto.randomUUID(), pId = crypto.randomUUID();
+        insChar.run(chId, campId, membJ1, tpl.template_version_id, `QVPerf${i}`, "{}", "{}", "aprovada", 0, agoraMs, agoraMs);
+        insAcc.run(accId, campId, chId, `qvperf${String(i).padStart(2, "0")}`, "ativa", 0, 0, agoraMs, agoraMs);
+        insPerf.run(pId, campId, chId, agoraMs - 300000 + i, agoraMs, agoraMs);
+      }
+      db.close();
+    }
+    // pagina tudo com limit=10 até esgotar o cursor
+    const contarEscopo = async (q, escopo) => {
+      let vistos = 0, cursor = "", paginas = 0;
+      do {
+        const r = await req(BASE, "GET", BUSCA_Q(q, `&limit=10${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`), { cookie: j2.cookie });
+        if (r.status !== 200) return { vistos: -1, erro: r.status };
+        vistos += (r.json?.resultados ?? []).filter((i) => i.escopo === escopo).length;
+        cursor = r.json?.nextCursor ?? "";
+        paginas++;
+      } while (cursor && paginas < 30);
+      return { vistos, paginas };
+    };
+    const rSites = await contarEscopo("QsiteVol", "site");
+    t("Q2a 55 sites > cap 50 — todos alcançáveis via cursor", rSites.vistos >= 55, JSON.stringify(rSites));
+    const rPags = await contarEscopo("QpagVol", "pagina");
+    t("Q2b 55 páginas > cap 50 — todas alcançáveis", rPags.vistos >= 55, JSON.stringify(rPags));
+    const rPerfs = await contarEscopo("qvperf", "perfil");
+    t("Q2c 25 perfis > cap 20 — todos alcançáveis", rPerfs.vistos >= 25, JSON.stringify(rPerfs));
+
+    // Q3: V-08 — payload sem PK interna de site/página (e sem
+    // criadoEmMs interno); refs públicas preservadas.
+    const rPk = await req(BASE, "GET", BUSCA_Q("QsiteVol", "&limit=5"), { cookie: j2.cookie });
+    const rPkP = await req(BASE, "GET", BUSCA_Q("QpagVol", "&limit=5"), { cookie: j2.cookie });
+    const itemSite = (rPk.json?.resultados ?? []).find((i) => i.escopo === "site");
+    const itemPag = (rPkP.json?.resultados ?? []).find((i) => i.escopo === "pagina");
+    const chavesOk = (i) => i && Object.keys(i).every((k) => ["escopo", "titulo", "trecho", "ref", "ref2"].includes(k));
+    t("Q3a site serializado sem id/criadoEmMs (allowlist)", chavesOk(itemSite), JSON.stringify(itemSite));
+    t("Q3b página serializada sem id/criadoEmMs", chavesOk(itemPag), JSON.stringify(itemPag));
+    t("Q3c refs públicas preservadas (slug/siteSlug+pageSlug)", !!itemSite?.ref && !!itemPag?.ref && !!itemPag?.ref2, JSON.stringify({ s: itemSite?.ref, p: [itemPag?.ref, itemPag?.ref2] }));
+
+    // Q4: tie-break de timestamp — itens de categorias distintas com
+    // o MESMO ms ordenam deterministicamente por chave DESC e o
+    // cursor não repete nem pula.
+    {
+      const db = abrirDb(BANCO);
+      const tsEmpate = agoraMs - 600000;
+      db.prepare("insert into internet_sites (id,campaign_id,slug,nome,descricao,status,created_at,updated_at) values (?,?,?,?,?,?,?,?)")
+        .run("tie-site-aaaa", campId, "tie-site-a", "QTIE site alpha", "x", "ativo", tsEmpate, agoraMs);
+      const pubTie = semearPublicacao(BANCO, { campId, tipo: "noticia", titulo: "QTIE pub beta", corpo: "x", status: "publicado", visibilidade: "campanha", autorContaId: contaJ1, publicadoEm: tsEmpate });
+      db.prepare("update internet_publicacoes set created_at=? where id=?").run(tsEmpate, pubTie);
+      db.close();
+      const rTie = await req(BASE, "GET", BUSCA_Q("QTIE", "&limit=10"), { cookie: j2.cookie });
+      const ord = (rTie.json?.resultados ?? []).map((i) => `${i.escopo}:${i.titulo}`);
+      t("Q4a empate de timestamp retorna as duas categorias", ord.length >= 2, JSON.stringify(ord));
+      // empate total → chave DESC: "tie-site-aaaa" > uuid hex da
+      // publicação → site ordena primeiro (determinístico).
+      t("Q4b empate resolve por chave DESC (site antes da publicação)", ord[0] === "site:QTIE site alpha", JSON.stringify(ord));
+    }
+
+    // Q5: timeline do perfil — `contatos` NUNCA (mesmo com aresta
+    // aceita), expirados fora, anônima só p/ titular. Cenário próprio:
+    // j3 perdeu permissão no restore da seção O e charJ1 morreu na H;
+    // charJ2 mudou de titular (P7). Criamos charQ de j2 + conta +
+    // perfil; leitor com aresta = j1 via contaJ2 (conta do charJ2,
+    // hoje de j1).
+    const charQ = C.novoPersonagem(C.jogadores.j2.membershipId, "QPerf Beto", { comp: 1, prof: "medico" });
+    darDispositivo(BANCO, charQ);
+    const cQ = await API("POST", "/account", j2.cookie, { characterId: charQ, handle: "qperf.beto" });
+    const contaQ = cQ.json?.conta?.id;
+    t("Q5a-1 conta qperf.beto criada", cQ.status === 201 && !!contaQ, `status=${cQ.status} ${JSON.stringify(cQ.json).slice(0, 160)}`);
+    const rAtivarQ = await req(BASE, "POST", `/campaigns/${campId}/internet/perfil/ativar`, { cookie: j2.cookie, body: { characterId: charQ } });
+    t("Q5a0 perfil qperf.beto ativado", rAtivarQ.status === 201 || rAtivarQ.status === 200, `status=${rAtivarQ.status} ${JSON.stringify(rAtivarQ.json).slice(0, 200)}`);
+    // aresta aceita contaJ2(j1)↔contaQ(j2): j1 é leitor COM aresta do
+    // autor — prova de que 'contatos' não vaza nem com aresta vigente.
+    aresta(BANCO, { campId, origemId: contaJ2, destinoId: contaQ, status: "aceito" });
+    semearPublicacao(BANCO, { campId, tipo: "post_perfil", titulo: "QTLCONT so contatos", corpo: "x", status: "publicado", visibilidade: "contatos", autorContaId: contaQ, publicadoEm: agoraMs - 1000 });
+    semearPublicacao(BANCO, { campId, tipo: "post_perfil", titulo: "QTLVIS campanha", corpo: "x", status: "publicado", visibilidade: "campanha", autorContaId: contaQ, publicadoEm: agoraMs - 2000 });
+    const pubTlExp = semearPublicacao(BANCO, { campId, tipo: "post_perfil", titulo: "QTLEXP expirada", corpo: "x", status: "publicado", visibilidade: "campanha", autorContaId: contaQ, publicadoEm: agoraMs - 3000 });
+    semearPublicacao(BANCO, { campId, tipo: "anuncio", titulo: "QTLANON anonimo", corpo: "x", status: "publicado", visibilidade: "campanha", autorContaId: contaQ, autorModo: "anonimo", publicadoEm: agoraMs - 4000 });
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update internet_publicacoes set expires_at=? where id=?").run(agoraMs - 500, pubTlExp);
+      db.close();
+    }
+    const rTlJ1 = await req(BASE, "GET", `/campaigns/${campId}/internet/perfis/qperf.beto`, { cookie: j1.cookie });
+    const tlJ1 = JSON.stringify(rTlJ1.json?.perfil?.publicacoes ?? []);
+    t("Q5a timeline: campanha visível presente", tlJ1.includes("QTLVIS"), `status=${rTlJ1.status}`);
+    t("Q5b timeline: 'contatos' ausente MESMO com aresta aceita", !tlJ1.includes("QTLCONT"), tlJ1.slice(0, 200));
+    t("Q5c timeline: expirada fora", !tlJ1.includes("QTLEXP"), "");
+    t("Q5d timeline: anônima oculta p/ terceiro", !tlJ1.includes("QTLANON"), "");
+    const rTlJ2 = await req(BASE, "GET", `/campaigns/${campId}/internet/perfis/qperf.beto`, { cookie: j2.cookie });
+    const pubsJ2 = rTlJ2.json?.perfil?.publicacoes ?? [];
+    const anonJ2 = pubsJ2.find((p) => p.titulo === "QTLANON anonimo");
+    t("Q5e timeline titular: anônima aparece marcada 'anonima'", !!anonJ2 && anonJ2.anonima === true, JSON.stringify(anonJ2));
+    t("Q5f timeline titular: 'contatos' continua fora", !JSON.stringify(pubsJ2).includes("QTLCONT"), "");
+
+    // Q6: DP-5 TOCTOU — PATCH/avatar revalidam morte DENTRO da tx
+    // (perfil de charQ já ativo desde Q5a0).
+    const rPatchVivo = await req(BASE, "PATCH", `/campaigns/${campId}/internet/perfil`, { cookie: j2.cookie, body: { characterId: charQ, descricao: "vivo" } });
+    t("Q6b PATCH perfil vivo → 200", rPatchVivo.status === 200, `status=${rPatchVivo.status}`);
+    {
+      const db = abrirDb(BANCO);
+      const row = db.prepare("select data from characters where id=?").get(charQ);
+      const dados = JSON.parse(row.data);
+      dados.__morte = [{ em: new Date(agoraMs).toISOString(), causa: "teste Q6", revertidaEm: null }];
+      db.prepare("update characters set data=? where id=?").run(JSON.stringify(dados), charQ);
+      db.close();
+    }
+    const rPatchMorto = await req(BASE, "PATCH", `/campaigns/${campId}/internet/perfil`, { cookie: j2.cookie, body: { characterId: charQ, descricao: "morto" } });
+    t("Q6c PATCH perfil morto → 403 personagem_falecido", rPatchMorto.status === 403 && JSON.stringify(rPatchMorto.json).includes("falecido"), `status=${rPatchMorto.status} ${JSON.stringify(rPatchMorto.json).slice(0, 120)}`);
+    const rAvMorto = await req(BASE, "POST", `/campaigns/${campId}/internet/perfil/avatar`, { cookie: j2.cookie, body: { characterId: charQ, arquivoId: crypto.randomUUID() } });
+    t("Q6d POST avatar morto → 403 personagem_falecido (gate antes do arquivo)", rAvMorto.status === 403 && JSON.stringify(rAvMorto.json).includes("falecido"), `status=${rAvMorto.status}`);
+  } catch (eQ) {
+    fail++;
+    console.log("  FALHOU exceção na seção Q:", String(eQ).slice(0, 500));
   }
 } finally {
   if (proc) await encerrarServidor(proc);

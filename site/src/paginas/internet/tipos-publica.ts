@@ -126,3 +126,45 @@ export interface PublicacaoNova {
   expiresAt?: string;
   contaId?: string;
 }
+
+// ---------- Perfis públicos (W9/W10 — D10/DP-4/5/7 + D12) ----------
+
+export interface PublicacaoTimeline {
+  id: string;
+  tipo: string;
+  titulo: string;
+  corpo: string;
+  formato: string;
+  publicadoEm: string | null;
+  /** Presente só para o próprio titular (DP-1 — marcada, jamais
+   *  identificada). */
+  anonima?: boolean;
+  pseudoNome?: string;
+}
+
+export interface PerfilPublico {
+  handle: string;
+  nomePublico: string;
+  descricao: string | null;
+  avatar: { arquivoId: string } | null;
+  personagemFalecido: boolean;
+  publicacoes: PublicacaoTimeline[];
+}
+
+export interface PerfilResumoBusca {
+  handle: string;
+  nomePublico: string;
+}
+
+/** Visão do próprio titular (GET /perfil?characterId=) — rota
+ *  autenticada do dono, pode trazer ids internos de gestão. */
+export interface PerfilProprio {
+  id: string;
+  characterId: string;
+  handle: string | null;
+  nomePublico: string | null;
+  descricao: string | null;
+  avatarFileId: string | null;
+  ativadoEm: string;
+  falecido: boolean;
+}

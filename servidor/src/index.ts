@@ -31,6 +31,7 @@ import { internetRouter } from "./routes/internet.js";
 import { internetPublicaRouter } from "./routes/internet-publica.js";
 import { internetEscritaRouter } from "./routes/internet-escrita.js";
 import { internetPortabilidadeRouter } from "./routes/internet-portabilidade.js";
+import { internetPerfisRouter } from "./routes/internet-perfis.js";
 import { configurarSockets } from "./sockets/index.js";
 import { errorHandler } from "./middleware/error.js";
 import { headersSeguranca } from "./middleware/headers.js";
@@ -131,6 +132,7 @@ app.use("/api/campaigns/:campaignId/internet", internetRouter);
 // GET /sites/:slug do router público (senão "meus" cai como slug)
 app.use("/api/campaigns/:campaignId/internet", internetEscritaRouter);
 app.use("/api/campaigns/:campaignId/internet", internetPortabilidadeRouter);
+app.use("/api/campaigns/:campaignId/internet", internetPerfisRouter);
 app.use("/api/campaigns/:campaignId/internet", internetPublicaRouter);
 app.use("/api/campaigns/:campaignId/inventario", catalogoRouter);
 app.use("/api/campaigns/:campaignId/sessoes", sessoesRouter);

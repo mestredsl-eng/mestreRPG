@@ -10,7 +10,8 @@
 
 import { ApiError } from "../../api";
 import type {
-  MinhaPublicacao, PaginaPagina, PaginaPublica, PublicacaoDetalhe,
+  MinhaPublicacao, PaginaPagina, PaginaPublica, PerfilProprio,
+  PerfilPublico, PerfilResumoBusca, PublicacaoDetalhe,
   PublicacaoNova, PublicacaoResumo, SitePublico, SitePublicoResumo,
   TipoPublicacao,
 } from "./tipos-publica";
@@ -130,6 +131,63 @@ export function criarAdaptadorInternetPublica({ campaignId }: { campaignId: stri
         `${base}/publicacoes/${encodeURIComponent(id)}/denunciar`,
         { method: "POST", body: JSON.stringify({ motivo, denunciaGrave }) });
       return r;
+    },
+
+    // ---------- Perfis públicos (W9/W10) ----------
+
+    /** Perfil público por handle — 404 uniforme para inexistente,
+     *  não ativado ou outra campanha (anti-enumeração). */
+    async obterPerfil(handle: string): Promise<PerfilPublico> {
+      const r = await requisicao<{ perfil: PerfilPublico }>(
+        `${base}/perfis/${encodeURIComponent(handle)}`);
+      return r.perfil;
+    },
+
+    /** D12: busca de perfis por HANDLE somente — displayName/nome
+     *  público não indexam (SEARCH-06). Consome o envelope unificado
+     *  W2 `{resultados}` filtrando escopo='perfil' (TG #400). */
+    async buscarPerfis(q: string): Promise<PerfilResumoBusca[]> {
+      const r = await requisicao<{
+        resultados: { escopo: string; ref: string; trecho: string | null }[];
+      }>(`${base}/busca?q=${encodeURIComponent(q)}`);
+      return (r.resultados ?? [])
+        .filter((i) => i.escopo === "perfil")
+        .map((i) => ({ handle: i.ref, nomePublico: i.trecho ?? "" }));
+    },
+
+    /** Visão do próprio titular (characterId vem da URL — escopo
+     *  servidor valida titularidade). 404 = perfil não ativado. */
+    async obterMeuPerfil(characterId: string): Promise<PerfilProprio | null> {
+      try {
+        const r = await requisicao<{ perfil: PerfilProprio }>(
+          `${base}/perfil?characterId=${encodeURIComponent(characterId)}`);
+        return r.perfil;
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return null;
+        throw e;
+      }
+    },
+
+    /** Ativação irreversível (D10) — o servidor rejeita repetição com
+     *  200 idempotente; a UI ainda confirma uma única vez. */
+    async ativarPerfil(characterId: string, dados?: { nomePublico?: string; descricao?: string }): Promise<PerfilProprio> {
+      const r = await requisicao<{ perfil: PerfilProprio }>(
+        `${base}/perfil/ativar`, {
+          method: "POST",
+          body: JSON.stringify({ characterId, ...dados }),
+        });
+      return r.perfil;
+    },
+
+    async editarPerfil(characterId: string, dados: {
+      nomePublico?: string | null; descricao?: string | null; avatarFileId?: string | null;
+    }): Promise<PerfilProprio> {
+      const r = await requisicao<{ perfil: PerfilProprio }>(
+        `${base}/perfil`, {
+          method: "PATCH",
+          body: JSON.stringify({ characterId, ...dados }),
+        });
+      return r.perfil;
     },
 
     async obterPagina(siteSlug: string, pageSlug: string): Promise<{ pagina: PaginaPublica; site: { slug: string; nome: string } }> {
