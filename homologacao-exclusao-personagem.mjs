@@ -68,6 +68,12 @@ try {
     const NOME = "Campanha Exclusão E2E";
 
     await entrarNaFicha(p, NOME, "E2E Mestre Alvo");
+    // Issue #132 aceite B: reabrir personagem existente abre em
+    // visualização — "Editar ficha" presente, "Salvar" ausente.
+    t("desktop: reabertura em visualização (Editar presente)",
+      await p.getByRole("button", { name: "Editar ficha" }).count() > 0);
+    t("desktop: reabertura sem Salvar (não está editando)",
+      (await p.getByRole("button", { name: "Salvar", exact: true }).count()) === 0);
     t("desktop: mestre vê botão Arquivar", await p.getByRole("button", { name: "Arquivar" }).count() > 0);
     t("desktop: mestre vê botão Excluir", await p.getByRole("button", { name: "Excluir", exact: true }).count() > 0);
 
@@ -198,6 +204,11 @@ try {
     const NOME = "Campanha Exclusão E2E";
 
     await entrarNaFicha(p, NOME, "E2E Mobile Alvo");
+    // Issue #132 aceite B (mobile): reabertura em visualização.
+    t("mobile: reabertura em visualização (Editar presente)",
+      await p.getByRole("button", { name: "Editar ficha" }).count() > 0);
+    t("mobile: reabertura sem Salvar (não está editando)",
+      (await p.getByRole("button", { name: "Salvar", exact: true }).count()) === 0);
     t("mobile: jogador vê Excluir no próprio rascunho", await p.getByRole("button", { name: "Excluir", exact: true }).count() > 0);
     t("mobile: jogador NÃO vê Arquivar", (await p.getByRole("button", { name: "Arquivar" }).count()) === 0);
     t("mobile: jogador NÃO vê Ver arquivados", (await p.getByRole("button", { name: "Ver arquivados" }).count()) === 0);

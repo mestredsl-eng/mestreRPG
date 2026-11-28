@@ -124,6 +124,15 @@ export default function Personagens({ campaignId, campanha }: Props) {
     }
   };
 
+  // Publica um detalhe como seleção corrente participando do protocolo
+  // de epoch: invalida GETs/ações de ficha em voo. Usado pela criação —
+  // sem isso, um obterPersonagem antigo que resolve depois sobrescreve
+  // a ficha recém-criada (e ainda em edição) — corrida #403.
+  const selecionarDetalhe = (detalhe: PersonagemDetalhe) => {
+    selecaoEpochRef.current += 1;
+    setSelecionado(detalhe);
+  };
+
   const modelosPublicados = modelos.filter((m) => m.isActive && m.versaoAtual?.publishedAt);
 
   // Busca e filtro de status — somente sobre a lista já autorizada
@@ -214,7 +223,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
               const criado = await api.criarPersonagem(campaignId, { name: nome, templateVersionId, isNpc });
               setCriando(false);
               setAbrirEditando(true);
-              setSelecionado(criado);
+              selecionarDetalhe(criado);
             }}
             aoCancelar={() => setCriando(false)}
           />
@@ -445,6 +454,10 @@ function PersonagemDetalheView({ detalhe, souMestre, iniciarEmEdicao, biblioteca
   // Retrato: metadado do personagem — mestre sempre; dono do próprio
   // personagem (NPC só pelo mestre); arquivado é somente leitura.
   const podeMudarRetrato = !arquivado && (souMestre || (personagem.ehEu === true && personagem.isNpc !== true));
+  // Invariante defensiva (INTERMEDIÁRIO #403 P3): o modo edição só é
+  // efetivo quando a ficha é editável — um caller futuro não pode
+  // violar "editando ⇒ podeEditar" via iniciarEmEdicao.
+  const emEdicao = editando && podeEditar;
   const estruturaVazia = !estrutura || estrutura.secoes.length === 0;
 
   const executarOperacao = async () => {
@@ -543,28 +556,28 @@ function PersonagemDetalheView({ detalhe, souMestre, iniciarEmEdicao, biblioteca
             </div>
           </div>
           <div className="linha">
-            {podeMudarRetrato && !editando && (
+            {podeMudarRetrato && !emEdicao && (
               <button className="secundario" onClick={() => setRetratoModal(true)}>Alterar retrato</button>
             )}
             <button className="secundario" onClick={() => void aoVoltar()}>Voltar</button>
           </div>
         </div>
-        {souMestre && editando && (
+        {souMestre && emEdicao && (
           <label>Nome do personagem<input value={nome} onChange={(e) => setNome(e.target.value)} /></label>
         )}
-        {!editando && souMestre && <p className="meta">Nome do personagem: {personagem.name}</p>}
+        {!emEdicao && souMestre && <p className="meta">Nome do personagem: {personagem.name}</p>}
         {erro && <p className="erro">{erro}</p>}
         {msg && <p className="online">{msg}</p>}
         <div className="linha">
-          {!editando && podeEditar && <button disabled={sincronizandoPoder} onClick={() => { setErrosValidacao(null); setErro(null); setEditando(true); }}>{sincronizandoPoder ? "Sincronizando ficha…" : "Editar ficha"}</button>}
-          {editando && (
+          {!emEdicao && podeEditar && <button disabled={sincronizandoPoder} onClick={() => { setErrosValidacao(null); setErro(null); setEditando(true); }}>{sincronizandoPoder ? "Sincronizando ficha…" : "Editar ficha"}</button>}
+          {emEdicao && (
             <>
               <button onClick={() => void salvar()} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
               {!souMestre && <button className="secundario" onClick={() => void salvar("aguardando_aprovacao")} disabled={salvando}>Enviar para aprovação</button>}
               <button className="secundario" onClick={() => { setEditando(false); setValores(inicial as Record<string, unknown>); setNome(personagem.name); setErrosValidacao(null); setErro(null); }}>Cancelar</button>
             </>
           )}
-          {souMestre && !editando && !arquivado && (
+          {souMestre && !emEdicao && !arquivado && (
             <>
               {personagem.status !== "aprovada" && <button onClick={() => void salvar("aprovada")}>Aprovar</button>}
               {personagem.status === "aprovada" && <button className="secundario" onClick={() => void salvar("reaberta")}>Reabrir</button>}
@@ -577,10 +590,10 @@ function PersonagemDetalheView({ detalhe, souMestre, iniciarEmEdicao, biblioteca
               <button className="secundario" onClick={() => setConfirmando("arquivar")}>Arquivar</button>
             </>
           )}
-          {souMestre && !editando && arquivado && (
+          {souMestre && !emEdicao && arquivado && (
             <button className="secundario" onClick={() => setConfirmando("restaurar")}>Restaurar</button>
           )}
-          {souMestre && personagem.isNpc && !editando && (
+          {souMestre && personagem.isNpc && !emEdicao && (
             <button
               className="secundario"
               disabled={operando}
@@ -598,7 +611,7 @@ function PersonagemDetalheView({ detalhe, souMestre, iniciarEmEdicao, biblioteca
               }}
             >{personagem.npcRevelado ? "Ocultar ficha dos jogadores" : "Exibir ficha para jogadores"}</button>
           )}
-          {!editando && podeExcluir && (
+          {!emEdicao && podeExcluir && (
             <button className="perigo" onClick={() => setConfirmando("excluir")}>Excluir</button>
           )}
         </div>
@@ -701,8 +714,8 @@ function PersonagemDetalheView({ detalhe, souMestre, iniciarEmEdicao, biblioteca
             estrutura={estrutura}
             valores={valores}
             calculados={ficha?.calculados}
-            somenteLeitura={!editando}
-            aoMudar={editando ? aoMudar : undefined}
+            somenteLeitura={!emEdicao}
+            aoMudar={emEdicao ? aoMudar : undefined}
             biblioteca={biblioteca ?? undefined}
             metadadosPoderes={metadadosPoderes}
             personagemId={personagem.id}
@@ -711,7 +724,7 @@ function PersonagemDetalheView({ detalhe, souMestre, iniciarEmEdicao, biblioteca
             carteiras={ficha?.carteiras}
             ehMestre={souMestre}
             podeLerSangue={souMestre || personagem.ehEu === true}
-            podeAtivarPoder={personagem.ehEu === true && !arquivado && !editando}
+            podeAtivarPoder={personagem.ehEu === true && !arquivado && !emEdicao}
             aoAtualizarPersonagem={aoRecarregar}
             aoMudarAtivacaoPoder={setSincronizandoPoder}
             campaignId={campaignId}
