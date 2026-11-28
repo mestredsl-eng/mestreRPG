@@ -1061,9 +1061,61 @@ try {
     // N15: trilha de auditoria — transições registradas
     const aud = (() => { const db = abrirDb(BANCO); const r = db.prepare("select action from audit_logs where campaign_id=? and action like 'patrocinio.%' order by created_at").all(campId); db.close(); return r.map((x) => x.action); })();
     t("N15 auditoria propor/aceitar/liquidar", aud.includes("patrocinio.propor") && aud.includes("patrocinio.aceitar") && aud.includes("patrocinio.liquidar"), JSON.stringify(aud));
+
+    // N16 (Dono #401 / TG 7233180172): expiresAt só limita a
+    // PROPOSTA. Aceite bilateral com expiresAt vencido + data_alvo
+    // atingida → liquida mesmo assim; e nunca exibe "expirado".
+    const propX7 = await API("POST", "/patrocinios", j1.cookie, {
+      characterId: charJ2, beneficiarioCharacterId: charJ4, pagadorAccountId: accPagador,
+      amountCents: 300, condicao: { tipo: "data_alvo", em: new Date(Date.now() + 3600_000).toISOString() },
+      expiresAt: new Date(Date.now() + 1800_000).toISOString(), requestId: "prop-n16-0001",
+    });
+    const acordoX7 = propX7.json?.acordo?.id;
+    t("N16a proposta com expiresAt → 201", propX7.status === 201, `status=${propX7.status}`);
+    const aceX7 = await API("POST", `/patrocinios/${acordoX7}/aceitar`, j2.cookie, { beneficiarioAccountId: accBenef });
+    t("N16b aceite dentro da validade → 200", aceX7.status === 200, `status=${aceX7.status}`);
+    // vence expiresAt E atinge data_alvo via SQL (relógio não espera)
+    const dbXa = abrirDb(BANCO);
+    dbXa.prepare("update internet_patrocinios set expires_at=?, condicao_json=? where id=?")
+      .run(new Date(Date.now() - 1000).toISOString(), JSON.stringify({ tipo: "data_alvo", em: new Date(Date.now() - 500).toISOString() }), acordoX7);
+    dbXa.close();
+    const detX7 = await API("GET", `/patrocinios/${acordoX7}`, j2.cookie);
+    t("N16c aceito+expiresAt vencido NÃO vira 'expirado' e liquida", detX7.json?.acordo?.estado === "liquidado", `estado=${detX7.json?.acordo?.estado} real=${detX7.json?.acordo?.estadoReal}`);
+    t("N16d débito aplicado", saldo(accPagador) === 43700, `saldo=${saldo(accPagador)}`);
+
+    // N16e: proposta NÃO aceita com expiresAt vencido → aceite 409
+    // (expiresAt continua limitando a janela de aceite — M38).
+    const propX8 = await API("POST", "/patrocinios", j1.cookie, {
+      characterId: charJ2, beneficiarioCharacterId: charJ4, pagadorAccountId: accPagador,
+      amountCents: 100, condicao: { tipo: "imediato" },
+      expiresAt: new Date(Date.now() + 60000).toISOString(), requestId: "prop-n16e-001",
+    });
+    const acordoX8 = propX8.json?.acordo?.id;
+    const dbXb = abrirDb(BANCO);
+    dbXb.prepare("update internet_patrocinios set expires_at=? where id=?").run(new Date(Date.now() - 1000).toISOString(), acordoX8);
+    dbXb.close();
+    const aceX8 = await API("POST", `/patrocinios/${acordoX8}/aceitar`, j2.cookie, { beneficiarioAccountId: accBenef });
+    t("N16e proposta expirada → aceite 409", aceX8.status === 409, `status=${aceX8.status}`);
+    const detX8 = await API("GET", `/patrocinios/${acordoX8}`, j2.cookie);
+    t("N16f proposta expirada serializa 'expirado'", detX8.json?.acordo?.estado === "expirado", `estado=${detX8.json?.acordo?.estado}`);
+
+    // N17 (Dono #401): beneficiário ARQUIVADO não pode ser alvo —
+    // sem proposta zumbi. (Pagador/aceitante já bloqueados por
+    // contaAutorizadaPara — não duplicar.)
+    const charJ11x = C.novoPersonagem(C.jogadores.j2.membershipId, "Arquivado Foca", { comp: 1, prof: "medico" });
+    darDispositivo(BANCO, charJ11x);
+    const c11 = await API("POST", "/account", j2.cookie, { characterId: charJ11x, handle: "arq.foca" });
+    t("N17a conta do arquivado → 201", c11.status === 201, `status=${c11.status}`);
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update characters set status='arquivado' where id=?").run(charJ11x);
+      db.close();
+    }
+    const propX9 = await API("POST", "/patrocinios", j1.cookie, { characterId: charJ2, beneficiarioCharacterId: charJ11x, pagadorAccountId: accPagador, amountCents: 100, condicao: { tipo: "imediato" }, requestId: "prop-n17-0001" });
+    t("N17 beneficiário arquivado → 400", propX9.status === 400, `status=${propX9.status} ${JSON.stringify(propX9.json).slice(0, 100)}`);
   }
   // ================= RESTAURAÇÃO × PERFIS (TG P1) ==========  sec("O. Restore substituir — perfis preservados, avatar saneado");
-  try {
+  {
     // perfil de charJ2 já existe (seção M, titular j1 pós-P7). Cria um
     // arquivo real e o referencia como avatar; depois o pacote de
     // restore NÃO carrega o arquivo → avatar_file_id deve virar NULL
@@ -1084,6 +1136,10 @@ try {
     if (Array.isArray(expO.json?.estado?.files)) {
       expO.json.estado.files = expO.json.estado.files.filter((f) => f.id !== arquivoAvatar);
     }
+    // O5: acordos de patrocínio (seção N) preservados pelo restore —
+    // snapshot ANTES do importar, compara DEPOIS (TG P1 #401).
+    const patAntes = (() => { const db = abrirDb(BANCO); const r = db.prepare("select estado,count(*) n from internet_patrocinios where campaign_id=? group by estado").all(campId); db.close(); return r; })();
+    const pernasAntes = (() => { const db = abrirDb(BANCO); const r = db.prepare("select count(*) n from money_transactions where campaign_id=? and request_id like 'patrocinios:%'").get(campId); db.close(); return r?.n; })();
     const impO = await req(BASE, "POST", "/campaigns/importar", {
       cookie: C.cookieMestre,
       body: { pacote: expO.json, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
@@ -1101,16 +1157,13 @@ try {
     t("O4 perfil público segue legível", rPerfilO.status === 200, `status=${rPerfilO.status}`);
     // O5: acordos de patrocínio (seção N) preservados pelo restore —
     // estados e pernas financeiras intactos (TG P1 #401).
-    const patAntes = (() => { const db = abrirDb(BANCO); const r = db.prepare("select estado,count(*) n from internet_patrocinios where campaign_id=? group by estado").all(campId); db.close(); return r; })();
-    // snapshot ANTES do restore precisa ter sido tirado antes do import —
-    // refaz a contagem a partir do que a seção N deixou (4 acordos:
-    // liquidado×2, falha_liquidacao, cancelado).
     const patDepois = (() => { const db = abrirDb(BANCO); const r = db.prepare("select estado,count(*) n from internet_patrocinios where campaign_id=? group by estado").all(campId); db.close(); return r; })();
-    t("O5 patrocínios preservados no restore", patDepois.length > 0 && patDepois.reduce((a, r) => a + r.n, 0) === 4,
+    t("O5 patrocínios preservados no restore",
+      JSON.stringify(patDepois.map((r) => [r.estado, r.n]).sort()) === JSON.stringify(patAntes.map((r) => [r.estado, r.n]).sort()),
       JSON.stringify({ antes: patAntes, depois: patDepois }));
     const pernasO = (() => { const db = abrirDb(BANCO); const r = db.prepare("select count(*) n from money_transactions where campaign_id=? and request_id like 'patrocinios:%'").get(campId); db.close(); return r?.n; })();
-    t("O6 pernas financeiras dos acordos preservadas", pernasO === 4, `pernas=${pernasO}`);
-  } catch (e) { console.log("  FALHOU O exceção:", String(e).slice(0, 300)); fail++; }
+    t("O6 pernas financeiras dos acordos preservadas", pernasO === pernasAntes, `pernas=${pernasO} antes=${pernasAntes}`);
+  }
 
   // ================= D6 HARDENING (P1 residual + P2s) ==========
   sec("L2. D6 — linhagem dedupe, denuncianteRef, rascunho, contatos");

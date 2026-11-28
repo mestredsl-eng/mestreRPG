@@ -132,11 +132,14 @@ async function personagemIdsDoUsuario(cid: string, userId: string): Promise<Set<
 }
 
 function serializar(acordo: Acordo, agora = new Date()) {
-  const expirado = !!acordo.expiresAt && acordo.expiresAt.getTime() <= agora.getTime()
-    && acordo.estado !== "liquidado" && acordo.estado !== "cancelado";
+  // Dono #401: expiresAt só limita a PROPOSTA (janela de aceite).
+  // Acordo já aceito bilateralmente NUNCA aparece "expirado" —
+  // data_alvo segue liquidável no momento-alvo.
+  const expirado = acordo.estado === "proposto"
+    && !!acordo.expiresAt && acordo.expiresAt.getTime() <= agora.getTime();
   return {
     id: acordo.id,
-    estado: expirado && acordo.estado === "aceito" ? "expirado" : acordo.estado,
+    estado: expirado ? "expirado" : acordo.estado,
     estadoReal: acordo.estado,
     proponenteCharacterId: acordo.proponenteCharacterId,
     pagadorCharacterId: acordo.pagadorCharacterId,
@@ -168,9 +171,11 @@ function auditTx(tx: Tx, userId: string | undefined, cid: string, action: string
 }
 
 /** Condição satisfeita? `imediato` sempre; `data_alvo` quando now>=em.
- *  `expirado` (expiresAt vencido) bloqueia liquidação — M38. */
+ *  Dono #401 (adjudicação TG 7233180172): expiresAt NÃO entra aqui —
+ *  ele só limita a proposta não aceita (gate no POST /aceitar).
+ *  Depois do aceite bilateral, data_alvo liquida no momento-alvo
+ *  mesmo com expiresAt vencido. */
 function condicaoSatisfeita(acordo: Acordo, agora: Date): boolean {
-  if (acordo.expiresAt && acordo.expiresAt.getTime() <= agora.getTime()) return false;
   const c = acordo.condicaoJson as { tipo?: string; em?: string };
   if (acordo.condicaoTipo === "imediato") return true;
   if (acordo.condicaoTipo === "data_alvo" && c.em) {
@@ -344,6 +349,10 @@ internetPatrociniosRouter.post("/patrocinios", limitePatrocinios, async (req, re
     .where(and(eq(characters.id, b.beneficiarioCharacterId), eq(characters.campaignId, cid)))
     .limit(1);
   if (!beneficiario) { erroHttp(res, 404, "Beneficiário não encontrado"); return; }
+  // Dono #401: arquivado é somente leitura — não pode ser alvo de
+  // proposta (criaria acordo zumbi). Pagador/aceitante já são
+  // cobertos por contaAutorizadaPara; aqui é só o destinatário.
+  if (beneficiario.status === "arquivado") { erroHttp(res, 400, "beneficiario_arquivado"); return; }
 
   // Conta de origem: do pagador, na campanha, tipo utilizável.
   const [contaOrigem] = await db.select().from(financialAccounts)
@@ -402,7 +411,13 @@ internetPatrociniosRouter.post("/patrocinios", limitePatrocinios, async (req, re
         const [vencedor] = await db.select().from(internetPatrocinios)
           .where(and(eq(internetPatrocinios.campaignId, cid), eq(internetPatrocinios.propostaRequestId, b.requestId)))
           .limit(1);
-        if (vencedor) { res.status(200).json({ acordo: serializar(vencedor) }); return; }
+        if (vencedor) {
+          // Dono #401: corrida de requestId não pode vazar acordo de
+          // terceiro — mesma regra IDOR do replay sequencial.
+          const ids = await personagemIdsDoUsuario(cid, req.usuario!.id);
+          if (!acordoDasPartes(vencedor, ids)) { erroHttp(res, 404, "Acordo não encontrado"); return; }
+          res.status(200).json({ acordo: serializar(vencedor) }); return;
+        }
       }
       erroHttp(res, 409, "Proposta duplicada");
       return;
