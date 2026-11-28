@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   api, ApiError,
   type ItemInventario, type ItemInventarioInput, type Equipamento,
@@ -105,20 +105,46 @@ export default function Patrimonio({ characterId, campaignId, souMestre, somente
     ...(souMestre ? [["catalogo", "Catálogo"] as [Aba, string]] : []),
   ];
 
+  // Issue #132 A2b — tablist ARIA, mesmo padrão de Campanha.tsx e do
+  // EquipamentoArmazém (#406): setas ←/→ e Home/End movem foco+seleção.
+  const aoTeclarAbas = (e: ReactKeyboardEvent) => {
+    const ids = abas.map(([id]) => id);
+    const i = ids.indexOf(aba);
+    let j = -1;
+    if (e.key === "ArrowRight") j = (i + 1) % ids.length;
+    else if (e.key === "ArrowLeft") j = (i - 1 + ids.length) % ids.length;
+    else if (e.key === "Home") j = 0;
+    else if (e.key === "End") j = ids.length - 1;
+    else return;
+    e.preventDefault();
+    const alvo = ids[j];
+    setAba(alvo);
+    requestAnimationFrame(() => document.getElementById(`aba-pat-${alvo}`)?.focus());
+  };
+
   return (
     <section className="cartao">
       <h3>Patrimônio</h3>
-      <div className="abas">
+      <div className="abas" role="tablist" aria-label="Seções do patrimônio" onKeyDown={aoTeclarAbas}>
         {abas.map(([id, label]) => (
-          <button key={id} className={aba === id ? "ativo" : "secundario"} onClick={() => setAba(id)}>{label}</button>
+          <button
+            key={id}
+            id={`aba-pat-${id}`}
+            role="tab"
+            aria-selected={aba === id}
+            aria-controls={`painel-pat-${id}`}
+            tabIndex={aba === id ? 0 : -1}
+            className={aba === id ? "ativo" : "secundario"}
+            onClick={() => setAba(id)}
+          >{label}</button>
         ))}
       </div>
       {erro && <p className="erro">{erro}</p>}
-      {aba === "inventario" && <Inventario characterId={characterId} campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} permissoes={permissoes} aoErro={avisoErro} recarregarRef={recarregarRef} />}
-      {aba === "equipamentos" && <Equipamentos characterId={characterId} souMestre={souMestre} somenteLeitura={somenteLeitura} permissoes={permissoes} aoErro={avisoErro} recarregarRef={recarregarRef} />}
-      {aba === "veiculos" && <Veiculos characterId={characterId} campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} permissoes={permissoes} aoErro={avisoErro} recarregarRef={recarregarRef} />}
-      {aba === "dinheiro" && <Dinheiro characterId={characterId} campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} permissoes={permissoes} aoErro={avisoErro} recarregarRef={recarregarRef} />}
-      {aba === "catalogo" && <Catalogo campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
+      {aba === "inventario" && <div role="tabpanel" id="painel-pat-inventario" aria-labelledby="aba-pat-inventario"><Inventario characterId={characterId} campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} permissoes={permissoes} aoErro={avisoErro} recarregarRef={recarregarRef} /></div>}
+      {aba === "equipamentos" && <div role="tabpanel" id="painel-pat-equipamentos" aria-labelledby="aba-pat-equipamentos"><Equipamentos characterId={characterId} souMestre={souMestre} somenteLeitura={somenteLeitura} permissoes={permissoes} aoErro={avisoErro} recarregarRef={recarregarRef} /></div>}
+      {aba === "veiculos" && <div role="tabpanel" id="painel-pat-veiculos" aria-labelledby="aba-pat-veiculos"><Veiculos characterId={characterId} campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} permissoes={permissoes} aoErro={avisoErro} recarregarRef={recarregarRef} /></div>}
+      {aba === "dinheiro" && <div role="tabpanel" id="painel-pat-dinheiro" aria-labelledby="aba-pat-dinheiro"><Dinheiro characterId={characterId} campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} permissoes={permissoes} aoErro={avisoErro} recarregarRef={recarregarRef} /></div>}
+      {aba === "catalogo" && <div role="tabpanel" id="painel-pat-catalogo" aria-labelledby="aba-pat-catalogo"><Catalogo campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} /></div>}
     </section>
   );
 }
