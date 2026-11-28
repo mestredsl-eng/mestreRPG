@@ -74,17 +74,15 @@ async function criarFichaUI(page, j) {
   await page.getByLabel("Nome do personagem").fill(j.nome);
   await page.getByLabel("Modelo de ficha").selectOption({ label: MODELO });
   await page.getByRole("button", { name: "Criar e preencher" }).click();
-  // detalhe da ficha → editar → preencher FOR → enviar p/ aprovação
-  await page.getByRole("button", { name: "Editar ficha" }).waitFor({ timeout: 15000 });
-  await page.getByRole("button", { name: "Editar ficha" }).click();
-  try {
-    await page.getByRole("button", { name: "Salvar", exact: true }).waitFor({ timeout: 8000 });
-  } catch {
-    const ainda = await page.getByRole("button", { name: "Editar ficha" }).count();
-    console.log(`  [debug] modo edição não ativou; botões 'Editar ficha' restantes=${ainda}`);
-    await shot(page, "debug-editar-" + j.user);
-    throw new Error("modo edição da ficha não ativou");
-  }
+  // detalhe da ficha → preencher FOR → enviar p/ aprovação
+  // Issue #132 (aceite): pós-criação a ficha SEMPRE abre em modo
+  // edição — "Salvar" visível e "Editar ficha" ausente. O fluxo
+  // antigo (visualização primeiro) não é mais tolerado: se a flag
+  // regredir, este assert falha. A gravação do FOR + "Enviar para
+  // aprovação" abaixo prova que a ficha está editável de fato.
+  await page.getByRole("button", { name: "Salvar", exact: true }).waitFor({ timeout: 15000 });
+  t(`pós-criação abre em edição, sem "Editar ficha" (${j.user})`,
+    (await page.getByRole("button", { name: "Editar ficha" }).count()) === 0);
   const campoFor = page.locator("div.campo", { has: page.getByText("FOR", { exact: true }) }).locator("input").first();
   try {
     await campoFor.fill("12", { timeout: 10000 });
@@ -203,6 +201,51 @@ try {
   t("jogador 2 criou ficha e enviou p/ aprovação", true);
   await shot(pg1, "06-j1-ficha");
 
+  // ===== 7b. Corrida de seleção — GET antigo não sobrescreve criação =====
+  // CHANGES REQUESTED Dono 7233925045 / TG 7233989465: um
+  // obterPersonagem lento de ficha existente não pode roubar a
+  // seleção da ficha recém-criada (que abre em modo edição).
+  sec("7b. Corrida de seleção (#403)");
+  {
+    const charsJ1 = await apiFetch(pg1, "GET", `/campaigns/${campanhaId}/characters`);
+    const idExistente = (charsJ1.json?.personagens ?? []).find((p) => p.name === J1.nome)?.id;
+    if (!idExistente) throw new Error("personagem existente de J1 não localizado para o teste de interleaving");
+    t("personagem existente de J1 localizado p/ corrida", true, `id=${idExistente}`);
+    // volta à lista (o detalhe da ficha enviada ainda está aberto)
+    await pg1.getByRole("button", { name: "Voltar" }).last().click();
+    await pg1.locator("tr.clicavel").first().waitFor({ timeout: 15000 });
+
+    let liberarGetAntigo;
+    const portaoGet = new Promise((res) => { liberarGetAntigo = res; });
+    const padraoGet = `**/api/characters/${idExistente}*`;
+    await pg1.route(padraoGet, async (route) => { await portaoGet; await route.continue(); });
+    try {
+      // clique no existente → o GET do detalhe fica retido no portão
+      await pg1.locator("tr.clicavel", { hasText: J1.nome }).first().click();
+      // cria outra ficha enquanto o GET está pendente
+      await pg1.getByRole("button", { name: "Novo personagem" }).click();
+      await pg1.getByLabel("Nome do personagem").fill("PJ Corrida");
+      await pg1.getByLabel("Modelo de ficha").selectOption({ label: MODELO });
+      await pg1.getByRole("button", { name: "Criar e preencher" }).click();
+      // pós-criação: a ficha NOVA abre em edição
+      await pg1.getByRole("button", { name: "Salvar", exact: true }).waitFor({ timeout: 15000 });
+      // libera o GET antigo — não pode sobrescrever a seleção
+      liberarGetAntigo();
+      await pg1.waitForTimeout(1500);
+      t("corrida: ficha criada permanece selecionada",
+        (await pg1.getByText("PJ Corrida").count()) > 0);
+      t("corrida: criada segue em modo edição (Salvar presente)",
+        (await pg1.getByRole("button", { name: "Salvar", exact: true }).count()) > 0);
+      t("corrida: 'Editar ficha' ausente na ficha criada",
+        (await pg1.getByRole("button", { name: "Editar ficha" }).count()) === 0);
+    } finally {
+      // Solta sempre a request interceptada, inclusive quando uma ação/assert falha.
+      // Promise.resolve é idempotente; repetir a liberação no caminho feliz é seguro.
+      liberarGetAntigo();
+      await pg1.unroute(padraoGet).catch(() => { });
+    }
+  }
+
   // ===== 8. MESTRE aprova as FICHAS =====
   sec("8. Mestre aprova as fichas");
   await aba(pgM, "Personagens");
@@ -215,7 +258,10 @@ try {
     throw new Error("lista de personagens não carregou");
   }
   for (const nome of [J1.nome, J2.nome]) {
-    const linha = pgM.locator("tr.clicavel", { hasText: nome }).first();
+    // match exato na 1ª célula (Nome) — a coluna Dono mostra o displayName
+    // do jogador ("PJ Um"), que também aparece na linha de OUTROS
+    // personagens dele (ex.: "PJ Corrida" criado na seção 7b).
+    const linha = pgM.locator(`tr.clicavel:has(> td:first-child :text-is("${nome}"))`).first();
     try {
       await linha.click({ timeout: 10000 });
     } catch {
@@ -295,7 +341,10 @@ try {
   }
   const selPers = formD.locator("label", { hasText: "Personagem" }).locator("select");
   const opcoesPers = await selPers.locator("option").allTextContents();
-  const idxPers = opcoesPers.findIndex((o) => o.includes(J1.nome));
+  // a opção é "<nome> (<displayName>)" — o displayName do dono ("PJ Um")
+  // aparece no rótulo de OUTROS personagens dele ("PJ Corrida (PJ Um)").
+  // O match precisa ser no nome do personagem, não substring solta.
+  const idxPers = opcoesPers.findIndex((o) => o.startsWith(`${J1.nome} (`));
   await selPers.selectOption({ index: idxPers });
   const selCampo = formD.locator("label", { hasText: "Habilidade/atributo" }).locator("select");
   // aguarda os campos elegíveis da ficha carregarem (opções "FOR (12)" etc.)

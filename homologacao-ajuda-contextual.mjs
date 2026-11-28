@@ -192,8 +192,14 @@ try {
   await page.locator("input").first().fill("Herói Homolog");
   await page.locator("select").first().selectOption({ index: 1 });
   await page.getByRole("button", { name: "Criar e preencher" }).click();
-  await page.getByRole("button", { name: "Editar ficha" }).waitFor({ timeout: 15000 });
-  await page.getByRole("button", { name: "Editar ficha" }).click();
+  // Issue #132: pós-criação a ficha já abre em edição — "Editar
+  // ficha" só existe no fluxo antigo.
+  await page.waitForFunction(
+    () => [...document.querySelectorAll("button")].some((b) => /Editar ficha|Salvar/.test(b.textContent ?? "")),
+    null, { timeout: 15000 },
+  );
+  const btnEditarNova = page.getByRole("button", { name: "Editar ficha" });
+  if (await btnEditarNova.count() > 0) await btnEditarNova.click();
   await page.waitForTimeout(500);
 
   const botao = (rotulo) => page.locator(`button[aria-label="${rotulo}"]`);
