@@ -1089,12 +1089,13 @@ export const internetPatrocinios = sqliteTable("internet_patrocinios", {
   uniqueIndex("internet_patrocinios_prop_req_idx").on(t.campaignId, t.propostaRequestId),
 ]);
 
-// Sessão AO VIVO simulada (Streamer — ordem Dono 7232090197 item 3;
-// threat model M1–M5/M30–M33): presença efêmera com texto básico, SEM
-// mídia real. Não é publicação — expira por TTL derivado na leitura
-// (mesmo padrão expiresAt D11, sem job). Gate fail-closed:
-// pericia:streamer OU profissao:streamer no ruleset ativo + requisitos
-// reais da ficha. Live é identidade de perfil — anônimo proibido (M5).
+// Sessão AO VIVO simulada (Streamer/Influencer — ordem Dono
+// 7232090197 item 3; adjudicação TG 7233180172): presença efêmera com
+// texto básico, SEM mídia real. Não é publicação — expira por TTL
+// derivado na leitura (mesmo padrão expiresAt D11, sem job). Gate
+// fail-closed: pericia:streamer OU profissao:streamer OU
+// pericia:influencer no ruleset ativo + requisitos reais da ficha.
+// Live é identidade de perfil — anônimo proibido (M5).
 export const internetAoVivo = sqliteTable("internet_ao_vivo", {
   id: id(),
   campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),

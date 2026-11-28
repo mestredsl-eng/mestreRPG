@@ -1,8 +1,7 @@
-// Internet pública 1.1.2 — live simulado (Streamer) + métricas
-// básicas (ordem Dono 7232090197 item 3; threat model INTERMEDIÁRIO
-// M1–M12/M24–M27/M30–M33; contrato PAI 7232560361). Influencer-gate
-// NÃO implementado — não existe elemento canônico `influencer` no
-// ruleset ativo (mesma situação de `profissao:jornalista`, W11).
+// Internet pública 1.1.2 — live simulado (Streamer/Influencer) +
+// métricas básicas (ordem Dono 7232090197 item 3; threat model
+// INTERMEDIÁRIO M1–M12/M24–M27/M30–M33; contrato PAI 7232560361;
+// adjudicação TG 7233180172: ruleset v10 tem pericia:influencer).
 //
 // Regras:
 //  - Live é presença EFÊMERA com texto básico — sem áudio/vídeo/mídia
@@ -59,9 +58,12 @@ const entrarSchema = z.object({
   descricao: z.string().max(2000).optional(),
 }).strict();
 
-/** Gate streamer fail-closed (M1/M24): pericia:streamer OU
- *  profissao:streamer selecionada na ficha contra o ruleset ativo.
- *  Mesma disciplina de ehJornalistaD8 — nunca label do cliente. */
+/** Gate de transmissão fail-closed (M1/M24 + Dono #402):
+ *  pericia:streamer OU profissao:streamer OU pericia:influencer
+ *  selecionada na ficha contra o ruleset ativo — resolvido por
+ *  extrairEscolhas, nunca label/body do cliente. O ruleset v10
+ *  canônico tem `pericia:influencer` (Carisma 2 + Computador);
+ *  não existe `profissao:influencer` — não inventar. */
 async function ehStreamer(cid: string, characterId: string): Promise<boolean> {
   const [personagem] = await db.select().from(characters)
     .where(and(eq(characters.id, characterId), eq(characters.campaignId, cid)))
@@ -74,10 +76,11 @@ async function ehStreamer(cid: string, characterId: string): Promise<boolean> {
   const regras = carregarRegrasSincrono(db, cid);
   if (!regras) return false;
   const dados = (personagem.data ?? {}) as Record<string, unknown>;
-  return extrairEscolhas(parse.data, dados, regras).some(
-    (e) => e.selecionado && (e.elemento?.kind === "pericia" || e.elemento?.kind === "profissao")
-      && e.elemento.key === "streamer",
-  );
+  return extrairEscolhas(parse.data, dados, regras).some((e) => {
+    if (!e.selecionado || !e.elemento) return false;
+    if (e.elemento.kind === "profissao" && e.elemento.key === "streamer") return true;
+    return e.elemento.kind === "pericia" && (e.elemento.key === "streamer" || e.elemento.key === "influencer");
+  });
 }
 
 /** Gate de leitor público — mesmo de internet-perfis.ts. Devolve as
@@ -205,7 +208,7 @@ internetLiveRouter.post("/ao-vivo", limiteLive, async (req, res) => {
   // M2: morto não transmite — presença de morto é fraude diegética.
   if (morteVigente((titular.personagem.data ?? {}) as Record<string, unknown>)) { erroHttp(res, 403, "personagem_falecido"); return; }
   if (!(await ehStreamer(cid, b.characterId))) {
-    erroHttp(res, 403, "Personagem sem perícia/profissão streamer no ruleset ativo"); return;
+    erroHttp(res, 403, "Personagem sem streamer/influencer no ruleset ativo"); return;
   }
 
   const agora = new Date();

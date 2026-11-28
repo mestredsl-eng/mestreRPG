@@ -32,6 +32,7 @@ function fixtureGate(banco, campId) {
     ["profissao", "jornalista", "Jornalista"],
     ["profissao", "medico", "Médico"],
     ["profissao", "streamer", "Streamer"],
+    ["pericia", "influencer", "Influencer"],
   ]) ins.run(crypto.randomUUID(), rs.id, kind, key, name, null, null, agora, agora);
   const ver = db.prepare("select id, structure from sheet_versions order by created_at desc limit 1").get();
   const est = JSON.parse(ver.structure);
@@ -39,6 +40,7 @@ function fixtureGate(banco, campId) {
     { id: "comp", label: "Computador", tipo: "inteiro", regra: { kind: "pericia", key: "computador" } },
     { id: "tec", label: "Tecnologia", tipo: "inteiro", regra: { kind: "conhecimento", key: "tecnologia" } },
     { id: "prof", label: "Profissão", tipo: "selecao_unica", regraKind: "profissao" },
+    { id: "infl", label: "Influencer", tipo: "inteiro", regra: { kind: "pericia", key: "influencer" } },
   );
   db.prepare("update sheet_versions set structure=? where id=?").run(JSON.stringify(est), ver.id);
   db.close();
@@ -1367,6 +1369,21 @@ try {
     t("P19c detalhe de live de conta inativa → 404", detInat.status === 404, `status=${detInat.status}`);
     const encInat = (() => { const db = abrirDb(BANCO); const r = db.prepare("select encerrado_em from internet_ao_vivo where id=?").get(live8Id); db.close(); return r?.encerrado_em; })();
     t("P19d live de conta inativa encerrada de fato", encInat !== null && encInat !== undefined, `encerrado_em=${encInat}`);
+
+    // P20 (Dono #402 / adjudicação TG 7233180172): gate aceita
+    // pericia:influencer — ruleset v10 canônico tem a perícia sem
+    // profissão. Personagem com SÓ infl=1 (sem prof streamer) entra.
+    const charJ9 = C.novoPersonagem(C.jogadores.j1.membershipId, "Live Influencer", { comp: 1, infl: 1 });
+    darDispositivo(BANCO, charJ9);
+    await API("POST", "/account", j1.cookie, { characterId: charJ9, handle: "live.infl" });
+    const lv9 = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ9, titulo: "Live influencer" });
+    t("P20 pericia:influencer entra ao vivo → 201", lv9.status === 201, `status=${lv9.status} ${JSON.stringify(lv9.json).slice(0, 140)}`);
+    // P20b: sem nenhum dos três → 403 (fail-closed mantido)
+    const charJ10 = C.novoPersonagem(C.jogadores.j1.membershipId, "Sem Gate", { comp: 1 });
+    darDispositivo(BANCO, charJ10);
+    await API("POST", "/account", j1.cookie, { characterId: charJ10, handle: "live.sem" });
+    const lv10 = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ10, titulo: "Sem gate" });
+    t("P20b sem streamer/influencer → 403", lv10.status === 403, `status=${lv10.status}`);
   }
 } finally {
   if (proc) await encerrarServidor(proc);
