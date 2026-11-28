@@ -48,18 +48,20 @@ function iniciarMonitorLocks(caminhoTrava, t0) {
       const linhas = readFileSync("/proc/locks", "utf8").split("\n")
         .filter((l) => l.toLowerCase().includes(inode));
       for (const l of linhas) {
-        // formato: N: POSIX ADVISORY WRITE <pid> maj:min:ino ...
-        const pid = Number(l.split(/\s+/)[4]);
-        const tipo = l.split(/\s+/)[2] + "/" + l.split(/\s+/)[4];
+        // formato: "N: POSIX ADVISORY WRITE <pid> maj:min:ino ..."
+        const partes = l.trim().split(/\s+/);
+        const pid = Number(partes[4]) || 0;
+        const tipo = partes.slice(1, 4).join(" "); // ex.: "POSIX ADVISORY WRITE"
+        const chave = pid + "|" + tipo;
         const ult = eventos[eventos.length - 1];
-        if (!ult || ult.pid !== pid || ult.tipo !== tipo) {
-          eventos.push({ rel: Date.now() - t0, pid, tipo });
+        if (!ult || ult.chave !== chave) {
+          eventos.push({ rel: Date.now() - t0, pid, tipo, chave });
         }
       }
       // registra liberações (inode some das linhas)
       if (linhas.length === 0) {
         const ult = eventos[eventos.length - 1];
-        if (ult && ult.pid !== 0) eventos.push({ rel: Date.now() - t0, pid: 0, tipo: "LIVRE" });
+        if (ult && ult.pid !== 0) eventos.push({ rel: Date.now() - t0, pid: 0, tipo: "LIVRE", chave: "0|LIVRE" });
       }
     } catch { /* /proc indisponível neste tick */ }
   }, 25);
