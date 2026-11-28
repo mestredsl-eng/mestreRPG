@@ -1,6 +1,8 @@
 // Internet pública 1.1.2 — live simulado (Streamer) + métricas
-// básicas + Influencer-gate (ordem Dono 7232090197 item 3; threat
-// model INTERMEDIÁRIO M1–M12/M24–M27/M30–M33; contrato PAI 7232560361).
+// básicas (ordem Dono 7232090197 item 3; threat model INTERMEDIÁRIO
+// M1–M12/M24–M27/M30–M33; contrato PAI 7232560361). Influencer-gate
+// NÃO implementado — não existe elemento canônico `influencer` no
+// ruleset ativo (mesma situação de `profissao:jornalista`, W11).
 //
 // Regras:
 //  - Live é presença EFÊMERA com texto básico — sem áudio/vídeo/mídia
@@ -128,6 +130,51 @@ async function personagensForaDoAr(cid: string, personagemIds: string[]): Promis
   return fora;
 }
 
+/** Dono #402 P1 — encerramento derivado, não só filtro visual:
+ *  lives abertas cuja conta foi desativada/arquivada ou cujo
+ *  personagem morreu/foi arquivado DURANTE a transmissão são
+ *  encerradas (encerrado_em) na primeira leitura que as encontra.
+ *  Idempotente — UPDATE único por campanha. */
+async function encerrarLivesInvalidas(cid: string, agora: Date): Promise<void> {
+  const abertas = await db.select({
+    id: internetAoVivo.id, contaId: internetAoVivo.contaId,
+  }).from(internetAoVivo)
+    .where(and(
+      eq(internetAoVivo.campaignId, cid),
+      isNull(internetAoVivo.encerradoEm),
+      gt(internetAoVivo.expiraEm, agora),
+    ));
+  if (!abertas.length) return;
+  const contas = await db.select({
+    id: internetAccounts.id, status: internetAccounts.status,
+    characterId: internetAccounts.characterId,
+  }).from(internetAccounts)
+    .where(inArray(internetAccounts.id, [...new Set(abertas.map((l) => l.contaId))]));
+  const contaPorId = new Map(contas.map((c) => [c.id, c] as const));
+  const foraDoAr = await personagensForaDoAr(cid, [...new Set(contas.map((c) => c.characterId))]);
+  const invalidas = abertas
+    .filter((l) => {
+      const conta = contaPorId.get(l.contaId);
+      return !conta || conta.status !== "ativa" || foraDoAr.has(conta.characterId);
+    })
+    .map((l) => l.id);
+  if (invalidas.length) {
+    await db.update(internetAoVivo).set({ encerradoEm: agora, updatedAt: agora })
+      .where(inArray(internetAoVivo.id, invalidas)).run();
+  }
+}
+
+/** Live aberta inválida para leitura? (conta inativa/arquivada ou
+ *  personagem morto/arquivado) — usado no detalhe para encerrar + 404. */
+async function liveInvalidada(cid: string, contaId: string): Promise<boolean> {
+  const [conta] = await db.select({
+    status: internetAccounts.status, characterId: internetAccounts.characterId,
+  }).from(internetAccounts).where(eq(internetAccounts.id, contaId)).limit(1);
+  if (!conta || conta.status !== "ativa") return true;
+  const fora = await personagensForaDoAr(cid, [conta.characterId]);
+  return fora.has(conta.characterId);
+}
+
 function liveSerializada(l: typeof internetAoVivo.$inferSelect, agora = new Date()) {
   const vigente = !l.encerradoEm && l.expiraEm.getTime() > agora.getTime();
   return {
@@ -227,6 +274,9 @@ internetLiveRouter.get("/ao-vivo", async (req, res) => {
   const minhas = await leitorContas(req, res, cid);
   if (!minhas) return;
   const agora = new Date();
+  // Dono #402 P1: encerra (não só oculta) lives de conta desativada
+  // ou personagem morto/arquivado antes de listar.
+  await encerrarLivesInvalidas(cid, agora);
   const lives = await db.select().from(internetAoVivo)
     .where(and(
       eq(internetAoVivo.campaignId, cid),
@@ -245,13 +295,13 @@ internetLiveRouter.get("/ao-vivo", async (req, res) => {
     ? await db.select().from(internetPerfis).where(inArray(internetPerfis.characterId, charIds))
     : [];
   const perfilPorChar = new Map(perfis.map((p) => [p.characterId, p] as const));
-  // P2: lives de streamer morto/arquivado somem do diretório —
-  // revalidação derivada na leitura (a linha segue até o TTL).
-  const charVivoPorConta = new Map(contas.map((c) => [c.id, c.characterId] as const));
+  // P2 + Dono #402 P1: lives de conta inativa/arquivada ou de
+  // personagem morto/arquivado não entram no diretório — e a
+  // varredura acima já as encerrou de fato.
   const foraDoAr = await personagensForaDoAr(cid, [...new Set(contas.map((c) => c.characterId))]);
   const livesVigentes = lives.filter((l) => {
-    const charId = charVivoPorConta.get(l.contaId);
-    return !charId || !foraDoAr.has(charId);
+    const conta = contaPorId.get(l.contaId);
+    return !!conta && conta.status === "ativa" && !foraDoAr.has(conta.characterId);
   });
   res.json({
     lives: livesVigentes.map((l) => {
@@ -282,11 +332,12 @@ internetLiveRouter.get("/ao-vivo/:id", async (req, res) => {
     erroHttp(res, 404, "Live não encontrada"); return;
   }
   const [conta] = await db.select().from(internetAccounts).where(eq(internetAccounts.id, live.contaId)).limit(1);
-  // P2: detalhe de live de streamer morto/arquivado → 404 (mesmo
-  // tratamento de expirada — não vaza que existiu).
-  if (conta) {
-    const fora = await personagensForaDoAr(cid, [conta.characterId]);
-    if (fora.has(conta.characterId)) { erroHttp(res, 404, "Live não encontrada"); return; }
+  // Dono #402 P1: conta desativada/arquivada ou personagem
+  // morto/arquivado → encerra a live e 404 (não vaza que existiu).
+  if (await liveInvalidada(cid, live.contaId)) {
+    await db.update(internetAoVivo).set({ encerradoEm: agora, updatedAt: agora })
+      .where(and(eq(internetAoVivo.id, live.id), isNull(internetAoVivo.encerradoEm))).run();
+    erroHttp(res, 404, "Live não encontrada"); return;
   }
   const [perfil] = conta
     ? await db.select().from(internetPerfis).where(eq(internetPerfis.characterId, conta.characterId)).limit(1)

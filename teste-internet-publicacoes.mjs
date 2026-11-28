@@ -1323,6 +1323,50 @@ try {
       JSON.stringify((dirMorto.json?.lives ?? []).map((l) => l.id)));
     const detMorto = await API("GET", `/ao-vivo/${live3Id}`, j2.cookie);
     t("P17b detalhe de live de morto → 404", detMorto.status === 404, `status=${detMorto.status}`);
+
+    // P18 (Dono #402 P1): live aberta → personagem ARQUIVADO durante
+    // a transmissão — some do diretório, detalhe 404 e a linha é
+    // ENCERRADA de fato (encerrado_em preenchido pela varredura
+    // derivada na leitura — não é só filtro visual).
+    const charJ7 = C.novoPersonagem(C.jogadores.j1.membershipId, "Live Sete", { comp: 1, prof: "streamer" });
+    darDispositivo(BANCO, charJ7);
+    await API("POST", "/account", j1.cookie, { characterId: charJ7, handle: "live.sete" });
+    const lv7 = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ7, titulo: "Live sete" });
+    t("P18a live aberta antes do arquivamento", lv7.status === 201, `status=${lv7.status}`);
+    const live7Id = lv7.json?.live?.id;
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update characters set status='arquivado' where id=?").run(charJ7);
+      db.close();
+    }
+    const dirArq = await API("GET", "/ao-vivo", j2.cookie);
+    t("P18b live de arquivado some do diretório", !(dirArq.json?.lives ?? []).some((l) => l.id === live7Id),
+      JSON.stringify((dirArq.json?.lives ?? []).map((l) => l.id)));
+    const detArq = await API("GET", `/ao-vivo/${live7Id}`, j2.cookie);
+    t("P18c detalhe de live de arquivado → 404", detArq.status === 404, `status=${detArq.status}`);
+    const encArq = (() => { const db = abrirDb(BANCO); const r = db.prepare("select encerrado_em from internet_ao_vivo where id=?").get(live7Id); db.close(); return r?.encerrado_em; })();
+    t("P18d live de arquivado encerrada de fato", encArq !== null && encArq !== undefined, `encerrado_em=${encArq}`);
+
+    // P19 (Dono #402 P1): live aberta → CONTA desativada durante a
+    // transmissão — mesmo tratamento: some, 404, encerrada.
+    const charJ8 = C.novoPersonagem(C.jogadores.j1.membershipId, "Live Oito", { comp: 1, prof: "streamer" });
+    darDispositivo(BANCO, charJ8);
+    await API("POST", "/account", j1.cookie, { characterId: charJ8, handle: "live.oito" });
+    const lv8 = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ8, titulo: "Live oito" });
+    t("P19a live aberta antes da desativação", lv8.status === 201, `status=${lv8.status}`);
+    const live8Id = lv8.json?.live?.id;
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update internet_accounts set status='inativa' where handle='live.oito'").run();
+      db.close();
+    }
+    const dirInat = await API("GET", "/ao-vivo", j2.cookie);
+    t("P19b live de conta inativa some do diretório", !(dirInat.json?.lives ?? []).some((l) => l.id === live8Id),
+      JSON.stringify((dirInat.json?.lives ?? []).map((l) => l.id)));
+    const detInat = await API("GET", `/ao-vivo/${live8Id}`, j2.cookie);
+    t("P19c detalhe de live de conta inativa → 404", detInat.status === 404, `status=${detInat.status}`);
+    const encInat = (() => { const db = abrirDb(BANCO); const r = db.prepare("select encerrado_em from internet_ao_vivo where id=?").get(live8Id); db.close(); return r?.encerrado_em; })();
+    t("P19d live de conta inativa encerrada de fato", encInat !== null && encInat !== undefined, `encerrado_em=${encInat}`);
   }
 } finally {
   if (proc) await encerrarServidor(proc);
