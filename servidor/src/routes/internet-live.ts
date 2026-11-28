@@ -22,7 +22,7 @@
 //    publicada vigente servida (bruto, sem dedupe — decisão TG).
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { and, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import {
   auditLogs, characters, internetAccounts, internetAoVivo, internetPerfis,
@@ -153,6 +153,17 @@ internetLiveRouter.post("/ao-vivo", limiteLive, async (req, res) => {
   const id = crypto.randomUUID();
   try {
     db.transaction((tx) => {
+      // TG #402 P1 — lazy-close D11: live expirada por TTL fica com
+      // encerrado_em NULL para sempre e o índice parcial UNIQUE
+      // travaria a conta (409 eterno — /sair exige id que o
+      // diretório não expõe mais). Fecha as expiradas da conta na
+      // mesma tx antes do insert; custo zero, cobre a corrida.
+      tx.update(internetAoVivo).set({ encerradoEm: agora, updatedAt: agora })
+        .where(and(
+          eq(internetAoVivo.contaId, titular.conta.id),
+          isNull(internetAoVivo.encerradoEm),
+          lte(internetAoVivo.expiraEm, agora),
+        )).run();
       tx.insert(internetAoVivo).values({
         id, campaignId: cid, contaId: titular.conta.id,
         personagemId: b.characterId, titulo: b.titulo, descricao: b.descricao ?? null,

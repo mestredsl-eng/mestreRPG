@@ -1065,6 +1065,13 @@ try {
     t("P9 live expirada fora do diretório", !(dir3.json?.lives ?? []).some((l) => l.id === liveId2), JSON.stringify(dir3.json).slice(0, 120));
     const detExp = await API("GET", `/ao-vivo/${liveId2}`, j2.cookie);
     t("P9b detalhe de expirada → 404", detExp.status === 404, `status=${detExp.status}`);
+    // P9c/P9d (TG #402 P1): live expirada por TTL não pode travar a
+    // conta — POST /ao-vivo lazy-closes as expiradas na mesma tx
+    // (antes: UNIQUE parcial → 409 eterno, /sair exigia id oculto).
+    const reLive3 = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ5, titulo: "Live três" });
+    t("P9c entrar após expirar → 201", reLive3.status === 201, `status=${reLive3.status} ${JSON.stringify(reLive3.json).slice(0,120)}`);
+    const encErrada = (() => { const db = abrirDb(BANCO); const r = db.prepare("select encerrado_em from internet_ao_vivo where id=?").get(liveId2); db.close(); return r?.encerrado_em; })();
+    t("P9d expirada lazy-closed (encerrado_em preenchido)", !!encErrada, `encerrado_em=${encErrada}`);
 
     // P10: seguidores — aresta idempotente, contador derivado
     const seg = await API("POST", "/contas/live.foca/seguir", j2.cookie);
