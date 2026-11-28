@@ -78,8 +78,7 @@ function lerPub(banco, id) {
 }
 
 try {
-  // ================= MIGRAÇÃO =================
-  sec("A. Migração 0044 — banco limpo");
+  // ================= MIGRAÇÃO ==========  sec("A. Migração 0044 — banco limpo");
   await prepararBanco(BANCO);
   {
     const db = abrirDb(BANCO);
@@ -89,8 +88,7 @@ try {
     db.close();
   }
 
-  // ================= CENÁRIO =================
-  sec("B. Cenário — campanha, contas com gate, arestas");
+  // ================= CENÁRIO ==========  sec("B. Cenário — campanha, contas com gate, arestas");
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: join(DIR, "arq"), backups: join(DIR, "bks") });
   proc.stderr.on("data", (d) => process.stderr.write("[srv] " + d));
   await esperarSaudavel(BASE, proc);
@@ -122,8 +120,7 @@ try {
   // aresta aceita j2→j1 (j2 vê 'contatos' de j1; j3 não)
   aresta(BANCO, { campId, origemId: contaJ2, destinoId: contaJ1, status: "aceito" });
 
-  // ================= CRIAÇÃO (W8 subset) =================
-  sec("C. POST /publicacoes — criação, validação, gate");
+  // ================= CRIAÇÃO (W8 subset) ==========  sec("C. POST /publicacoes — criação, validação, gate");
 
   // mestre sem conta diegética publica como autorContaId NULL (DP-9)
   const semConta = await API("POST", "/publicacoes", C.cookieMestre, { tipo: "noticia", titulo: "X", corpo: "y", visibilidade: "campanha" });
@@ -172,8 +169,7 @@ try {
   t("POST sempre rascunho", rascunho.status === 201 && rascunho.json?.publicacao?.status === "rascunho");
   const pubR = rascunho.json?.publicacao?.id;
 
-  // ================= LISTA W4 =================
-  sec("D. GET /publicacoes — feed, visibilidade, keyset");
+  // ================= LISTA W4 ==========  sec("D. GET /publicacoes — feed, visibilidade, keyset");
 
   const feedJ1 = await API("GET", "/publicacoes?tipo=noticia", j1.cookie);
   t("feed j1 200", feedJ1.status === 200);
@@ -198,8 +194,7 @@ try {
   t("pseudônimo expõe pseudoNome", itemB?.autor?.modo === "pseudonimo" && itemB?.autor?.nome === "A.F.");
   t("pseudônimo não vaza handle", !("handle" in (itemB?.autor ?? {})));
 
-  // ================= MATÉRIA W5 =================
-  sec("E. GET /publicacoes/:id — matéria, oráculo, prévia");
+  // ================= MATÉRIA W5 ==========  sec("E. GET /publicacoes/:id — matéria, oráculo, prévia");
 
   const mat = await API("GET", `/publicacoes/${pubA}`, j2.cookie);
   t("matéria publicada → 200", mat.status === 200, JSON.stringify(mat.json).slice(0, 200));
@@ -214,8 +209,7 @@ try {
   t("inexistente → 404", (await API("GET", "/publicacoes/nao-existe", j1.cookie)).status === 404);
   t("mestre lê qualquer publicação", (await API("GET", `/publicacoes/${pubR}`, C.cookieMestre)).status === 200);
 
-  // ================= PATCH =================
-  sec("F. PATCH /publicacoes/:id — versão, idempotência, fronteiras");
+  // ================= PATCH ==========  sec("F. PATCH /publicacoes/:id — versão, idempotência, fronteiras");
 
   const semVersao = await API("PATCH", `/publicacoes/${pubA}`, j1.cookie, { titulo: "Novo" });
   t("sem expectedVersion → 400", semVersao.status === 400);
@@ -237,8 +231,7 @@ try {
   const republicar = await API("PATCH", `/publicacoes/${pubA}`, j1.cookie, { status: "publicado", expectedVersion: 4 });
   t("republicar → publicadoEm preservado (1ª publicação)", republicar.status === 200 && !!republicar.json?.publicacao?.publicadoEm);
 
-  // ================= DENÚNCIAS (DP-3) =================
-  sec("G. POST /publicacoes/:id/denunciar — limiar e remoção");
+  // ================= DENÚNCIAS (DP-3) ==========  sec("G. POST /publicacoes/:id/denunciar — limiar e remoção");
 
   // j1 tem 1 conta; denúncia exige conta ≠ autor → j1 não pode denunciar a própria
   const autoDenuncia = await API("POST", `/publicacoes/${pubB}/denunciar`, j1.cookie, { motivo: "spam" });
@@ -281,8 +274,7 @@ try {
   const linhaG = lerPub(BANCO, pubG);
   t("grave: denuncia_grave=1 + removido", linhaG.denuncia_grave === 1 && linhaG.status === "removido");
 
-  // ================= DP-2 — contestação + resolução admin ==========
-  sec("G2. DP-2 — contestação do autor e decisão do admin da plataforma");
+  // ================= DP-2 — contestação + resolução admin ===  sec("G2. DP-2 — contestação do autor e decisão do admin da plataforma");
 
   // pubD removida por 2 denúncias → autor contesta dentro de 7 dias
   const contD = await API("POST", `/publicacoes/${pubD}/contestar`, j1.cookie, {});
@@ -318,8 +310,7 @@ try {
   t("mestre não acessa fila admin → 403", (await req(BASE, "GET", `/admin/internet-denuncias?campaignId=${campId}`, { cookie: C.cookieMestre })).status === 200); // cookieMestre É admin — prova negativa fica p/ jogador:
   t("jogador não acessa fila admin → 403", (await req(BASE, "GET", `/admin/internet-denuncias?campaignId=${campId}`, { cookie: j1.cookie })).status === 403);
 
-  // ================= MORTE AUTOMÁTICA (DP-8/9) =================
-  sec("H. __morte + notícia de sistema + ressurreição");
+  // ================= MORTE AUTOMÁTICA (DP-8/9) ==========  sec("H. __morte + notícia de sistema + ressurreição");
 
   // HP da charJ1: max=100 (sem atributo) — dano letal via endpoint real
   const hpAntes = await req(BASE, "GET", `/characters/${charJ1}`, { cookie: j1.cookie });
@@ -376,8 +367,7 @@ try {
   t("__morte tem 2 epochs (vigente + revertida)", mortes2.length === 2, JSON.stringify(mortes2.map((m) => !!m.revertidaEm)));
   dbM2.close();
 
-  // ================= IMPORTAÇÃO — __morte re-derivada (v2.6) =========
-  sec("I. Importação — morte re-derivada do __hp saneado");
+  // ================= IMPORTAÇÃO — __morte re-derivada (v2.6) ==  sec("I. Importação — morte re-derivada do __hp saneado");
 
   // exporta a campanha (charJ1 está morto: hp≤0, __morte com 2 epochs)
   const exp = await req(BASE, "GET", `/campaigns/${campId}/exportar`, { cookie: C.cookieMestre });
@@ -777,8 +767,7 @@ try {
     }
   }
 
-  // ================= W9/W10 — PERFIS PÚBLICOS =================
-  sec("M. W9/W10 — ativação irreversível, perfil público, ciclo de vida");
+  // ================= W9/W10 — PERFIS PÚBLICOS ==========  sec("M. W9/W10 — ativação irreversível, perfil público, ciclo de vida");
   {
     const PERFIL_PUB = (handle) => `/campaigns/${campId}/internet/perfis/${handle}`;
     const BUSCA = (q) => `/campaigns/${campId}/internet/busca?q=${encodeURIComponent(q)}`;
@@ -874,8 +863,7 @@ try {
     t("M26 sem sessão → 401", rAnon.status === 401, `status=${rAnon.status}`);
   }
 
-  // ================= PATROCÍNIO AUTOMÁTICO =================
-  sec("N. Patrocínio — acordo, aceite bilateral, liquidação atômica");
+  // ================= PATROCÍNIO AUTOMÁTICO ==========  sec("N. Patrocínio — acordo, aceite bilateral, liquidação atômica");
   {
     // charJ3 foi arquivado e a membership de j3 removida na seção J
     // (D6/restore) — o beneficiário precisa ser um personagem vivo com
@@ -979,6 +967,55 @@ try {
     const aud = (() => { const db = abrirDb(BANCO); const r = db.prepare("select action from audit_logs where campaign_id=? and action like 'patrocinio.%' order by created_at").all(campId); db.close(); return r.map((x) => x.action); })();
     t("N15 auditoria propor/aceitar/liquidar", aud.includes("patrocinio.propor") && aud.includes("patrocinio.aceitar") && aud.includes("patrocinio.liquidar"), JSON.stringify(aud));
   }
+  // ================= RESTAURAÇÃO × PERFIS (TG P1) ==========  sec("O. Restore substituir — perfis preservados, avatar saneado");
+  try {
+    // perfil de charJ2 já existe (seção M, titular j1 pós-P7). Cria um
+    // arquivo real e o referencia como avatar; depois o pacote de
+    // restore NÃO carrega o arquivo → avatar_file_id deve virar NULL
+    // (crit. TG 7232390928 §3), nunca restaurar aresta inválida.
+    const arquivoAvatar = crypto.randomUUID();
+    const db0 = abrirDb(BANCO);
+    const perfilAntes = db0.prepare("select * from internet_perfis where character_id=?").get(charJ2);
+    t("O0 perfil de charJ2 existe", !!perfilAntes, JSON.stringify(perfilAntes?.id));
+    const agoraO = Date.now();
+    db0.prepare(`insert into files (id,campaign_id,folder_path,display_name,file_name,mime_type,size_bytes,uploaded_by,visibility,status,created_at,updated_at)
+      values (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(arquivoAvatar, campId, "/", "Avatar O", "avatar-o.png", "image/png", 10, C.adminId, "mestre", "aprovado", agoraO, agoraO);
+    db0.prepare("update internet_perfis set avatar_file_id=? where character_id=?").run(arquivoAvatar, charJ2);
+    db0.close();
+    const expO = await req(BASE, "GET", `/campaigns/${campId}/exportar`, { cookie: C.cookieMestre });
+    // remove o arquivo do pacote → restore não o recria → aresta do
+    // avatar fica pendente e deve ser saneada para NULL.
+    if (Array.isArray(expO.json?.estado?.files)) {
+      expO.json.estado.files = expO.json.estado.files.filter((f) => f.id !== arquivoAvatar);
+    }
+    const impO = await req(BASE, "POST", "/campaigns/importar", {
+      cookie: C.cookieMestre,
+      body: { pacote: expO.json, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+    });
+    t("O1 substituir → 200", impO.status === 200, `status=${impO.status} ${JSON.stringify(impO.json).slice(0, 160)}`);
+    const db1 = abrirDb(BANCO);
+    const perfilDepois = db1.prepare("select * from internet_perfis where character_id=?").get(charJ2);
+    t("O2 perfil preservado (mesmo id, descrição intacta)",
+      !!perfilDepois && perfilDepois.id === perfilAntes?.id && perfilDepois.descricao === perfilAntes?.descricao,
+      JSON.stringify({ antes: perfilAntes?.id, depois: perfilDepois?.id }));
+    t("O3 avatar_file_id inválido → NULL", !!perfilDepois && perfilDepois.avatar_file_id === null,
+      `avatar=${perfilDepois?.avatar_file_id}`);
+    db1.close();
+    const rPerfilO = await req(BASE, "GET", `/campaigns/${campId}/internet/perfis/beto.foca`, { cookie: j1.cookie });
+    t("O4 perfil público segue legível", rPerfilO.status === 200, `status=${rPerfilO.status}`);
+    // O5: acordos de patrocínio (seção N) preservados pelo restore —
+    // estados e pernas financeiras intactos (TG P1 #401).
+    const patAntes = (() => { const db = abrirDb(BANCO); const r = db.prepare("select estado,count(*) n from internet_patrocinios where campaign_id=? group by estado").all(campId); db.close(); return r; })();
+    // snapshot ANTES do restore precisa ter sido tirado antes do import —
+    // refaz a contagem a partir do que a seção N deixou (4 acordos:
+    // liquidado×2, falha_liquidacao, cancelado).
+    const patDepois = (() => { const db = abrirDb(BANCO); const r = db.prepare("select estado,count(*) n from internet_patrocinios where campaign_id=? group by estado").all(campId); db.close(); return r; })();
+    t("O5 patrocínios preservados no restore", patDepois.length > 0 && patDepois.reduce((a, r) => a + r.n, 0) === 4,
+      JSON.stringify({ antes: patAntes, depois: patDepois }));
+    const pernasO = (() => { const db = abrirDb(BANCO); const r = db.prepare("select count(*) n from money_transactions where campaign_id=? and request_id like 'patrocinios:%'").get(campId); db.close(); return r?.n; })();
+    t("O6 pernas financeiras dos acordos preservadas", pernasO === 4, `pernas=${pernasO}`);
+  } catch (e) { console.log("  FALHOU O exceção:", String(e).slice(0, 300)); fail++; }
 } finally {
   if (proc) await encerrarServidor(proc);
   console.log(`\n${pass} ok, ${fail} falhas`);
