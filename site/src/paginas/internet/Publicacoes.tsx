@@ -39,8 +39,13 @@ type VisaoPub =
   | { tipo: "publicar"; editando?: MinhaPublicacao }
   | { tipo: "minhas" };
 
-function nomeAutor(p: { autor: PublicacaoResumo["autor"] }): string {
+const ROTULO_TIPO: Record<string, string> = {
+  noticia: "Notícia", post_perfil: "Perfil", anuncio: "Anúncio", classificado: "Classificado",
+};
+
+function nomeAutor(p: { autor?: PublicacaoResumo["autor"] }): string {
   if (!p.autor) return "fonte da campanha";
+  if (p.autor.modo === "anonimo") return "Anônimo";
   if (p.autor.modo === "pseudonimo") return p.autor.nome;
   return `@${p.autor.handle}`;
 }
@@ -143,7 +148,7 @@ function FeedPublicacoes({ adaptador, aoAbrir, aoPublicar, aoMinhas }: {
     <section aria-label="Publicações da campanha" className="internet-feed">
       <div className="internet-feed-acoes">
         <div className="internet-feed-filtros" role="group" aria-label="Filtrar por tipo">
-          {([["", "Todas"], ["noticia", "Notícias"], ["post_perfil", "Perfis"]] as const).map(([v, r]) => (
+          {([["", "Todas"], ["noticia", "Notícias"], ["post_perfil", "Perfis"], ["anuncio", "Anúncios"], ["classificado", "Classificados"]] as const).map(([v, r]) => (
             <button
               key={v || "todas"}
               type="button"
@@ -185,6 +190,7 @@ function FeedPublicacoes({ adaptador, aoAbrir, aoPublicar, aoMinhas }: {
                   <span className="internet-conversa-meta">
                     {nomeAutor(p)}
                     {" · "}{ROTULO_DATA.format(new Date(p.publicadoEm ?? p.atualizadoEm))}
+                    {p.expiresAt && ` · até ${ROTULO_DATA.format(new Date(p.expiresAt))}`}
                     {p.visibilidade === "contatos" && " · só contatos"}
                   </span>
                 </span>
@@ -214,6 +220,7 @@ function MateriaView({ adaptador, id, aoEditar }: {
   const [tentativa, setTentativa] = useState(0);
   const [motivo, setMotivo] = useState<string>("spam");
   const [denunciando, setDenunciando] = useState(false);
+  const [contatando, setContatando] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
 
   useEffect(() => {
@@ -255,14 +262,33 @@ function MateriaView({ adaptador, id, aoEditar }: {
     return <ErroRetry mensagem="Não foi possível abrir a publicação." aoTentar={() => setTentativa((n) => n + 1)} />;
   }
 
+  const contatar = async () => {
+    setContatando(true);
+    setAviso(null);
+    try {
+      const r = await adaptador.contatarPublicacao(id);
+      setAviso(r.conversa
+        ? "Conversa aberta com o anunciante."
+        : "Pedido de contato enviado — a conversa abre se a pessoa aceitar.");
+    } catch (e) {
+      setAviso(e instanceof ApiError && (e.status === 403 || e.status === 404)
+        ? "Contato indisponível no momento."
+        : "Não foi possível enviar o contato agora.");
+    } finally {
+      setContatando(false);
+    }
+  };
+
   const ehMinha = pub.version !== undefined && pub.autorContaId !== undefined;
   const sistema = pub.origem === "sistema";
   return (
     <article className="internet-pagina" aria-label={`Publicação ${pub.titulo}`}>
       <p className="meta">
-        {pub.tipo === "noticia" ? "Notícia" : "Perfil"}
+        {ROTULO_TIPO[pub.tipo] ?? pub.tipo}
         {" · "}{nomeAutor(pub)}
         {" · "}{ROTULO_HORA.format(new Date(pub.publicadoEm ?? pub.criadoEm))}
+        {pub.expiresAt && ` · até ${ROTULO_DATA.format(new Date(pub.expiresAt))}`}
+        {pub.expirado && " · expirado"}
         {pub.visibilidade === "contatos" && " · visível só para contatos"}
         {sistema && " · notícia automática"}
       </p>
@@ -270,6 +296,14 @@ function MateriaView({ adaptador, id, aoEditar }: {
       <div className="internet-pagina-corpo">
         {pub.corpo.split(/\n{2,}/).map((paragrafo, i) => <p key={i}>{paragrafo}</p>)}
       </div>
+
+      {!sistema && pub.status === "publicado" && pub.podeContatar && (
+        <div className="internet-feed-acoes">
+          <button type="button" className="primario" disabled={contatando} onClick={contatar}>
+            {contatando ? "Enviando…" : "Contatar"}
+          </button>
+        </div>
+      )}
 
       {!sistema && pub.status === "publicado" && (
         <div className="internet-feed-acoes">
@@ -292,8 +326,9 @@ function MateriaView({ adaptador, id, aoEditar }: {
             onClick={() => aoEditar({
               id: pub.id, tipo: pub.tipo, titulo: pub.titulo,
               status: pub.status, visibilidade: pub.visibilidade,
-              autorModo: pub.autorModo, pseudoNome: pub.pseudoNome,
+              autorModo: pub.autorModo ?? "identificado", pseudoNome: pub.pseudoNome ?? null,
               origem: pub.origem, publicadoEm: pub.publicadoEm,
+              expiresAt: pub.expiresAt ?? null,
               version: pub.version!, criadoEm: pub.criadoEm, atualizadoEm: pub.atualizadoEm,
             })}
           >Editar</button>
@@ -329,9 +364,14 @@ function FormPublicacao({ adaptador, editando, aoConcluir }: {
   const [titulo, setTitulo] = useState(editando?.titulo ?? "");
   const [corpo, setCorpo] = useState("");
   const [visibilidade, setVisibilidade] = useState<VisibilidadePublicacao>(editando?.visibilidade ?? "campanha");
-  const [autorModo, setAutorModo] = useState<"identificado" | "pseudonimo">(
-    editando?.autorModo === "pseudonimo" ? "pseudonimo" : "identificado");
+  const [autorModo, setAutorModo] = useState<"identificado" | "pseudonimo" | "anonimo">(
+    editando?.autorModo === "pseudonimo" ? "pseudonimo"
+      : editando?.autorModo === "anonimo" ? "anonimo" : "identificado");
   const [pseudoNome, setPseudoNome] = useState(editando?.pseudoNome ?? "");
+  // D11: expiresAt opcional — só anuncio|classificado; datetime-local
+  // (ISO local) → o servidor valida e deriva o estado na leitura.
+  const [expiresAt, setExpiresAt] = useState(
+    editando?.expiresAt ? editando.expiresAt.slice(0, 16) : "");
   const [statusAlvo, setStatusAlvo] = useState<"rascunho" | "publicado">(
     editando?.status === "publicado" ? "publicado" : "rascunho");
   const [enviando, setEnviando] = useState(false);
@@ -369,10 +409,12 @@ function FormPublicacao({ adaptador, editando, aoConcluir }: {
     setErro(null);
     setConflito(false);
     try {
+      const expiresIso = expiresAt ? new Date(expiresAt).toISOString() : null;
       if (editando) {
         await adaptador.atualizarPublicacao(editando.id, {
           titulo, corpo, visibilidade, autorModo,
           pseudoNome: autorModo === "pseudonimo" ? pseudoNome : null,
+          expiresAt: expiresIso,
           status: statusAlvo,
           expectedVersion: editando.version,
         });
@@ -380,6 +422,7 @@ function FormPublicacao({ adaptador, editando, aoConcluir }: {
         const nova: PublicacaoNova = {
           tipo, titulo, corpo, visibilidade, autorModo,
           ...(autorModo === "pseudonimo" ? { pseudoNome } : {}),
+          ...(expiresIso ? { expiresAt: expiresIso } : {}),
         };
         const criada = await adaptador.criarPublicacao(nova);
         // Nasce rascunho — publicar é uma segunda chamada com versão.
@@ -404,6 +447,8 @@ function FormPublicacao({ adaptador, editando, aoConcluir }: {
           <legend>Tipo</legend>
           <label><input type="radio" name="pub-tipo" checked={tipo === "noticia"} onChange={() => setTipo("noticia")} /> Notícia</label>
           <label><input type="radio" name="pub-tipo" checked={tipo === "post_perfil"} onChange={() => setTipo("post_perfil")} /> Post de perfil</label>
+          <label><input type="radio" name="pub-tipo" checked={tipo === "anuncio"} onChange={() => { setTipo("anuncio"); if (autorModo === "anonimo") setAutorModo("identificado"); }} /> Anúncio</label>
+          <label><input type="radio" name="pub-tipo" checked={tipo === "classificado"} onChange={() => { setTipo("classificado"); if (autorModo === "anonimo") setAutorModo("identificado"); }} /> Classificado</label>
         </fieldset>
       )}
       <label>
@@ -425,6 +470,16 @@ function FormPublicacao({ adaptador, editando, aoConcluir }: {
         <label>
           <input type="radio" name="pub-modo" checked={autorModo === "pseudonimo"} onChange={() => setAutorModo("pseudonimo")} /> Pseudônimo
         </label>
+        {/* DP-6: "Anônimo" só existe para anúncio/classificado — nos
+            demais tipos a opção nem é renderizada (regra do tipo). */}
+        {(tipo === "anuncio" || tipo === "classificado") && (
+          <label>
+            <input type="radio" name="pub-modo" checked={autorModo === "anonimo"} onChange={() => setAutorModo("anonimo")} /> Anônimo
+          </label>
+        )}
+        {autorModo === "anonimo" && (
+          <p className="meta">Anúncio anônimo é imutável depois de publicado — ninguém, nem o mestre, descobre quem escreveu.</p>
+        )}
         {autorModo === "pseudonimo" && (
           <label>
             Nome público
@@ -432,6 +487,12 @@ function FormPublicacao({ adaptador, editando, aoConcluir }: {
           </label>
         )}
       </fieldset>
+      {(tipo === "anuncio" || tipo === "classificado") && (
+        <label>
+          Validade (opcional — vazio = permanente)
+          <input type="datetime-local" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
+        </label>
+      )}
       <fieldset className="internet-form-grupo">
         <legend>Publicação</legend>
         <label><input type="radio" name="pub-status" checked={statusAlvo === "rascunho"} onChange={() => setStatusAlvo("rascunho")} /> Salvar rascunho</label>
@@ -496,14 +557,17 @@ function MinhasView({ adaptador, aoEditar, aoAbrir }: {
             <span className="crescer">
               <span className="internet-conversa-nome">{m.titulo}</span>
               <span className="internet-conversa-meta">
-                {m.tipo === "noticia" ? "Notícia" : "Post de perfil"}
+                {ROTULO_TIPO[m.tipo] ?? m.tipo}
                 {" · "}{ROTULO_STATUS[m.status] ?? m.status}
                 {" · "}{m.visibilidade === "contatos" ? "só contatos" : "campanha"}
+                {m.autorModo === "anonimo" && " · anônimo"}
+                {m.autorModo === "anonimo" && m.status === "publicado" && " · imutável"}
                 {m.origem === "sistema" && " · automática"}
               </span>
             </span>
           </button>
-          {m.origem === "usuario" && m.status !== "removido" && (
+          {m.origem === "usuario" && m.status !== "removido"
+            && !(m.autorModo === "anonimo" && m.status === "publicado") && (
             <span className="internet-minha-acoes">
               <button type="button" className="secundario" disabled={acao === m.id} onClick={() => aoEditar(m)}>Editar</button>
               {m.status === "rascunho" && (

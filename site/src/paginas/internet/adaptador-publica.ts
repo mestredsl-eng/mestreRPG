@@ -108,12 +108,21 @@ export function criarAdaptadorInternetPublica({ campaignId }: { campaignId: stri
     async atualizarPublicacao(id: string, dados: {
       titulo?: string; corpo?: string; visibilidade?: string;
       autorModo?: string; pseudoNome?: string | null;
+      expiresAt?: string | null;
       status?: "rascunho" | "publicado";
       expectedVersion: number;
     }): Promise<PublicacaoDetalhe> {
       const r = await requisicao<{ publicacao: PublicacaoDetalhe }>(
         `${base}/publicacoes/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(dados) });
       return r.publicacao;
+    },
+
+    /** D9/W6-W8: "Contatar" do anúncio/classificado — reusa o fluxo de
+     *  contatos existente; devolve { conversa } quando a aresta já é
+     *  aceita, ou { contato } quando um pedido fica pendente. */
+    async contatarPublicacao(id: string): Promise<{ conversa?: string; contato?: { id: string; status: string } }> {
+      return requisicao<{ conversa?: string; contato?: { id: string; status: string } }>(
+        `${base}/publicacoes/${encodeURIComponent(id)}/contatar`, { method: "POST", body: "{}" });
     },
 
     async denunciarPublicacao(id: string, motivo: string, denunciaGrave?: boolean): Promise<{ removida: boolean }> {

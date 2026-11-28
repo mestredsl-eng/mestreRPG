@@ -316,6 +316,13 @@
       "when": 1795818277830,
       "tag": "0044_skinny_lockjaw",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "6",
+      "when": 1795828920134,
+      "tag": "0045_tan_spyke",
+      "breakpoints": true
     }
   ]
 }

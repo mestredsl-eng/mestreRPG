@@ -15,7 +15,7 @@
 // as tabelas só são lidas; dados de teste entram por fixture.
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { and, eq, inArray, lt, or, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { internetAccounts, internetPages, internetPublicacoes, internetSites } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -291,7 +291,7 @@ async function visivelParaLeitor(
 }
 
 const queryPublicacoesSchema = z.object({
-  tipo: z.enum(["noticia", "post_perfil"]).optional(),
+  tipo: z.enum(["noticia", "post_perfil", "anuncio", "classificado"]).optional(),
   origem: z.enum(["usuario", "sistema"]).optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(50).optional(),
@@ -304,6 +304,9 @@ function autorPublico(
   // DP-6/anonimato: nesta fatia só identificado|pseudonimo.
   // pseudonimo expõe pseudoNome, NUNCA o handle real; sistema → null.
   if (pub.origem === "sistema") return null;
+  // DP-6/W6-W8: anônimo nunca resolve identidade — o modo é público,
+  // a conta por trás não sai em nenhuma superfície de leitura.
+  if (pub.autorModo === "anonimo") return { modo: "anonimo" as const };
   if (pub.autorModo === "pseudonimo") {
     return pub.pseudoNome ? { modo: "pseudonimo" as const, nome: pub.pseudoNome } : null;
   }
@@ -328,6 +331,10 @@ internetPublicaRouter.get("/publicacoes", requirePapel("mestre", "jogador"), lim
     eq(internetPublicacoes.campaignId, cid),
     eq(internetPublicacoes.status, "publicado"),
     sql`${internetPublicacoes.publicadoEm} IS NOT NULL`,
+    // D11: expirado é derivado na leitura — fora de feed/listas sem
+    // job; só anuncio|classificado podem ter expiresAt (validado na
+    // escrita), então o filtro é inócuo para os demais tipos.
+    or(isNull(internetPublicacoes.expiresAt), gt(internetPublicacoes.expiresAt, new Date()))!,
   ];
   if (tipo) conds.push(eq(internetPublicacoes.tipo, tipo));
   if (origem) conds.push(eq(internetPublicacoes.origem, origem));
@@ -366,7 +373,7 @@ internetPublicaRouter.get("/publicacoes", requirePapel("mestre", "jogador"), lim
       id: p.id, tipo: p.tipo, titulo: p.titulo,
       autor: autorPublico(p, p.autorContaId ? contaPorId.get(p.autorContaId) : undefined),
       origem: p.origem, visibilidade: p.visibilidade,
-      publicadoEm: p.publicadoEm, atualizadoEm: p.updatedAt,
+      publicadoEm: p.publicadoEm, expiresAt: p.expiresAt, atualizadoEm: p.updatedAt,
     })),
     cursor: proximoCursor,
   });
@@ -394,7 +401,7 @@ internetPublicaRouter.get("/publicacoes/minhas", requirePapel("mestre", "jogador
       id: p.id, tipo: p.tipo, titulo: p.titulo, status: p.status,
       visibilidade: p.visibilidade, autorModo: p.autorModo,
       pseudoNome: p.pseudoNome, origem: p.origem,
-      publicadoEm: p.publicadoEm, version: p.version,
+      publicadoEm: p.publicadoEm, expiresAt: p.expiresAt, version: p.version,
       criadoEm: p.createdAt, atualizadoEm: p.updatedAt,
     })),
   });
@@ -427,6 +434,41 @@ internetPublicaRouter.get("/publicacoes/:id", requirePapel("mestre", "jogador"),
     ? await db.select().from(internetAccounts).where(eq(internetAccounts.id, pub.autorContaId)).limit(1)
     : [undefined];
 
+  // D11: estado derivado na leitura — nunca persistido nem job.
+  const expirado = !!pub.expiresAt && pub.expiresAt.getTime() <= Date.now();
+
+  // DP-1/AD-10: publicação anônima não expõe NENHUMA aresta de
+  // identidade — sem chave autor*/personagemId/autorContaId em nenhuma
+  // superfície, nem para o próprio autor ou mestre (a desanonimização
+  // é exclusiva do admin da plataforma, fora da UI do módulo).
+  if (pub.autorModo === "anonimo") {
+    res.json({
+      publicacao: {
+        id: pub.id, tipo: pub.tipo, titulo: pub.titulo, corpo: pub.corpo,
+        formato: pub.formato, status: pub.status, visibilidade: pub.visibilidade,
+        anonimo: true, origem: pub.origem,
+        publicadoEm: pub.publicadoEm, expiresAt: pub.expiresAt,
+        expirado, criadoEm: pub.createdAt, atualizadoEm: pub.updatedAt,
+        podeContatar: false,
+        ...(privilegiado ? { version: pub.version, retiradoMotivo: pub.retiradoMotivo } : {}),
+      },
+    });
+    return;
+  }
+
+  // D9: `podeContatar` informa se o leitor pode iniciar o fluxo de
+  // contato do anúncio — só anuncio|classificado vigente com conta
+  // autora ativa e sem bloqueio bilateral; anônimo já saiu acima.
+  let podeContatar = false;
+  if ((pub.tipo === "anuncio" || pub.tipo === "classificado")
+    && pub.status === "publicado" && !expirado && pub.autorContaId && conta?.status === "ativa") {
+    const meusIds = contaIdsDoLeitor(leitor).filter((id) => id !== pub.autorContaId);
+    for (const meuId of meusIds) {
+      if (await contatoBloqueadoEntre(db, cid, meuId, pub.autorContaId)) continue;
+      podeContatar = true; break;
+    }
+  }
+
   res.json({
     publicacao: {
       id: pub.id, tipo: pub.tipo, titulo: pub.titulo, corpo: pub.corpo,
@@ -434,7 +476,9 @@ internetPublicaRouter.get("/publicacoes/:id", requirePapel("mestre", "jogador"),
       autorModo: pub.autorModo, origem: pub.origem,
       autor: autorPublico(pub, conta),
       personagemId: pub.personagemId,
-      publicadoEm: pub.publicadoEm, criadoEm: pub.createdAt, atualizadoEm: pub.updatedAt,
+      publicadoEm: pub.publicadoEm, expiresAt: pub.expiresAt, expirado,
+      podeContatar,
+      criadoEm: pub.createdAt, atualizadoEm: pub.updatedAt,
       // UUID interno e estado de moderação só para privilegiados
       ...(privilegiado ? {
         autorContaId: pub.autorContaId, version: pub.version,
