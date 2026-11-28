@@ -45,8 +45,12 @@ async function abrirPersonagem(page, nome) {
   await page.locator("tr.clicavel", { hasText: nome }).first().click();
   await page.waitForTimeout(600);
 }
+// #407: abas do Patrimônio são role="tab" dentro de section.cartao
+// com h3 "Patrimônio" — escopo obrigatório: EquipamentoArmazém (outro
+// módulo da ficha) tem abas homônimas Inventário/Equipamentos/Veículos.
+const secaoPatrimonio = (page) => page.locator("section.cartao").filter({ has: page.locator("h3", { hasText: "Patrimônio" }) });
 async function abaPatrimonio(page, nome) {
-  await page.getByRole("button", { name: nome, exact: true }).first().click();
+  await secaoPatrimonio(page).getByRole("tab", { name: nome, exact: true }).click();
   await page.waitForTimeout(500);
 }
 async function registrarMov(page, conta, tipo, valor, desc) {
@@ -198,7 +202,7 @@ try {
 
   sec("1. Jogador acessa o próprio patrimônio");
   await abrirPersonagem(pgJ, "Heroína Um");
-  const temDinheiro = await pgJ.getByRole("button", { name: "Dinheiro", exact: true }).count();
+  const temDinheiro = await secaoPatrimonio(pgJ).getByRole("tab", { name: "Dinheiro", exact: true }).count();
   t("aba Dinheiro disponível na ficha", temDinheiro > 0);
   await abaPatrimonio(pgJ, "Dinheiro");
   await pgJ.getByRole("button", { name: "Nova conta" }).click();

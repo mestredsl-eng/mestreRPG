@@ -45,8 +45,10 @@ async function abrirPersonagem(page, nome) {
   await page.locator("tr.clicavel", { hasText: nome }).first().click();
   await page.waitForTimeout(600);
 }
+// #407: abas do Patrimônio são role="tab" — escopo à section (EquipArmazém tem homônimas).
+const secaoPatrimonio = (page) => page.locator("section.cartao").filter({ has: page.locator("h3", { hasText: "Patrimônio" }) });
 async function abaPatrimonio(page, nome) {
-  await page.getByRole("button", { name: nome, exact: true }).first().click();
+  await secaoPatrimonio(page).getByRole("tab", { name: nome, exact: true }).click();
   await page.waitForTimeout(600);
 }
 const saldoTag = (page, nome = "Carteira") => page.locator(".tag", { hasText: nome }).first().textContent().catch(() => "");
