@@ -10,7 +10,7 @@ import {
   users, internetPublicacoes,
   internetAccounts, internetContacts, internetConversations,
   internetDenuncias, internetMessages, internetPages,
-  internetParticipantes, internetSites,
+  internetParticipantes, internetPerfis, internetSites,
 } from "../db/schema.js";
 import { avaliarMorte, CHAVE_MORTE } from "./morte.js";
 import { lerHp } from "./vida.js";
@@ -153,6 +153,7 @@ type SiteInternet = typeof internetSites.$inferSelect;
 type PaginaInternet = typeof internetPages.$inferSelect;
 type PublicacaoInternet = typeof internetPublicacoes.$inferSelect;
 type DenunciaInternet = typeof internetDenuncias.$inferSelect;
+type PerfilInternet = typeof internetPerfis.$inferSelect;
 type PersonagemRef = { id: string; name: string; membershipId: string; isNpc: boolean | null; createdAt: Date | null; updatedAt: Date | null };
 type MembershipRow = typeof memberships.$inferSelect;
 
@@ -166,6 +167,7 @@ interface DominioInternetPreservado {
   paginas: PaginaInternet[];
   publicacoes: PublicacaoInternet[];
   denuncias: DenunciaInternet[];
+  perfis: PerfilInternet[];
   personagens: PersonagemRef[];
   memberships: MembershipRow[];
 }
@@ -187,6 +189,7 @@ function capturarDominioInternet(tx: Tx, campaignId: string): DominioInternetPre
     paginas: tx.select().from(internetPages).where(eq(internetPages.campaignId, campaignId)).all(),
     publicacoes: tx.select().from(internetPublicacoes).where(eq(internetPublicacoes.campaignId, campaignId)).all(),
     denuncias: tx.select().from(internetDenuncias).where(eq(internetDenuncias.campaignId, campaignId)).all(),
+    perfis: tx.select().from(internetPerfis).where(eq(internetPerfis.campaignId, campaignId)).all(),
     personagens: tx.select({
       id: characters.id, name: characters.name, membershipId: characters.membershipId,
       isNpc: characters.isNpc, createdAt: characters.createdAt, updatedAt: characters.updatedAt,
@@ -262,6 +265,13 @@ function validarIntegridadeDominioInternet(d: DominioInternetPreservado, campaig
     // D6: denunciante NULL = denúncia importada (ref opaca) — legítimo
     if (n.denuncianteContaId && !contaIds.has(n.denuncianteContaId)) falha("internet_denuncias.denunciante_conta_id", n.denuncianteContaId);
   }
+  for (const p of d.perfis) {
+    if (p.campaignId !== campaignId) falha("internet_perfis.campaign_id", p.campaignId);
+    // characterId/avatarFileId NÃO abortam aqui: perfil sem personagem
+    // restaurado é descartado explicitamente na recriação (TG #368
+    // 7232390928 crit. 3-4) e avatar cross-campanha vira NULL — nenhum
+    // descarte silencioso (contagem no log da restauração).
+  }
 }
 
 /** Recria o domínio Internet preservado, em ordem FK. Personagens
@@ -275,7 +285,7 @@ function validarIntegridadeDominioInternet(d: DominioInternetPreservado, campaig
 function restaurarDominioInternet(tx: Tx, campaignId: string, d: DominioInternetPreservado) {
   const vazio = !d.contas.length && !d.contatos.length && !d.conversas.length &&
     !d.mensagens.length && !d.sites.length && !d.paginas.length &&
-    !d.publicacoes.length && !d.denuncias.length;
+    !d.publicacoes.length && !d.denuncias.length && !d.perfis.length;
   if (vazio) return;
 
   const charsPresentes = new Set(
@@ -335,6 +345,30 @@ function restaurarDominioInternet(tx: Tx, campaignId: string, d: DominioInternet
   inserir(tx, internetPages, d.paginas);
   inserir(tx, internetPublicacoes, d.publicacoes);
   inserir(tx, internetDenuncias, d.denuncias);
+
+  // Perfis (W9/W10): NÃO entram em idsReferenciados — perfil é
+  // conteúdo vivo do personagem, não tombstone (TG 7232390928 crit.4).
+  // Linha cujo personagem não sobreviveu ao restore é descartada com
+  // log explícito; avatarFileId que não resolve em `files` da mesma
+  // campanha vira NULL (FK SET NULL coerente). Nada silencioso.
+  if (d.perfis.length) {
+    const fileIds = new Set(
+      tx.select({ id: files.id }).from(files)
+        .where(eq(files.campaignId, campaignId)).all().map((r) => r.id),
+    );
+    const perfisOk: PerfilInternet[] = [];
+    let descartados = 0;
+    for (const p of d.perfis) {
+      if (!charsPresentes.has(p.characterId)) { descartados++; continue; }
+      perfisOk.push(p.avatarFileId && !fileIds.has(p.avatarFileId)
+        ? { ...p, avatarFileId: null }
+        : p);
+    }
+    if (descartados) {
+      console.warn(`restore: ${descartados} perfil(is) Internet descartados — personagem ausente no estado restaurado (campanha ${campaignId})`);
+    }
+    inserir(tx, internetPerfis, perfisOk);
+  }
 }
 
 /**
@@ -550,6 +584,7 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
     limpar(internetPages, eq(internetPages.campaignId, campaignId));
     limpar(internetSites, eq(internetSites.campaignId, campaignId));
     limpar(internetAccounts, eq(internetAccounts.campaignId, campaignId));
+    limpar(internetPerfis, eq(internetPerfis.campaignId, campaignId));
     limpar(characters, eq(characters.campaignId, campaignId));
     if (tplIds.length) limpar(sheetVersions, inArray(sheetVersions.templateId, tplIds));
     limpar(sheetTemplates, eq(sheetTemplates.campaignId, campaignId));

@@ -873,6 +873,46 @@ try {
     const rAnon = await req(BASE, "GET", PERFIL_PUB("beto.foca"), {});
     t("M26 sem sessão → 401", rAnon.status === 401, `status=${rAnon.status}`);
   }
+
+  // ================= RESTAURAÇÃO × PERFIS (TG P1) =================
+  sec("O. Restore substituir — perfis preservados, avatar saneado");
+  try {
+    // perfil de charJ2 já existe (seção M, titular j1 pós-P7). Cria um
+    // arquivo real e o referencia como avatar; depois o pacote de
+    // restore NÃO carrega o arquivo → avatar_file_id deve virar NULL
+    // (crit. TG 7232390928 §3), nunca restaurar aresta inválida.
+    const arquivoAvatar = crypto.randomUUID();
+    const db0 = abrirDb(BANCO);
+    const perfilAntes = db0.prepare("select * from internet_perfis where character_id=?").get(charJ2);
+    t("O0 perfil de charJ2 existe", !!perfilAntes, JSON.stringify(perfilAntes?.id));
+    const agoraO = Date.now();
+    db0.prepare(`insert into files (id,campaign_id,folder_path,display_name,file_name,mime_type,size_bytes,uploaded_by,visibility,status,created_at,updated_at)
+      values (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(arquivoAvatar, campId, "/", "Avatar O", "avatar-o.png", "image/png", 10, C.adminId, "mestre", "aprovado", agoraO, agoraO);
+    db0.prepare("update internet_perfis set avatar_file_id=? where character_id=?").run(arquivoAvatar, charJ2);
+    db0.close();
+    const expO = await req(BASE, "GET", `/campaigns/${campId}/exportar`, { cookie: C.cookieMestre });
+    // remove o arquivo do pacote → restore não o recria → aresta do
+    // avatar fica pendente e deve ser saneada para NULL.
+    if (Array.isArray(expO.json?.estado?.files)) {
+      expO.json.estado.files = expO.json.estado.files.filter((f) => f.id !== arquivoAvatar);
+    }
+    const impO = await req(BASE, "POST", "/campaigns/importar", {
+      cookie: C.cookieMestre,
+      body: { pacote: expO.json, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+    });
+    t("O1 substituir → 200", impO.status === 200, `status=${impO.status} ${JSON.stringify(impO.json).slice(0, 160)}`);
+    const db1 = abrirDb(BANCO);
+    const perfilDepois = db1.prepare("select * from internet_perfis where character_id=?").get(charJ2);
+    t("O2 perfil preservado (mesmo id, descrição intacta)",
+      !!perfilDepois && perfilDepois.id === perfilAntes?.id && perfilDepois.descricao === perfilAntes?.descricao,
+      JSON.stringify({ antes: perfilAntes?.id, depois: perfilDepois?.id }));
+    t("O3 avatar_file_id inválido → NULL", !!perfilDepois && perfilDepois.avatar_file_id === null,
+      `avatar=${perfilDepois?.avatar_file_id}`);
+    db1.close();
+    const rPerfilO = await req(BASE, "GET", `/campaigns/${campId}/internet/perfis/beto.foca`, { cookie: j1.cookie });
+    t("O4 perfil público segue legível", rPerfilO.status === 200, `status=${rPerfilO.status}`);
+  } catch (e) { console.log("  FALHOU O exceção:", String(e).slice(0, 300)); fail++; }
 } finally {
   if (proc) await encerrarServidor(proc);
   console.log(`\n${pass} ok, ${fail} falhas`);
