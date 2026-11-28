@@ -226,6 +226,16 @@ try {
     } else if (pubDb(idAnuncio)?.status !== "publicado") {
       await api(BASE, C.campId, J1, "PATCH", `/publicacoes/${idAnuncio}`, { status: "publicado", expectedVersion: pubDb(idAnuncio)?.version ?? 1 });
     }
+    // direção do Dono (#364 `7231532492`): anúncio ANÔNIMO não ganha
+    // Contatar nem revela identidade — DP-1/AD-10
+    if (idAnon) {
+      const rContAnon = await api(BASE, C.campId, J2, "POST", `/publicacoes/${idAnon}/contatar`, {});
+      t("DP-1: contatar publicação anônima → negado (sem identidade)", rContAnon.status >= 400 && rContAnon.status < 500, `status=${rContAnon.status}`);
+      const rDetAnon2 = await api(BASE, C.campId, J2, "GET", `/publicacoes/${idAnon}`);
+      t("DP-1: detalhe do anônimo não expõe caminho de contato/autor",
+        rDetAnon2.status !== 200 || !/contatar|contato|autor|handle/i.test(JSON.stringify(rDetAnon2.json).replace(/"podeContatar":false/g, "")),
+        `status=${rDetAnon2.status} ${JSON.stringify(rDetAnon2.json).slice(0, 160)}`);
+    }
     const convAntes = conversasDb();
     const rContatar = await api(BASE, C.campId, J2, "POST", `/publicacoes/${idAnuncio}/contatar`, {});
     t("D9: POST /publicacoes/:id/contatar existe e responde", rContatar.status === 200 || rContatar.status === 201 || rContatar.status === 409, `status=${rContatar.status} ${JSON.stringify(rContatar.json).slice(0, 160)}`);
