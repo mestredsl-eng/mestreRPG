@@ -21,7 +21,7 @@
 //    marcadas `anonima`; `contatos` só com aresta aceita vigente.
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { and, desc, eq, inArray, like, lt, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNull, like, ne, or, sql, type SQLWrapper } from "drizzle-orm";
 import { existsSync, createReadStream } from "node:fs";
 import { getDb } from "../db/index.js";
 import {
@@ -307,8 +307,16 @@ internetPerfisRouter.patch("/perfil", requirePapel("mestre", "jogador"), limiteP
     if (!f) { erroHttp(res, 400, "avatar_invalido"); return; }
   }
 
+  // DP-5 TOCTOU (TG #368 7234188619): o check de morte também é
+  // refeito DENTRO da tx — um __morte gravado entre o fast-path e o
+  // commit não pode passar. O pré-check externo fica como fast-path.
   const atualizado = db.transaction((tx) => {
-    if (!titularNaTx(tx, titular.conta.id, req.usuario!.id, cid)) return null;
+    if (!titularNaTx(tx, titular.conta.id, req.usuario!.id, cid)) return "titular" as const;
+    const [dado] = tx.select({ data: characters.data }).from(characters)
+      .where(and(eq(characters.id, characterId), eq(characters.campaignId, cid)))
+      .limit(1).all();
+    const dados = (typeof dado?.data === "string" ? JSON.parse(dado.data) : dado?.data ?? {}) as Record<string, unknown>;
+    if (morteVigente(dados)) return "morto" as const;
     const [row] = tx.update(internetPerfis).set({
       ...(nomePublico !== undefined ? { nomePublico } : {}),
       ...(descricao !== undefined ? { descricao } : {}),
@@ -318,8 +326,10 @@ internetPerfisRouter.patch("/perfil", requirePapel("mestre", "jogador"), limiteP
       eq(internetPerfis.id, perfil.id),
       eq(internetPerfis.campaignId, cid),
     )).returning().all();
-    return row;
+    return row ?? null;
   });
+  if (atualizado === "titular") { erroHttp(res, 403, "Titularidade alterada durante a operação"); return; }
+  if (atualizado === "morto") { erroHttp(res, 403, "personagem_falecido"); return; }
   if (!atualizado) { erroHttp(res, 403, "Titularidade alterada durante a operação"); return; }
 
   await audit(req, "internet.perfil.editado", { characterId }, { campaignId: cid });
@@ -345,16 +355,24 @@ internetPerfisRouter.post("/perfil/avatar", requirePapel("mestre", "jogador"), l
   const f = await arquivoAvatarValido(cid, body.data.arquivoId);
   if (!f) { erroHttp(res, 400, "avatar_invalido"); return; }
 
+  // DP-5 TOCTOU: morte revalidada dentro da tx (mesmo padrão do PATCH).
   const atualizado = db.transaction((tx) => {
-    if (!titularNaTx(tx, titular.conta.id, req.usuario!.id, cid)) return null;
+    if (!titularNaTx(tx, titular.conta.id, req.usuario!.id, cid)) return "titular" as const;
+    const [dado] = tx.select({ data: characters.data }).from(characters)
+      .where(and(eq(characters.id, body.data.characterId), eq(characters.campaignId, cid)))
+      .limit(1).all();
+    const dados = (typeof dado?.data === "string" ? JSON.parse(dado.data) : dado?.data ?? {}) as Record<string, unknown>;
+    if (morteVigente(dados)) return "morto" as const;
     const [row] = tx.update(internetPerfis).set({
       avatarFileId: f.id, updatedAt: new Date(),
     }).where(and(
       eq(internetPerfis.id, perfil.id),
       eq(internetPerfis.campaignId, cid),
     )).returning().all();
-    return row;
+    return row ?? null;
   });
+  if (atualizado === "titular") { erroHttp(res, 403, "Titularidade alterada durante a operação"); return; }
+  if (atualizado === "morto") { erroHttp(res, 403, "personagem_falecido"); return; }
   if (!atualizado) { erroHttp(res, 403, "Titularidade alterada durante a operação"); return; }
   await audit(req, "internet.perfil.avatar", { characterId: body.data.characterId, arquivoId: f.id }, { campaignId: cid });
   res.json({ perfil: atualizado });
@@ -387,15 +405,17 @@ async function perfilPorHandle(cid: string, handle: string): Promise<PerfilPubli
   return { perfil, conta, personagem };
 }
 
-/** Publicações do perfil: status 'publicado', não expiradas (D11
- *  derivado na leitura), `contatos` só com aresta aceita vigente,
- *  anônimas só para o próprio titular (marcadas, jamais identificadas
- *  — DP-1/AD-08). Serialização mínima: nenhum id interno (V-08). */
+/** Publicações do perfil (timeline pública): SOMENTE
+ *  `visibilidade='campanha'` — `contatos` NUNCA aparece em
+ *  timeline/busca/agregado (contrato §3, sem exceção de aresta;
+ *  só leitura direta autorizada). status 'publicado', não expiradas
+ *  (D11 derivado) e anônimas restritas ao titular (DP-1) — tudo no
+ *  SQL ANTES do LIMIT: os 50 retornados são os últimos VISÍVEIS.
+ *  Serialização mínima: nenhum id interno (V-08). */
 async function timelineDoPerfil(
   cid: string, conta: typeof internetAccounts.$inferSelect,
-  leitor: LeitorPublico, ehTitular: boolean,
+  ehTitular: boolean,
 ) {
-  const agora = Date.now();
   const rows = await db.select({
     id: internetPublicacoes.id,
     tipo: internetPublicacoes.tipo,
@@ -413,40 +433,23 @@ async function timelineDoPerfil(
       eq(internetPublicacoes.campaignId, cid),
       eq(internetPublicacoes.autorContaId, conta.id),
       eq(internetPublicacoes.status, "publicado"),
+      eq(internetPublicacoes.visibilidade, "campanha"),
+      or(isNull(internetPublicacoes.expiresAt), gte(internetPublicacoes.expiresAt, new Date())),
+      ...(ehTitular ? [] : [ne(internetPublicacoes.autorModo, "anonimo")]),
     ))
     .orderBy(desc(internetPublicacoes.publicadoEm), desc(internetPublicacoes.id))
     .limit(50);
 
-  const visiveis = rows.filter((p) => {
-    if (p.expiresAt && p.expiresAt.getTime() < agora) return false; // expirado derivado
-    if (p.autorModo === "anonimo" && !ehTitular) return false;     // DP-1: some p/ terceiros
-    return true;
-  });
-
-  // `contatos`: a aresta é por par autor↔leitor — UMA aresta aceita
-  // vigente entre a conta do autor e qualquer conta do leitor libera
-  // todas as publicações `contatos` do perfil (mesma regra do feed).
-  // Mestre sem conta própria não tem aresta → não vê `contatos`.
-  const temContatos = visiveis.some((p) => p.visibilidade === "contatos");
-  let podeVerContatos = false;
-  if (temContatos) {
-    for (const lc of leitor.contas) {
-      if (await contatoAceitoEntre(db, cid, conta.id, lc.id)) { podeVerContatos = true; break; }
-    }
-  }
-
-  return visiveis
-    .filter((p) => p.visibilidade !== "contatos" || podeVerContatos)
-    .map((p) => ({
-      id: p.id,
-      tipo: p.tipo,
-      titulo: p.titulo,
-      corpo: p.corpo,
-      formato: p.formato,
-      publicadoEm: p.publicadoEm,
-      ...(p.autorModo === "anonimo" ? { anonima: true } : {}),
-      ...(p.autorModo === "pseudonimo" && p.pseudoNome ? { pseudoNome: p.pseudoNome } : {}),
-    }));
+  return rows.map((p) => ({
+    id: p.id,
+    tipo: p.tipo,
+    titulo: p.titulo,
+    corpo: p.corpo,
+    formato: p.formato,
+    publicadoEm: p.publicadoEm,
+    ...(p.autorModo === "anonimo" ? { anonima: true } : {}),
+    ...(p.autorModo === "pseudonimo" && p.pseudoNome ? { pseudoNome: p.pseudoNome } : {}),
+  }));
 }
 
 /** GET /perfis/:handle — perfil público (W9/W10): 404 idêntico para
@@ -464,7 +467,7 @@ internetPerfisRouter.get("/perfis/:handle", requirePapel("mestre", "jogador"), l
 
   const ehTitular = await contaAutorizadaPara(alvo.conta.id, req.usuario!.id)
     .then((a) => !!a);
-  const dados = await timelineDoPerfil(cid, alvo.conta, leitor, ehTitular);
+  const dados = await timelineDoPerfil(cid, alvo.conta, ehTitular);
   // Métricas (ordem 7232090197 item 3; M7): seguidores = COUNT
   // derivado da aresta — nunca campo incrementável, nunca exposto o
   // grafo (quem segue quem permanece privado).
@@ -527,14 +530,16 @@ internetPerfisRouter.get("/perfis/:handle/avatar", requirePapel("mestre", "jogad
 
 // ---------- W2 — pesquisa multi-escopo (D12/SEARCH-01..10) ----------
 
-interface ItemBusca {
+interface ItemBuscaInterno {
   escopo: "site" | "pagina" | "publicacao" | "perfil";
-  id: string;
+  /** Chave de ordenação/cursor — id interno (site/página/publicação)
+   *  ou handle público (perfil). Uso exclusivo server-side: NUNCA
+   *  serializada na resposta (V-08). */
+  chave: string;
   titulo: string;
   trecho: string | null;
-  /** Referência de navegação — slug do site, siteSlug/pageSlug,
-   *  id da publicação ou handle do perfil. Nunca ids internos de
-   *  conta/personagem (V-08). */
+  /** Referência de navegação pública — slug do site, siteSlug/pageSlug,
+   *  id público da publicação ou handle do perfil. */
   ref: string;
   ref2?: string;
   criadoEmMs: number;
@@ -554,9 +559,11 @@ function trechoDe(texto: string | null | undefined): string | null {
  *  resultados/ordenação/paginação; conteúdo invisível não influencia
  *  contagens nem cursores. Escopos: sites (nome/slug/descrição),
  *  páginas (só publicadas de sites ativos), publicações (só
- *  publicadas, não expiradas, `contatos` só com aresta aceita),
- *  perfis (SÓ handle — displayName/nome público fora do índice,
- *  SEARCH-06). Paginação keyset (criadoEm,id) DESC unificada. */
+ *  `visibilidade='campanha'` — `contatos` nunca, expiradas fora no
+ *  SQL), perfis (SÓ handle — displayName/nome público fora do
+ *  índice, SEARCH-06). Paginação keyset (ts,chave) DESC unificada
+ *  com L+1 por categoria — sem caps truncadores. V-08: a resposta
+ *  serializa allowlist sem PK interna de site/página. */
 internetPerfisRouter.get("/busca", requirePapel("mestre", "jogador"), limitePerfis, async (req, res) => {
   const cid = campanhaId(req);
   const leitor = await resolverLeitor(req, res, cid);
@@ -571,6 +578,20 @@ internetPerfisRouter.get("/busca", requirePapel("mestre", "jogador"), limitePerf
 
   const padrao = `%${q}%`;
 
+  // Paginação keyset POR CATEGORIA (ordem do Dono 7234231687): cada
+  // fonte aplica no SQL todos os predicados de visibilidade/status/
+  // expiração + o cursor global, ordena (ts DESC, chave DESC) e traz
+  // no máximo L+1. Como nenhum item na posição >L+1 de uma fonte pode
+  // entrar no top L+1 global, L+1 por fonte basta — sem cap truncador
+  // (os antigos LIMIT 50/50/100/20 ocultavam resultados válidos).
+  const cTs = cursor?.createdAt.getTime();
+  const cKey = cursor?.messageId ?? "";
+  const aposCursor = (ts: SQLWrapper, chave: SQLWrapper) => (
+    cTs === undefined ? undefined
+      : sql`((${ts} < ${cTs}) OR ((${ts} = ${cTs}) AND (${chave} < ${cKey})))`
+  );
+  const lotes = limit + 1;
+
   // ---- sites: ativos da campanha, nome/slug/descrição ----
   const sitesRows = await db.select({
     id: internetSites.id, slug: internetSites.slug, nome: internetSites.nome,
@@ -580,8 +601,10 @@ internetPerfisRouter.get("/busca", requirePapel("mestre", "jogador"), limitePerf
       eq(internetSites.campaignId, cid),
       eq(internetSites.status, "ativo"),
       or(like(internetSites.nome, padrao), like(internetSites.slug, padrao), like(internetSites.descricao, padrao)),
+      aposCursor(internetSites.createdAt, internetSites.id),
     ))
-    .limit(50);
+    .orderBy(desc(internetSites.createdAt), desc(internetSites.id))
+    .limit(lotes);
 
   // ---- páginas: só publicadas de sites ativos ----
   const paginasRows = await db.select({
@@ -597,42 +620,32 @@ internetPerfisRouter.get("/busca", requirePapel("mestre", "jogador"), limitePerf
       eq(internetPages.campaignId, cid),
       eq(internetPages.status, "publicado"),
       or(like(internetPages.titulo, padrao), like(internetPages.corpo, padrao), like(internetPages.slug, padrao)),
+      aposCursor(internetPages.createdAt, internetPages.id),
     ))
-    .limit(50);
+    .orderBy(desc(internetPages.createdAt), desc(internetPages.id))
+    .limit(lotes);
 
-  // ---- publicações: só publicadas, não expiradas; contatos só com aresta
+  // ---- publicações: contrato §3 — `contatos` NUNCA em busca (sem
+  // exceção de aresta), só publicadas, não expiradas (D11 derivado
+  // no SQL, antes do corte). Timestamp de ordenação =
+  // coalesce(publicadoEm, createdAt).
+  const tsPub = sql`coalesce(${internetPublicacoes.publicadoEm}, ${internetPublicacoes.createdAt})`;
   const pubsRows = await db.select({
     id: internetPublicacoes.id, tipo: internetPublicacoes.tipo,
     titulo: internetPublicacoes.titulo, corpo: internetPublicacoes.corpo,
-    visibilidade: internetPublicacoes.visibilidade,
-    autorContaId: internetPublicacoes.autorContaId,
     publicadoEm: internetPublicacoes.publicadoEm,
-    expiresAt: internetPublicacoes.expiresAt,
     createdAt: internetPublicacoes.createdAt,
   }).from(internetPublicacoes)
     .where(and(
       eq(internetPublicacoes.campaignId, cid),
       eq(internetPublicacoes.status, "publicado"),
+      eq(internetPublicacoes.visibilidade, "campanha"),
+      or(isNull(internetPublicacoes.expiresAt), gte(internetPublicacoes.expiresAt, new Date())),
       or(like(internetPublicacoes.titulo, padrao), like(internetPublicacoes.corpo, padrao)),
+      aposCursor(tsPub, internetPublicacoes.id),
     ))
-    .limit(100);
-
-  const agora = Date.now();
-  const pubsVisiveis = [];
-  for (const p of pubsRows) {
-    if (p.expiresAt && p.expiresAt.getTime() < agora) continue; // expirado derivado
-    if (p.visibilidade === "contatos") {
-      // aresta aceita vigente entre o autor e alguma conta do leitor
-      let ok = false;
-      if (p.autorContaId) {
-        for (const lc of leitor.contas) {
-          if (await contatoAceitoEntre(db, cid, p.autorContaId, lc.id)) { ok = true; break; }
-        }
-      }
-      if (!ok) continue; // invisível — não influencia resultado
-    }
-    pubsVisiveis.push(p);
-  }
+    .orderBy(sql`${tsPub} DESC`, desc(internetPublicacoes.id))
+    .limit(lotes);
 
   // ---- perfis: SÓ handle indexa (SEARCH-06) ----
   const perfisRows = await db.select({
@@ -654,45 +667,47 @@ internetPerfisRouter.get("/busca", requirePapel("mestre", "jogador"), limitePerf
     .where(and(
       eq(internetPerfis.campaignId, cid),
       like(internetAccounts.handle, padrao),
+      aposCursor(internetPerfis.ativadoEm, internetAccounts.handle),
     ))
-    .limit(20);
+    .orderBy(desc(internetPerfis.ativadoEm), desc(internetAccounts.handle))
+    .limit(lotes);
 
   // ---- merge + ordenação estável + paginação keyset ----
-  const itens: ItemBusca[] = [
+  // Ordenação global = mesmo comparador das fontes (ts DESC, chave
+  // DESC). `chave`/`criadoEmMs` são internos: a resposta usa
+  // allowlist — site/página nunca expõem PK (V-08); publicação
+  // mantém o id PÚBLICO em `ref`; perfil usa handle.
+  const itens: ItemBuscaInterno[] = [
     ...sitesRows.map((s) => ({
-      escopo: "site" as const, id: s.id, titulo: s.nome,
+      escopo: "site" as const, chave: s.id, titulo: s.nome,
       trecho: trechoDe(s.descricao), ref: s.slug,
       criadoEmMs: s.createdAt.getTime(),
     })),
     ...paginasRows.map((p) => ({
-      escopo: "pagina" as const, id: p.id, titulo: p.titulo,
+      escopo: "pagina" as const, chave: p.id, titulo: p.titulo,
       trecho: trechoDe(p.corpo), ref: p.siteSlug, ref2: p.slug,
       criadoEmMs: p.createdAt.getTime(),
     })),
-    ...pubsVisiveis.map((p) => ({
-      escopo: "publicacao" as const, id: p.id,
+    ...pubsRows.map((p) => ({
+      escopo: "publicacao" as const, chave: p.id,
       titulo: `[${p.tipo}] ${p.titulo}`, trecho: trechoDe(p.corpo), ref: p.id,
       criadoEmMs: (p.publicadoEm ?? p.createdAt).getTime(),
     })),
     ...perfisRows.map((p) => ({
-      escopo: "perfil" as const, id: p.handle, titulo: `@${p.handle}`,
+      escopo: "perfil" as const, chave: p.handle, titulo: `@${p.handle}`,
       trecho: p.nomePublico ?? p.nomePersonagem, ref: p.handle,
       criadoEmMs: p.ativadoEm.getTime(),
     })),
-  ].sort((a, b) => b.criadoEmMs - a.criadoEmMs || (a.id < b.id ? 1 : -1));
+  ].sort((a, b) => b.criadoEmMs - a.criadoEmMs || (a.chave < b.chave ? 1 : -1));
 
-  const filtrados = cursor
-    ? itens.filter((i) => i.criadoEmMs < cursor.createdAt.getTime()
-        || (i.criadoEmMs === cursor.createdAt.getTime() && i.id < cursor.messageId))
-    : itens;
-  const pagina = filtrados.slice(0, limit);
+  const pagina = itens.slice(0, limit);
   const ultimo = pagina[pagina.length - 1];
-  const proximoCursor = filtrados.length > limit && ultimo
-    ? codificarCursor(new Date(ultimo.criadoEmMs), ultimo.id)
+  const proximoCursor = itens.length > limit && ultimo
+    ? codificarCursor(new Date(ultimo.criadoEmMs), ultimo.chave)
     : null;
 
   res.json({
-    resultados: pagina,
+    resultados: pagina.map(({ chave: _chave, criadoEmMs: _ms, ...item }) => item),
     nextCursor: proximoCursor,
   });
 });
