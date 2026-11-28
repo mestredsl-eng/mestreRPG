@@ -1121,6 +1121,46 @@ try {
     const propInex = await API("POST", "/patrocinios", j1.cookie, { characterId: charJ2, beneficiarioCharacterId: crypto.randomUUID(), pagadorAccountId: accPagador, amountCents: 100, condicao: { tipo: "imediato" }, requestId: "prop-n17-0002" });
     t("N17b arquivado ≡ inexistente (status+corpo)", propInex.status === propX9.status && JSON.stringify(propInex.json) === JSON.stringify(propX9.json),
       `${propX9.status}/${JSON.stringify(propX9.json)} vs ${propInex.status}/${JSON.stringify(propInex.json)}`);
+
+    // N18 (TG #401 TOCTOU-1): titularidade relida DENTRO da tx das
+    // três mutações. A janela exata (entre a checagem externa e o
+    // commit) não é reproduzível de forma determinística neste
+    // harness — better-sqlite3 executa a tx de forma síncrona e o
+    // servidor é processo separado; o que é determinístico é o
+    // ESTADO FINAL: quem perdeu a titularidade não propõe, não
+    // aceita e não cancela — 404 uniforme nas três.
+    const propT = await API("POST", "/patrocinios", j1.cookie, {
+      characterId: charJ2, beneficiarioCharacterId: charJ4, pagadorAccountId: accPagador,
+      amountCents: 100, condicao: { tipo: "imediato" }, requestId: "prop-n18-0001",
+    });
+    const acordoT = propT.json?.acordo?.id;
+    t("N18a proposta p/ teste TOCTOU → 201", propT.status === 201 && !!acordoT, `status=${propT.status}`);
+    // "transferência" instantânea: charJ4 passa a pertencer a j1 —
+    // j2 deixa de ser titular da conta Internet dela.
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update characters set membership_id=? where id=?").run(C.jogadores.j1.membershipId, charJ4);
+      db.close();
+    }
+    const aceT = await API("POST", `/patrocinios/${acordoT}/aceitar`, j2.cookie, { beneficiarioAccountId: accBenef });
+    t("N18b ex-titular não aceita → 404", aceT.status === 404, `status=${aceT.status}`);
+    const cancT = await API("POST", `/patrocinios/${acordoT}/cancelar`, j2.cookie);
+    t("N18c ex-parte não cancela → 404", cancT.status === 404, `status=${cancT.status}`);
+    const propT2 = await API("POST", "/patrocinios", j2.cookie, {
+      characterId: charJ2, beneficiarioCharacterId: charJ4, pagadorAccountId: accPagador,
+      amountCents: 100, condicao: { tipo: "imediato" }, requestId: "prop-n18-0002",
+    });
+    t("N18d ex-titular não propõe → 404", propT2.status === 404, `status=${propT2.status}`);
+    // novo titular (j1) recupera o controle: cancelar como parte
+    const cancT1 = await API("POST", `/patrocinios/${acordoT}/cancelar`, j1.cookie);
+    t("N18e titular atual cancela → 200", cancT1.status === 200, `status=${cancT1.status}`);
+    // devolve charJ4 a j2 — seções seguintes não dependem, mas o
+    // estado fica consistente com o restante da suíte.
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update characters set membership_id=? where id=?").run(C.jogadores.j2.membershipId, charJ4);
+      db.close();
+    }
   }
   // ================= RESTAURAÇÃO × PERFIS (TG P1) ==========  sec("O. Restore substituir — perfis preservados, avatar saneado");
   {
