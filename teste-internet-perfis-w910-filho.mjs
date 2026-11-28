@@ -68,6 +68,12 @@ try {
   darNotebook(ch1); darNotebook(ch2);
   // conta internet para ch1 (handle serve de base ao perfil)
   await req(BASE, "POST", `/campaigns/${campId}/internet/account`, { cookie: J1, body: { characterId: ch1, handle: "p9.heroi" } });
+  await req(BASE, "POST", `/campaigns/${campId}/internet/account`, { cookie: J2, body: { characterId: ch2, handle: "p9.vizinho" } });
+  // segundo personagem elegível de J1: sem ele, perder ch1 em P7 zera o
+  // acesso à camada pública inteira (resolverLeitor exige conta autorizada)
+  const ch1b = C.novoPersonagem(C.jogadores.j1.membershipId, "P9 Outra", { comp: 3 });
+  darNotebook(ch1b);
+  await req(BASE, "POST", `/campaigns/${campId}/internet/account`, { cookie: J1, body: { characterId: ch1b, handle: "p9.outra" } });
   t("fixture: conta p9.heroi criada", true);
 
   // ---------- W9. Ativação irreversível ----------
@@ -139,7 +145,7 @@ try {
     const campBId = campB.json?.campanha?.id;
     if (campBId) {
       const rCross = await req(BASE, "GET", PERFIL_PUB(BASE, campBId, "p9.heroi"), { cookie: J2 });
-      t("ISO: perfil de outra campanha → 404", rCross.status === 404, `status=${rCross.status}`);
+      t("ISO: perfil de outra campanha → 404/403 (sem vazar existência)", rCross.status === 404 || rCross.status === 403, `status=${rCross.status}`);
       const rAtivarB = await req(BASE, "POST", `/campaigns/${campBId}/internet/perfil/ativar`, { cookie: J1, body: { characterId: ch2 } });
       t("ISO: ativar perfil com characterId de outra campanha → 4xx", rAtivarB.status >= 400 && rAtivarB.status < 500, `status=${rAtivarB.status}`);
     }

@@ -44,13 +44,16 @@ try {
   {
     const db = abrirDb(BANCO); const agora = Date.now();
     const rs = db.prepare("select id from rule_sets where campaign_id=? and is_active=1").get(campId);
-    for (const [kind, key, name] of [["pericia", "computador", "Computador"], ["item", "notebook", "Notebook"]])
+    for (const [kind, key, name] of [["pericia", "computador", "Computador"], ["conhecimento", "tecnologia", "Tecnologia"], ["item", "notebook", "Notebook"], ["profissao", "jornalista", "Jornalista"], ["profissao", "medico", "Médico"]])
       db.prepare("insert or ignore into rule_definitions (id,rule_set_id,kind,key,name,category,parent_key,definition,created_at,updated_at) values (?,?,?,?,?,?,?,'{}',?,?)")
         .run(crypto.randomUUID(), rs.id, kind, key, name, null, null, agora, agora);
     const ver = db.prepare("select id, structure from sheet_versions order by created_at desc limit 1").get();
     const est = JSON.parse(ver.structure);
     if (!est.secoes[0].campos.some((x) => x.id === "comp")) {
-      est.secoes[0].campos.push({ id: "comp", label: "Computador", tipo: "inteiro", regra: { kind: "pericia", key: "computador" } });
+      est.secoes[0].campos.push(
+        { id: "comp", label: "Computador", tipo: "inteiro", regra: { kind: "pericia", key: "computador" } },
+        { id: "tec", label: "Tecnologia", tipo: "inteiro", regra: { kind: "conhecimento", key: "tecnologia" } },
+        { id: "prof", label: "Profissão", tipo: "selecao_unica", regraKind: "profissao" });
       db.prepare("update sheet_versions set structure=? where id=?").run(JSON.stringify(est), ver.id);
     }
     db.close();
@@ -133,12 +136,16 @@ try {
     t("SEARCH-08b: cursor forjado rejeitado ou inócuo", rForj.status !== 500, `status=${rForj.status}`);
   } else t("SEARCH-08: campanha B", "skip", "criação falhou");
 
-  sec("W2. SEARCH-09 — estado reflete remoção");
-  if (pubAnId) {
-    await apiI(campId, J2, "PATCH", `/publicacoes/${pubAnId}`, { status: "removido", expectedVersion: 2 });
-    const rDepois = await req(BASE, "GET", BUSCA(campId, "W2ANUNCdetalhe"), { cookie: J2 });
-    t("SEARCH-09: anúncio removido some da busca ativa", !(rDepois.status === 200 && JSON.stringify(rDepois.json).includes("W2ANUNC Vendo")), `status=${rDepois.status}`);
-  } else t("SEARCH-09", "skip", "anúncio não criado");
+  sec("W2. SEARCH-09 — estado reflete mudança de estado");
+  if (pubClsId) {
+    // PATCH status aceita só rascunho|publicado — retirada/moderação é
+    // outro fluxo; anônimo é imutável (AD-08), então usa o classificado
+    // identificado. Valida que despublicar some da busca ativa.
+    const rPatch = await apiI(campId, J2, "PATCH", `/publicacoes/${pubClsId}`, { status: "rascunho", expectedVersion: 2 });
+    t("SEARCH-09 setup: despublicar classificado", rPatch.status === 200 || rPatch.status === 201, `status=${rPatch.status}`);
+    const rDepois = await req(BASE, "GET", BUSCA(campId, "W2CLSdetalhe"), { cookie: J2 });
+    t("SEARCH-09: despublicado some da busca ativa", !(rDepois.status === 200 && JSON.stringify(rDepois.json).includes("W2CLS Alugo")), `status=${rDepois.status}`);
+  } else t("SEARCH-09", "skip", "classificado não criado");
 
   sec("W2. SEARCH-10 — paginação estável");
   const rP1 = await req(BASE, "GET", BUSCA(campId, "W2", "&limit=2"), { cookie: J2 });
