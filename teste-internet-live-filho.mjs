@@ -47,7 +47,7 @@ try {
     for (const [kind, key, name] of [
       ["pericia", "computador", "Computador"], ["conhecimento", "tecnologia", "Tecnologia"],
       ["item", "notebook", "Notebook"],
-      ["profissao", "streamer", "Streamer"], ["profissao", "medico", "Médico"], ["profissao", "jornalista", "Jornalista"],
+      ["profissao", "streamer", "Streamer"], ["profissao", "medico", "Médico"], ["profissao", "jornalista", "Jornalista"], ["pericia", "influencer", "Influencer"],
       ["pericia", "streamer", "Streamer (perícia)"],
     ]) db.prepare("insert or ignore into rule_definitions (id,rule_set_id,kind,key,name,category,parent_key,definition,created_at,updated_at) values (?,?,?,?,?,?,?,'{}',?,?)")
       .run(crypto.randomUUID(), rs.id, kind, key, name, null, null, agora, agora);
@@ -58,6 +58,7 @@ try {
         { id: "comp", label: "Computador", tipo: "inteiro", regra: { kind: "pericia", key: "computador" } },
         { id: "tec", label: "Tecnologia", tipo: "inteiro", regra: { kind: "conhecimento", key: "tecnologia" } },
         { id: "str", label: "Streamer?", tipo: "inteiro", regra: { kind: "pericia", key: "streamer" } },
+        { id: "inf", label: "Influencer?", tipo: "inteiro", regra: { kind: "pericia", key: "influencer" } },
         { id: "prof", label: "Profissão", tipo: "selecao_unica", regraKind: "profissao" });
       db.prepare("update sheet_versions set structure=? where id=?").run(JSON.stringify(est), ver.id);
     }
@@ -73,10 +74,12 @@ try {
   const ch1 = C.novoPersonagem(C.jogadores.j1.membershipId, "LV Streamer", { comp: 3, prof: "streamer" });
   const ch2 = C.novoPersonagem(C.jogadores.j2.membershipId, "LV Médico", { comp: 3, prof: "medico" });
   const ch3 = C.novoPersonagem(C.jogadores.j3.membershipId, "LV Perícia", { comp: 3, str: 5 });
-  for (const ch of [ch1, ch2, ch3]) darNotebook(ch);
+  const ch4 = C.novoPersonagem(C.jogadores.j3.membershipId, "LV Influencer", { comp: 3, inf: 5 });
+  for (const ch of [ch1, ch2, ch3, ch4]) darNotebook(ch);
   await apiI(campId, J1, "POST", "/account", { characterId: ch1, handle: "lv.streamer" });
   await apiI(campId, J2, "POST", "/account", { characterId: ch2, handle: "lv.medico" });
   await apiI(campId, J3, "POST", "/account", { characterId: ch3, handle: "lv.pericia" });
+  await apiI(campId, J3, "POST", "/account", { characterId: ch4, handle: "lv.influencer" });
 
   sec("L1. Gate M1 — streamer fail-closed");
   {
@@ -90,6 +93,8 @@ try {
     const rPer = await apiI(campId, J3, "POST", "/ao-vivo", { characterId: ch3, titulo: "Live por perícia" });
     t("M1b: pericia:streamer também habilita → 201", rPer.status === 201, `status=${rPer.status}`);
     const liveId3 = rPer.json?.live?.id;
+    const rInf = await apiI(campId, J3, "POST", "/ao-vivo", { characterId: ch4, titulo: "Live influencer" });
+    t("M1c: pericia:influencer também habilita (Dono #402) → 201", rInf.status === 201, `status=${rInf.status}`);
     // peak: segunda live na mesma conta → 409
     const rDup = await apiI(campId, J1, "POST", "/ao-vivo", { characterId: ch1, titulo: "Segunda live" });
     t("peak: 2ª live aberta na conta → 409", rDup.status === 409, `status=${rDup.status}`);
