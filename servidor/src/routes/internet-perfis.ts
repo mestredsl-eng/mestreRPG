@@ -21,7 +21,7 @@
 //    marcadas `anonima`; `contatos` só com aresta aceita vigente.
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { and, desc, eq, like, lt, or } from "drizzle-orm";
+import { and, desc, eq, like, lt, ne, or } from "drizzle-orm";
 import { existsSync, createReadStream } from "node:fs";
 import { getDb } from "../db/index.js";
 import {
@@ -206,8 +206,20 @@ internetPerfisRouter.post("/perfil/ativar", requirePapel("mestre", "jogador"), l
     return;
   }
 
-  const perfil = db.transaction((tx) => {
-    if (!titularNaTx(tx, conta.id, req.usuario!.id, cid)) return null;
+  // DP-5 dentro da tx: morte vigente lida na mesma seção crítica —
+  // ativar é a escrita mais sensível do módulo (irreversível, D10).
+  // Corrida de ativação simultânea: UNIQUE(character_id) resolve —
+  // o perdedor relê a linha vencedora e responde 200 idempotente,
+  // nunca 500.
+  let resultado: { row?: typeof internetPerfis.$inferSelect; falha?: "titular" | "morto" };
+  try {
+    resultado = db.transaction((tx): { row?: typeof internetPerfis.$inferSelect; falha?: "titular" | "morto" } => {
+    if (!titularNaTx(tx, conta.id, req.usuario!.id, cid)) return { falha: "titular" };
+    const [dado] = tx.select({ data: characters.data }).from(characters)
+      .where(and(eq(characters.id, characterId), eq(characters.campaignId, cid)))
+      .limit(1).all();
+    const dados = (typeof dado?.data === "string" ? JSON.parse(dado.data) : dado?.data ?? {}) as Record<string, unknown>;
+    if (morteVigente(dados)) return { falha: "morto" };
     const [row] = tx.insert(internetPerfis).values({
       id: crypto.randomUUID(),
       campaignId: cid,
@@ -219,12 +231,20 @@ internetPerfisRouter.post("/perfil/ativar", requirePapel("mestre", "jogador"), l
       createdAt: new Date(),
       updatedAt: new Date(),
     }).returning().all();
-    return row;
-  });
-  if (!perfil) { erroHttp(res, 403, "Titularidade alterada durante a operação"); return; }
+    return { row };
+    });
+  } catch {
+    // UNIQUE(character_id) — outra ativação venceu a corrida; relê e
+    // responde idempotente como se a linha já existisse.
+    const vencedora = await perfilDoPersonagem(cid, characterId);
+    if (vencedora) { res.status(200).json({ perfil: vencedora }); return; }
+    throw new Error("falha_na_ativacao_de_perfil");
+  }
+  if (resultado.falha === "morto") { erroHttp(res, 403, "personagem_falecido"); return; }
+  if (!resultado.row) { erroHttp(res, 403, "Titularidade alterada durante a operação"); return; }
 
   await audit(req, "internet.perfil.ativado", { characterId }, { campaignId: cid });
-  res.status(201).json({ perfil });
+  res.status(201).json({ perfil: resultado.row });
 });
 
 /** GET /perfil?characterId= — visão do próprio titular (edição):
@@ -357,7 +377,11 @@ async function perfilPorHandle(cid: string, handle: string): Promise<PerfilPubli
   const perfil = await perfilDoPersonagem(cid, conta.characterId);
   if (!perfil) return null;
   const [personagem] = await db.select().from(characters)
-    .where(and(eq(characters.id, conta.characterId), eq(characters.campaignId, cid)))
+    .where(and(
+      eq(characters.id, conta.characterId),
+      eq(characters.campaignId, cid),
+      ne(characters.status, "arquivado"),
+    ))
     .limit(1);
   if (!personagem) return null;
   return { perfil, conta, personagem };

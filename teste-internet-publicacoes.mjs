@@ -851,6 +851,11 @@ try {
       t("M21 perfil de morto legível + flag", rMorto.status === 200 && rMorto.json?.perfil?.personagemFalecido === true, `status=${rMorto.status}`);
       const rEditMorto = await API("PATCH", "/perfil", j1.cookie, { characterId: charJ2, descricao: "x" });
       t("M22 escrita em morto → 403/404", rEditMorto.status === 403 || rEditMorto.status === 404, `status=${rEditMorto.status}`);
+      // TG-P2: ativação também é escrita — charJ1 morto nunca ativou
+      const rAtivarMorto = await API("POST", "/perfil/ativar", j1.cookie, { characterId: charJ1 });
+      t("M22b ativar perfil de morto → 403", rAtivarMorto.status === 403, `status=${rAtivarMorto.status}`);
+      const perfilMorto = (() => { const db = abrirDb(BANCO); const r = db.prepare("select count(*) n from internet_perfis where character_id=?").get(charJ1); db.close(); return r?.n; })();
+      t("M22c nenhuma linha de perfil criada p/ morto", perfilMorto === 0, `linhas=${perfilMorto}`);
       const ress = await req(BASE, "POST", `/characters/${charJ2}/ressuscitar`, { cookie: C.cookieMestre, body: {} });
       t("M23 ressurreição → 200", ress.status === 200, `status=${ress.status}`);
       if (ress.status === 200) {
