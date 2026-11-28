@@ -861,25 +861,26 @@ try {
     }
   }
 
-  // ================= W9/W10 — PERFIS PÚBLICOS ==========  sec("M. W9/W10 — ativação irreversível, perfil público, ciclo de vida");
+  // ========= W9/W10 — PERFIS PÚBLICOS =================
+  sec("M. W9/W10 — ativação irreversível, perfil público, ciclo de vida");
   {
     const PERFIL_PUB = (handle) => `/campaigns/${campId}/internet/perfis/${handle}`;
     const BUSCA = (q) => `/campaigns/${campId}/internet/busca?q=${encodeURIComponent(q)}`;
 
     // M1–M2: antes de ativar → 404; ativação → 201
     const rAntes = await req(BASE, "GET", PERFIL_PUB("beto.foca"), { cookie: j1.cookie });
-    t("M1 perfil não ativado → 404", rAntes.status === 404, `status=${rAntes.status}`);
+    t("H1 perfil não ativado → 404", rAntes.status === 404, `status=${rAntes.status}`);
     const rAtivar = await API("POST", "/perfil/ativar", j2.cookie, { characterId: charJ2, descricao: "Beto da vizinhança" });
-    t("M2 ativação → 201", rAtivar.status === 201, `status=${rAtivar.status} ${JSON.stringify(rAtivar.json).slice(0, 140)}`);
+    t("H2 ativação → 201", rAtivar.status === 201, `status=${rAtivar.status} ${JSON.stringify(rAtivar.json).slice(0, 140)}`);
     // M3: idempotente
     const rAtivar2 = await API("POST", "/perfil/ativar", j2.cookie, { characterId: charJ2 });
-    t("M3 reativação idempotente → 200", rAtivar2.status === 200, `status=${rAtivar2.status}`);
+    t("H3 reativação idempotente → 200", rAtivar2.status === 200, `status=${rAtivar2.status}`);
     // M4: leitura pública por terceiro elegível — sem ids internos
     const rPerfil = await req(BASE, "GET", PERFIL_PUB("beto.foca"), { cookie: j1.cookie });
     const blobPerfil = JSON.stringify(rPerfil.json);
-    t("M4 perfil público legível", rPerfil.status === 200, `status=${rPerfil.status}`);
-    t("M5 sem ids internos no perfil", !/contaId|accountId|userId|membershipId|characterId/.test(blobPerfil), blobPerfil.slice(0, 200));
-    t("M6 nome público default = personagem", rPerfil.json?.perfil?.nomePublico === "Beto Foca", JSON.stringify(rPerfil.json?.perfil?.nomePublico));
+    t("H4 perfil público legível", rPerfil.status === 200, `status=${rPerfil.status}`);
+    t("H5 sem ids internos no perfil", !/contaId|accountId|userId|membershipId|characterId/.test(blobPerfil), blobPerfil.slice(0, 200));
+    t("H6 nome público default = personagem", rPerfil.json?.perfil?.nomePublico === "Beto Foca", JSON.stringify(rPerfil.json?.perfil?.nomePublico));
     // M7: irreversibilidade estrutural — desativar/excluir/ocultar → 4xx/404
     for (const [op, path, metodo] of [
       ["desativar", "/perfil/desativar", "POST"],
@@ -891,59 +892,59 @@ try {
     }
     // M8: leitura sem conta própria → 403 (mesmo gate de sites/feed)
     const semConta = await req(BASE, "GET", PERFIL_PUB("beto.foca"), { cookie: C.cookieMestre });
-    t("M8 mestre lê perfil público", semConta.status === 200, `status=${semConta.status}`);
+    t("H8 mestre lê perfil público", semConta.status === 200, `status=${semConta.status}`);
     // M9: não-titular não edita (j1 tenta PATCH no perfil de j2)
     const rPatchTerceiro = await API("PATCH", "/perfil", j1.cookie, { characterId: charJ2, descricao: "hack" });
-    t("M9 terceiro não edita → 403/404", rPatchTerceiro.status === 403 || rPatchTerceiro.status === 404, `status=${rPatchTerceiro.status}`);
+    t("H9 terceiro não edita → 403/404", rPatchTerceiro.status === 403 || rPatchTerceiro.status === 404, `status=${rPatchTerceiro.status}`);
     // M10: mestre não edita conteúdo diegético do perfil
     const rPatchMestre = await API("PATCH", "/perfil", C.cookieMestre, { characterId: charJ2, descricao: "hack" });
-    t("M10 mestre não edita perfil → 403/404", rPatchMestre.status === 403 || rPatchMestre.status === 404, `status=${rPatchMestre.status}`);
+    t("H10 mestre não edita perfil → 403/404", rPatchMestre.status === 403 || rPatchMestre.status === 404, `status=${rPatchMestre.status}`);
     // M11: edição legítima do titular
     const rEdit = await API("PATCH", "/perfil", j2.cookie, { characterId: charJ2, nomePublico: "Beto Vizinho", descricao: "novo texto" });
-    t("M11 titular edita → 200", rEdit.status === 200, `status=${rEdit.status}`);
+    t("H11 titular edita → 200", rEdit.status === 200, `status=${rEdit.status}`);
     const rPerfil2 = await req(BASE, "GET", PERFIL_PUB("beto.foca"), { cookie: j1.cookie });
-    t("M12 nome público editado visível", rPerfil2.json?.perfil?.nomePublico === "Beto Vizinho", JSON.stringify(rPerfil2.json?.perfil?.nomePublico));
+    t("H12 nome público editado visível", rPerfil2.json?.perfil?.nomePublico === "Beto Vizinho", JSON.stringify(rPerfil2.json?.perfil?.nomePublico));
     // M13: avatar inválido → 4xx (não 500)
     const rAvatar = await API("POST", "/perfil/avatar", j2.cookie, { characterId: charJ2, arquivoId: crypto.randomUUID() });
-    t("M13 avatar arquivo inexistente → 4xx", rAvatar.status >= 400 && rAvatar.status < 500, `status=${rAvatar.status}`);
+    t("H13 avatar arquivo inexistente → 4xx", rAvatar.status >= 400 && rAvatar.status < 500, `status=${rAvatar.status}`);
     // M14: busca por handle encontra; displayName/nome público NÃO indexa
     const rBusca = await req(BASE, "GET", BUSCA("beto.foca"), { cookie: j1.cookie });
-    t("M14 busca por handle → acha perfil", rBusca.status === 200 && JSON.stringify(rBusca.json).includes("beto.foca"), `status=${rBusca.status}`);
+    t("H14 busca por handle → acha perfil", rBusca.status === 200 && JSON.stringify(rBusca.json).includes("beto.foca"), `status=${rBusca.status}`);
     const rBuscaNome = await req(BASE, "GET", BUSCA("Beto Vizinho"), { cookie: j1.cookie });
-    t("M15 nome público NÃO indexa", !JSON.stringify(rBuscaNome.json).includes("beto.foca"), `status=${rBuscaNome.status}`);
+    t("H15 nome público NÃO indexa", !JSON.stringify(rBuscaNome.json).includes("beto.foca"), `status=${rBuscaNome.status}`);
     // M16: P7 — perfil segue o personagem; novo titular edita, antigo não
     const inv = await req(BASE, "POST", `/campaigns/${campId}/characters/${charJ2}/transferencias`, { cookie: j2.cookie, body: { membershipId: C.jogadores.j1.membershipId } });
     const tid = inv.json?.transferencia?.id;
-    t("M16 transferência criada", !!tid, `status=${inv.status}`);
+    t("H16 transferência criada", !!tid, `status=${inv.status}`);
     if (tid) {
       await req(BASE, "POST", `/campaigns/${campId}/characters/transferencias/${tid}/responder`, { cookie: j1.cookie, body: { aceitar: true } });
       await new Promise((r) => setTimeout(r, 300));
       const rAntigo = await API("PATCH", "/perfil", j2.cookie, { characterId: charJ2, descricao: "hack" });
-      t("M17 titular anterior não edita → 403/404", rAntigo.status === 403 || rAntigo.status === 404, `status=${rAntigo.status}`);
+      t("H17 titular anterior não edita → 403/404", rAntigo.status === 403 || rAntigo.status === 404, `status=${rAntigo.status}`);
       const rNovo = await API("PATCH", "/perfil", j1.cookie, { characterId: charJ2, descricao: "sou o novo titular" });
-      t("M18 novo titular edita → 200", rNovo.status === 200, `status=${rNovo.status}`);
+      t("H18 novo titular edita → 200", rNovo.status === 200, `status=${rNovo.status}`);
       const rLeAntigo = await req(BASE, "GET", PERFIL_PUB("beto.foca"), { cookie: j2.cookie });
-      t("M19 titular anterior ainda LÊ perfil", rLeAntigo.status === 200 || rLeAntigo.status === 403, `status=${rLeAntigo.status}`);
+      t("H19 titular anterior ainda LÊ perfil", rLeAntigo.status === 200 || rLeAntigo.status === 403, `status=${rLeAntigo.status}`);
     }
     // M20–M22: morte vigente → leitura ok + escrita negada; ressurreição reabre
     const dano = await req(BASE, "POST", `/characters/${charJ2}/hp`, { cookie: C.cookieMestre, body: { acao: "dano", quantidade: 9999, motivo: "morte p9" } });
-    t("M20 dano letal → 200", dano.status === 200, `status=${dano.status}`);
+    t("H20 dano letal → 200", dano.status === 200, `status=${dano.status}`);
     if (dano.status === 200) {
       await new Promise((r) => setTimeout(r, 300));
       const rMorto = await req(BASE, "GET", PERFIL_PUB("beto.foca"), { cookie: j1.cookie });
-      t("M21 perfil de morto legível + flag", rMorto.status === 200 && rMorto.json?.perfil?.personagemFalecido === true, `status=${rMorto.status}`);
+      t("H21 perfil de morto legível + flag", rMorto.status === 200 && rMorto.json?.perfil?.personagemFalecido === true, `status=${rMorto.status}`);
       const rEditMorto = await API("PATCH", "/perfil", j1.cookie, { characterId: charJ2, descricao: "x" });
-      t("M22 escrita em morto → 403/404", rEditMorto.status === 403 || rEditMorto.status === 404, `status=${rEditMorto.status}`);
+      t("H22 escrita em morto → 403/404", rEditMorto.status === 403 || rEditMorto.status === 404, `status=${rEditMorto.status}`);
       // TG-P2: ativação também é escrita — charJ1 morto nunca ativou
       const rAtivarMorto = await API("POST", "/perfil/ativar", j1.cookie, { characterId: charJ1 });
-      t("M22b ativar perfil de morto → 403", rAtivarMorto.status === 403, `status=${rAtivarMorto.status}`);
+      t("H22b ativar perfil de morto → 403", rAtivarMorto.status === 403, `status=${rAtivarMorto.status}`);
       const perfilMorto = (() => { const db = abrirDb(BANCO); const r = db.prepare("select count(*) n from internet_perfis where character_id=?").get(charJ1); db.close(); return r?.n; })();
-      t("M22c nenhuma linha de perfil criada p/ morto", perfilMorto === 0, `linhas=${perfilMorto}`);
+      t("H22c nenhuma linha de perfil criada p/ morto", perfilMorto === 0, `linhas=${perfilMorto}`);
       const ress = await req(BASE, "POST", `/characters/${charJ2}/ressuscitar`, { cookie: C.cookieMestre, body: {} });
-      t("M23 ressurreição → 200", ress.status === 200, `status=${ress.status}`);
+      t("H23 ressurreição → 200", ress.status === 200, `status=${ress.status}`);
       if (ress.status === 200) {
         const rVivo = await API("PATCH", "/perfil", j1.cookie, { characterId: charJ2, descricao: "voltei" });
-        t("M24 escrita reabre após ressurreição", rVivo.status === 200, `status=${rVivo.status}`);
+        t("H24 escrita reabre após ressurreição", rVivo.status === 200, `status=${rVivo.status}`);
       }
     }
     // M25: cross-campaign → 404; sem sessão → 401
@@ -952,9 +953,9 @@ try {
     const rCross = campMId
       ? await req(BASE, "GET", `/campaigns/${campMId}/internet/perfis/beto.foca`, { cookie: C.cookieMestre })
       : { status: 0 };
-    t("M25 perfil de outra campanha → 404", rCross.status === 404, `status=${rCross.status}`);
+    t("H25 perfil de outra campanha → 404", rCross.status === 404, `status=${rCross.status}`);
     const rAnon = await req(BASE, "GET", PERFIL_PUB("beto.foca"), {});
-    t("M26 sem sessão → 401", rAnon.status === 401, `status=${rAnon.status}`);
+    t("H26 sem sessão → 401", rAnon.status === 401, `status=${rAnon.status}`);
   }
 
   // ================= PATROCÍNIO AUTOMÁTICO ==========  sec("N. Patrocínio — acordo, aceite bilateral, liquidação atômica");
@@ -1110,6 +1111,91 @@ try {
     const pernasO = (() => { const db = abrirDb(BANCO); const r = db.prepare("select count(*) n from money_transactions where campaign_id=? and request_id like 'patrocinios:%'").get(campId); db.close(); return r?.n; })();
     t("O6 pernas financeiras dos acordos preservadas", pernasO === 4, `pernas=${pernasO}`);
   } catch (e) { console.log("  FALHOU O exceção:", String(e).slice(0, 300)); fail++; }
+
+  // ================= D6 HARDENING (P1 residual + P2s) ==========
+  sec("L2. D6 — linhagem dedupe, denuncianteRef, rascunho, contatos");
+  {
+    const rExpM = await API("GET", "/exportar", C.cookieMestre);
+    const pacoteM = rExpM.json;
+
+    // M1 (P2-1 INTERMEDIÁRIO 7232738783): rascunho é trabalho não
+    // publicado — pacote público não o transporta.
+    const idRasc = crypto.randomUUID();
+    {
+      const db = abrirDb(BANCO); const ag = Date.now();
+      db.prepare("insert into internet_publicacoes (id,campaign_id,tipo,titulo,corpo,formato,status,visibilidade,autor_modo,origem,version,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run(idRasc, campId, "post_perfil", "RASCUNHO_SECRETO", "corpo", "texto", "rascunho", "campanha", "identificado", "usuario", 1, ag, ag);
+      db.close();
+    }
+    const rExp2 = await API("GET", "/exportar", C.cookieMestre);
+    t("L2-1 export omite rascunho", !JSON.stringify(rExp2.json).includes("RASCUNHO_SECRETO"), "vazou rascunho");
+
+    // M2 (P1 residual 7232925593 / PoC Gerente 7232846030): página
+    // forjada NÃO pendura em site de JOGADOR — dedupe por id não
+    // prova linhagem; siteMap só resolve site sem dono local.
+    const forjadoM = JSON.parse(JSON.stringify(pacoteM));
+    const pagForjadaM = {
+      id: crypto.randomUUID(), siteId: idsJ.siteId, slug: "pagina-injetada-m",
+      titulo: "Injetada", corpo: "sem autor", formato: "texto",
+      status: "publicado", version: 1,
+      criadoEm: new Date().toISOString(), atualizadoEm: new Date().toISOString(),
+    };
+    forjadoM.estado.paginas = [pagForjadaM];
+    forjadoM.estado.publicacoes = [];
+    forjadoM.estado.denuncias = [];
+    const rImpM = await API("POST", "/importar", C.cookieMestre, { pacote: forjadoM, confirmacao: "IMPORTAR" });
+    t("L2-2 import forjado → 200", rImpM.status === 200, `status=${rImpM.status}`);
+    const pgM = (() => { const db = abrirDb(BANCO); const r = db.prepare("select id from internet_pages where id=?").get(pagForjadaM.id); db.close(); return r; })();
+    t("L2-2b página em site de jogador NÃO inserida", !pgM, JSON.stringify(pgM));
+    const rejM = (rImpM.json?.rejeitadas ?? []).find((r) => r.id === pagForjadaM.id);
+    t("L2-2c rejeitada como site_orfao", rejM?.motivo === "site_orfao", JSON.stringify(rImpM.json?.rejeitadas).slice(0, 200));
+
+    // M3/M4 precisam de campanha com publicações importadas (origem
+    //='importado' é a única âncora válida de denúncia).
+    const campM = await req(BASE, "POST", "/campaigns", { cookie: C.cookieMestre, body: { name: "CampM" } });
+    const campMId = campM.json?.campanha?.id;
+    t("L2-3 campanha M criada", !!campMId);
+    if (campMId) {
+      const rImpM0 = await req(BASE, "POST", `/campaigns/${campMId}/internet/importar`, { cookie: C.cookieMestre, body: { pacote: pacoteM, confirmacao: "IMPORTAR" } });
+      t("L2-3a import pacote em M → 200", rImpM0.status === 200, `status=${rImpM0.status}`);
+
+      // M3b (P2-2): denuncianteRef forjado (UUID de conta real de
+      // outra campanha) grava com prefixo pkg: — nunca colide com
+      // conta.id de denúncia local na UNIQUE.
+      const pkgM3 = JSON.parse(JSON.stringify(pacoteM));
+      const pubRefM3 = pkgM3.estado.publicacoes[0]?.id;
+      if (pubRefM3) {
+        const denM = {
+          id: crypto.randomUUID(), publicacaoId: pubRefM3,
+          denuncianteRef: contaJ1, motivo: "spam", denunciaGrave: 0,
+          status: "aberta", resolucao: null, prazoContestacaoEm: null,
+          criadoEm: new Date().toISOString(), atualizadoEm: new Date().toISOString(),
+        };
+        pkgM3.estado.denuncias = [denM];
+        const rImpM3 = await req(BASE, "POST", `/campaigns/${campMId}/internet/importar`, { cookie: C.cookieMestre, body: { pacote: pkgM3, confirmacao: "IMPORTAR" } });
+        t("L2-3b import denúncia → 200", rImpM3.status === 200, `status=${rImpM3.status} ${JSON.stringify(rImpM3.json).slice(0,140)}`);
+        const denRow = (() => { const db = abrirDb(BANCO); const r = db.prepare("select denunciante_ref from internet_denuncias where id=?").get(denM.id); db.close(); return r; })();
+        t("L2-3c denunciante_ref prefixado pkg:", denRow?.denunciante_ref === `pkg:${contaJ1}`, JSON.stringify(denRow));
+      }
+
+      // M4 (P2-4): visibilidade 'contatos' é insatisfativel sem autor
+      // — rejeitada com relatório em vez de virar zumbi.
+      const pkgM4 = JSON.parse(JSON.stringify(pacoteM));
+      const pubCt = pkgM4.estado.publicacoes.find((p) => p.status === "publicado") ?? pkgM4.estado.publicacoes[0];
+      if (pubCt) {
+        pubCt.id = crypto.randomUUID(); pubCt.titulo = "CT_" + pubCt.titulo;
+        pubCt.visibilidade = "contatos";
+        pkgM4.estado.publicacoes = [pubCt];
+        pkgM4.estado.sites = []; pkgM4.estado.paginas = []; pkgM4.estado.denuncias = [];
+        const rImpM4 = await req(BASE, "POST", `/campaigns/${campMId}/internet/importar`, { cookie: C.cookieMestre, body: { pacote: pkgM4, confirmacao: "IMPORTAR" } });
+        t("L2-4 import contatos → 200", rImpM4.status === 200, `status=${rImpM4.status}`);
+        const rejCt = (rImpM4.json?.rejeitadas ?? []).find((r) => r.id === pubCt.id);
+        t("L2-4b rejeitada visibilidade_insatisfativel", rejCt?.motivo === "visibilidade_insatisfativel", JSON.stringify(rImpM4.json?.rejeitadas).slice(0, 200));
+        const pubCtRow = (() => { const db = abrirDb(BANCO); const r = db.prepare("select id from internet_publicacoes where id=?").get(pubCt.id); db.close(); return r; })();
+        t("L2-4c publicação contatos NÃO inserida", !pubCtRow, JSON.stringify(pubCtRow));
+      }
+    }
+  }
 } finally {
   if (proc) await encerrarServidor(proc);
   console.log(`\n${pass} ok, ${fail} falhas`);
