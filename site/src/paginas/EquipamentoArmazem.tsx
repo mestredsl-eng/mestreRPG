@@ -140,7 +140,11 @@ export default function EquipamentoArmazem({ characterId, campaignId, aoVenderIt
     <section className="cartao" aria-label="Equipamento e Armazém">
       <h3>Equipamento/Armazém</h3>
       <p className="meta">
-        Consulta do patrimônio físico do personagem. Edição de itens, equipamentos e veículos segue no painel Patrimônio. A venda de um item para uma loja (LOJA-B) é operação financeira e acontece na Internet — o botão encaminha o item pré-selecionado para lá.
+        Consulta do patrimônio físico do personagem. Edição de itens, equipamentos e veículos segue no painel Patrimônio —{" "}
+        <a
+          href="#secao-patrimonio"
+          onClick={() => requestAnimationFrame(() => document.getElementById("secao-patrimonio")?.focus({ preventScroll: true }))}
+        >Ir para o Patrimônio</a>. A venda de um item para uma loja (LOJA-B) é operação financeira e acontece na Internet — o botão encaminha o item pré-selecionado para lá.
       </p>
       <div className="abas" role="tablist" aria-label="Seções do equipamento e armazém" onKeyDown={aoTeclarAbas}>
         {abas.map(([id, label]) => (
