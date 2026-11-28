@@ -111,8 +111,8 @@ try {
     insPub.run(ids.pubSis, campId, "noticia", "Morte D6", "corpo", "markdown-subset", "publicado", "campanha", "identificado", null, null, "sistema", "morte:" + ch1, ch1, agora, 1, agora, agora);
     ids.denId = crypto.randomUUID(); ids.pubRem = crypto.randomUUID();
     insPub.run(ids.pubRem, campId, "noticia", "Removida D6", "corpo", "markdown-subset", "removido", "campanha", "identificado", null, ids.contaJ1, "usuario", null, ch1, agora, 2, agora, agora);
-    db.prepare("insert into internet_denuncias (id,campaign_id,publicacao_id,denunciante_conta_id,motivo,denuncia_grave,status,resolucao,resolvido_por,prazo_contestacao_em,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(ids.denId, campId, ids.pubRem, ids.contaJ2, "conteúdo ofensivo", 0, "auto_removida", "mantida", "user-admin-qualquer", agora + 86400000, agora, agora);
+    db.prepare("insert into internet_denuncias (id,campaign_id,publicacao_id,denunciante_conta_id,denunciante_ref,motivo,denuncia_grave,status,resolucao,resolvido_por,prazo_contestacao_em,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(ids.denId, campId, ids.pubRem, ids.contaJ2, "ref-" + ids.contaJ2, "conteúdo ofensivo", 0, "auto_removida", "mantida", "user-admin-qualquer", agora + 86400000, agora, agora);
   });
   t("fixture: domínio semeado (contas, contato, conversa, msg, site, page, 4 pubs, denúncia)", true);
 
