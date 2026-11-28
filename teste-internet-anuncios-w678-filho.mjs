@@ -324,6 +324,19 @@ try {
       t("conta inativa → anuncio negado (fail-closed)", rInat.status === 403 || rInat.status === 404, `status=${rInat.status}`);
       comDb((db) => db.prepare("update internet_accounts set status='ativa' where id=?").run(contaJ3));
     }
+    // K12-equivalente FILHO (finding INTERMEDIÁRIO @0da9698c): /contatar em
+    // visibilidade='contatos' sem aresta aceita → 404 uniforme (anti-oráculo)
+    const rCtPub = await criarAnuncio(J4, { titulo: "ANUNC_CONTATOS_W678", corpo: "só contatos", visibilidade: "contatos" });
+    if (rCtPub.id || rCtPub.json?.publicacao?.id) {
+      const ctId = rCtPub.id ?? rCtPub.json?.publicacao?.id;
+      const ctVer = rCtPub.version ?? rCtPub.json?.publicacao?.version ?? 1;
+      await api(BASE, C.campId, J4, "PATCH", `/publicacoes/${ctId}`, { status: "publicado", expectedVersion: ctVer });
+      const rCtJ3 = await api(BASE, C.campId, J3, "POST", `/publicacoes/${ctId}/contatar`, {});
+      t("K12: contatar visibilidade=contatos sem aresta → 404", rCtJ3.status === 404, `status=${rCtJ3.status}`);
+      // leitura também deve ser negada (consistência visivelParaLeitor)
+      const rDetJ3 = await api(BASE, C.campId, J3, "GET", `/publicacoes/${ctId}`);
+      t("K12b: detalhe visibilidade=contatos sem aresta → 404", rDetJ3.status === 404 || rDetJ3.status === 403, `status=${rDetJ3.status}`);
+    } else t("K12", "skip", `anuncio contatos não criado status=${rCtPub.status}`);
   }
 
   console.log(`\n===== W6/W7/W8 anúncios black-box (TDD): ${pass} ok / ${fail} falhas / ${skip} skips =====`);
