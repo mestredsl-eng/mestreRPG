@@ -121,7 +121,9 @@ try {
     const rAnuncio = await api(BASE, C.campId, J1, "POST", "/publicacoes", {
       tipo: "anuncio", titulo: "vendo", corpo: "x", visibilidade: "campanha",
     });
-    t("anuncio/classificado fora do slice → 4xx", rAnuncio.status >= 400 && rAnuncio.status < 500, `status=${rAnuncio.status}`);
+    // pós-W6/W7/W8 (#398 mergeada): anuncio/classificado são tipos
+    // legítimos — boundary do slice migrou; cobertura profunda na suíte W678
+    t("anuncio/classificado aceitos pós-W678 → 2xx", rAnuncio.status === 201 || rAnuncio.status === 200, `status=${rAnuncio.status}`);
     const rSemVis = await api(BASE, C.campId, J1, "POST", "/publicacoes", { tipo: "noticia", titulo: "x", corpo: "y" });
     t("visibilidade obrigatória → 4xx", rSemVis.status >= 400 && rSemVis.status < 500, `status=${rSemVis.status}`);
     // contrato §4: "status só rascunho na criação" — statusInicial=publicado
