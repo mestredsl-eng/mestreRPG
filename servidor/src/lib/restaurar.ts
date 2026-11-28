@@ -137,6 +137,136 @@ function acumulou(r: SaneamentoPersonagem): boolean {
     r.sangueRemovido || r.sangueAutenticado || r.sangueInvalido || r.motivoSangue !== null;
 }
 
+// ---- Domínio Internet (1.1.1/1.1.2 + público 1.1.2) — preservação no
+// restore "substituir". O pacote EstadoCampanha NÃO carrega estas
+// tabelas (P9; D6 pendente): sem preservação, o limpar apagaria
+// mensageiro privado E conteúdo público fora do pacote. Captura
+// integral por campaignId antes de qualquer delete; recriação em
+// ordem FK após inserirEstado, com âncoras mínimas para contas cujo
+// personagem não veio no pacote.
+type ContaInternet = typeof internetAccounts.$inferSelect;
+type ContatoInternet = typeof internetContacts.$inferSelect;
+type ConversaInternet = typeof internetConversations.$inferSelect;
+type ParticipanteInternet = typeof internetParticipantes.$inferSelect;
+type MensagemInternet = typeof internetMessages.$inferSelect;
+type SiteInternet = typeof internetSites.$inferSelect;
+type PaginaInternet = typeof internetPages.$inferSelect;
+type PublicacaoInternet = typeof internetPublicacoes.$inferSelect;
+type DenunciaInternet = typeof internetDenuncias.$inferSelect;
+type PersonagemRef = { id: string; name: string; membershipId: string; isNpc: boolean | null; createdAt: Date | null; updatedAt: Date | null };
+type MembershipRow = typeof memberships.$inferSelect;
+
+interface DominioInternetPreservado {
+  contas: ContaInternet[];
+  contatos: ContatoInternet[];
+  conversas: ConversaInternet[];
+  participantes: ParticipanteInternet[];
+  mensagens: MensagemInternet[];
+  sites: SiteInternet[];
+  paginas: PaginaInternet[];
+  publicacoes: PublicacaoInternet[];
+  denuncias: DenunciaInternet[];
+  personagens: PersonagemRef[];
+  memberships: MembershipRow[];
+}
+
+function capturarDominioInternet(tx: Tx, campaignId: string): DominioInternetPreservado {
+  const conversas = tx.select().from(internetConversations)
+    .where(eq(internetConversations.campaignId, campaignId)).all();
+  const convIds = conversas.map((c) => c.id);
+  return {
+    contas: tx.select().from(internetAccounts).where(eq(internetAccounts.campaignId, campaignId)).all(),
+    contatos: tx.select().from(internetContacts).where(eq(internetContacts.campaignId, campaignId)).all(),
+    conversas,
+    // participantes não têm campaign_id — só das conversas capturadas
+    participantes: convIds.length
+      ? tx.select().from(internetParticipantes).where(inArray(internetParticipantes.conversaId, convIds)).all()
+      : [],
+    mensagens: tx.select().from(internetMessages).where(eq(internetMessages.campaignId, campaignId)).all(),
+    sites: tx.select().from(internetSites).where(eq(internetSites.campaignId, campaignId)).all(),
+    paginas: tx.select().from(internetPages).where(eq(internetPages.campaignId, campaignId)).all(),
+    publicacoes: tx.select().from(internetPublicacoes).where(eq(internetPublicacoes.campaignId, campaignId)).all(),
+    denuncias: tx.select().from(internetDenuncias).where(eq(internetDenuncias.campaignId, campaignId)).all(),
+    personagens: tx.select({
+      id: characters.id, name: characters.name, membershipId: characters.membershipId,
+      isNpc: characters.isNpc, createdAt: characters.createdAt, updatedAt: characters.updatedAt,
+    }).from(characters).where(eq(characters.campaignId, campaignId)).all(),
+    memberships: tx.select().from(memberships).where(eq(memberships.campaignId, campaignId)).all(),
+  };
+}
+
+/** Recria o domínio Internet preservado, em ordem FK. Personagens
+ *  referenciados que não vieram no pacote ganham âncora mínima
+ *  (status='arquivado', dados vazios, sem template) com o MESMO id —
+ *  contas mantêm characterId e a titularidade resolve pelo novo
+ *  membership via P7. Conta de âncora fica 'inativa' (gate
+ *  contaAutorizadaPara já rejeita inativa/arquivado). Qualquer FK
+ *  não resolvida aborta a transação inteira — nunca descarte
+ *  silencioso de conversa. */
+function restaurarDominioInternet(tx: Tx, campaignId: string, d: DominioInternetPreservado) {
+  const vazio = !d.contas.length && !d.contatos.length && !d.conversas.length &&
+    !d.mensagens.length && !d.sites.length && !d.paginas.length &&
+    !d.publicacoes.length && !d.denuncias.length;
+  if (vazio) return;
+
+  const charsPresentes = new Set(
+    tx.select({ id: characters.id }).from(characters)
+      .where(eq(characters.campaignId, campaignId)).all().map((r) => r.id),
+  );
+  const memPorUser = new Map(
+    tx.select().from(memberships).where(eq(memberships.campaignId, campaignId)).all()
+      .map((m) => [m.userId, m] as const),
+  );
+  const memAntigaPorId = new Map(d.memberships.map((m) => [m.id, m] as const));
+  const charAntigoPorId = new Map(d.personagens.map((c) => [c.id, c] as const));
+  const agora = new Date();
+
+  // ids de personagem referenciados pelo domínio: contas + notícias de
+  // sistema (publicacoes.personagemId). Qualquer ausência vira âncora.
+  const idsReferenciados = new Set<string>();
+  for (const c of d.contas) idsReferenciados.add(c.characterId);
+  for (const p of d.publicacoes) if (p.personagemId) idsReferenciados.add(p.personagemId);
+
+  const contas = d.contas.map((c) => ({ ...c }));
+  for (const charId of idsReferenciados) {
+    if (charsPresentes.has(charId)) continue;
+    const antigo = charAntigoPorId.get(charId);
+    const memAntiga = antigo ? memAntigaPorId.get(antigo.membershipId) : undefined;
+    const userId = memAntiga?.userId;
+    if (!antigo || !memAntiga || !userId) {
+      throw new Error(`restore: personagem ${charId} referenciado pela Internet sem membership resolvível — abortando`);
+    }
+    // membership alvo: a importada para o mesmo usuário, se houver;
+    // senão reintroduz a antiga com status='removido' (nunca duplicata
+    // — UNIQUE(campaignId,userId) já garantida pelo mapa acima).
+    let memAlvo = memPorUser.get(userId);
+    if (!memAlvo) {
+      const reintro: MembershipRow = { ...memAntiga, status: "removido", updatedAt: agora };
+      inserir(tx, memberships, [reintro]);
+      memAlvo = reintro;
+      memPorUser.set(userId, reintro);
+    }
+    inserir(tx, characters, [{
+      id: charId, campaignId, membershipId: memAlvo.id,
+      templateVersionId: null, name: antigo.name || "(personagem arquivado)",
+      data: {}, overrides: {}, status: "arquivado", isNpc: antigo.isNpc ?? false,
+      createdAt: antigo.createdAt ?? agora, updatedAt: agora,
+    }]);
+    charsPresentes.add(charId);
+    for (const conta of contas) if (conta.characterId === charId) conta.status = "inativa";
+  }
+
+  inserir(tx, internetAccounts, contas);
+  inserir(tx, internetContacts, d.contatos);
+  inserir(tx, internetConversations, d.conversas);
+  inserir(tx, internetParticipantes, d.participantes);
+  inserir(tx, internetMessages, d.mensagens);
+  inserir(tx, internetSites, d.sites);
+  inserir(tx, internetPages, d.paginas);
+  inserir(tx, internetPublicacoes, d.publicacoes);
+  inserir(tx, internetDenuncias, d.denuncias);
+}
+
 /**
  * Insere todas as entidades do estado na ordem de dependência
  * (restauração e importação). `origem` é explícita e o padrão é
@@ -301,6 +431,9 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
   db.transaction((tx) => {
     const limpar = (tabela: Parameters<typeof tx.delete>[0], where: unknown) =>
       tx.delete(tabela).where(where as never).run();
+    // Domínio Internet ANTES de qualquer delete: o pacote não o carrega
+    // (P9/D6) — captura integral para recriação preservada ao final.
+    const dominioInternet = capturarDominioInternet(tx, campaignId);
     // filhos primeiro
     limpar(tests, eq(tests.campaignId, campaignId));
     limpar(rolls, eq(rolls.campaignId, campaignId));
@@ -326,9 +459,11 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
     limpar(folders, eq(folders.campaignId, campaignId));
     // Domínio Internet diegética/pública (1.1.1/1.1.2): o pacote de
     // exportação NÃO carrega estas tabelas (P9; export do domínio
-    // público é decisão D6 pendente). Sem a limpeza, contas/personagens
-    // referenciados bloqueiam o delete de characters por FK — e o
-    // estado restaurado fica incoerente. Ordem filhas→pais.
+    // público é decisão D6 pendente). As linhas foram capturadas no
+    // início da tx e serão recriadas preservadas após inserirEstado —
+    // a limpeza existe só para a reinserção com os mesmos IDs e para
+    // o delete em cascata de characters não perder a ordem FK.
+    // Ordem filhas→pais.
     limpar(internetDenuncias, eq(internetDenuncias.campaignId, campaignId));
     limpar(internetPublicacoes, eq(internetPublicacoes.campaignId, campaignId));
     limpar(internetMessages, eq(internetMessages.campaignId, campaignId));
@@ -362,6 +497,10 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
       chaveAssinatura,
       campanhaIdOrigem: opts.campanhaIdOrigem ?? null,
     });
+    // Domínio Internet preservado: recriado por último, já com
+    // memberships/characters do pacote no lugar — âncoras cobrem os
+    // personagens ausentes e contas ancoradas ficam inativas.
+    restaurarDominioInternet(tx, campaignId, dominioInternet);
   });
 
   // ---- arquivos físicos: lixeira dos substituídos + gravação dos importados ----

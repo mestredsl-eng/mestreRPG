@@ -402,12 +402,164 @@ try {
   const charImpVivo = dbImp.prepare("select data from characters where campaign_id=? and name='Beto Foca'").get(campId);
   const mortesImpVivo = charImpVivo ? JSON.parse(charImpVivo.data).__morte : "ausente";
   t("__morte forjado em vivo é removido", mortesImpVivo === undefined || mortesImpVivo === null || (Array.isArray(mortesImpVivo) && mortesImpVivo.length === 0), JSON.stringify(mortesImpVivo));
-  // substituir zerou o domínio Internet (pacote não o carrega) e a
-  // re-derivação regenerou a epoch SEM notícia retroativa — mortes do
-  // histórico não voltam a ser notícia (DP-8: notícia é de evento vivo)
-  const noticiaImp = dbImp.prepare("select * from internet_publicacoes where campaign_id=? and personagem_id=? and origem='sistema'").all(campId, charImpMorto?.id);
-  t("importação NÃO gera notícia retroativa", noticiaImp.length === 0, `veio ${noticiaImp.length}`);
+  // Domínio Internet é PRESERVADO no restore (ordem do Dono — o pacote
+  // não o carrega, P9/D6): as 2 notícias de sistema de Ada sobrevivem
+  // com os mesmos IDs, sem duplicar e sem notícia retroativa nova
+  // (a epoch re-derivada não gera publicação).
+  const noticiaImp = dbImp.prepare("select id from internet_publicacoes where campaign_id=? and personagem_id=? and origem='sistema'").all(campId, charImpMorto?.id);
+  t("importação preserva notícias de sistema (2, sem duplicar)", noticiaImp.length === 2, `veio ${noticiaImp.length}`);
+  const pubTotalImp = dbImp.prepare("select count(*) n from internet_publicacoes where campaign_id=?").get(campId).n;
+  t("total de publicações preservado", pubTotalImp > 0, `veio ${pubTotalImp}`);
   dbImp.close();
+
+  // ================= J. RESTORE — preservação do domínio Internet =====
+  sec("J. Restore substituir — domínio Internet preservado + âncoras");
+
+  // semeia o restante do domínio via SQL (o pacote nunca o carrega):
+  // site+página (dono contaJ1), conversa direta j1↔j2 + participantes +
+  // mensagem, aresta extra j3→j1 pendente.
+  const idsJ = {};
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    idsJ.siteId = crypto.randomUUID(); idsJ.pageId = crypto.randomUUID();
+    idsJ.convId = crypto.randomUUID();
+    db.prepare("insert into internet_sites (id,campaign_id,slug,nome,descricao,owner_conta_id,status,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)")
+      .run(idsJ.siteId, campId, "templo-j1", "Templo de Ada", null, contaJ1, "ativo", agora, agora);
+    db.prepare("insert into internet_pages (id,site_id,campaign_id,slug,titulo,corpo,formato,status,version,autor_conta_id,published_at,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(idsJ.pageId, idsJ.siteId, campId, "cronica-1", "Crônica I", "Era uma vez", "texto", "publicado", 3, contaJ1, agora - 500, agora - 500, agora - 500);
+    const parKey = [contaJ1, contaJ2].sort().join("|");
+    db.prepare("insert into internet_conversations (id,campaign_id,tipo,par_key,nome,status,created_by_conta_id,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)")
+      .run(idsJ.convId, campId, "direta", parKey, null, "ativa", contaJ1, agora, agora);
+    const insPart = db.prepare("insert into internet_participantes (id,conversa_id,conta_id,papel,status,convidado_por_conta_id,convidado_em,decidido_em,saiu_em,last_read_created_at,last_read_message_id,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?)");
+    insPart.run(crypto.randomUUID(), idsJ.convId, contaJ1, "dono", "ativo", contaJ2, agora, agora, null, null, null, agora, agora);
+    insPart.run(crypto.randomUUID(), idsJ.convId, contaJ2, "membro", "ativo", contaJ1, agora, agora, null, null, null, agora, agora);
+    db.prepare("insert into internet_messages (id,conversa_id,campaign_id,autor_conta_id,request_id,payload_hash,conteudo,created_at) values (?,?,?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), idsJ.convId, campId, contaJ1, "req-j1-1", "hash-j1-1", "O sino tocou três vezes.", agora - 100);
+    aresta(BANCO, { campId, origemId: contaJ3, destinoId: contaJ1, status: "pendente" });
+    db.close();
+  }
+
+  // J1 — round-trip substituir COM pacote completo: tudo preservado
+  const contarDominio = () => { const db = abrirDb(BANCO); const r = {
+    pubs: db.prepare("select count(*) n from internet_publicacoes where campaign_id=?").get(campId).n,
+    dens: db.prepare("select count(*) n from internet_denuncias where campaign_id=?").get(campId).n,
+    contas: db.prepare("select count(*) n from internet_accounts where campaign_id=?").get(campId).n,
+    contatos: db.prepare("select count(*) n from internet_contacts where campaign_id=?").get(campId).n,
+    convs: db.prepare("select count(*) n from internet_conversations where campaign_id=?").get(campId).n,
+    msgs: db.prepare("select count(*) n from internet_messages where campaign_id=?").get(campId).n,
+    sites: db.prepare("select count(*) n from internet_sites where campaign_id=?").get(campId).n,
+    pags: db.prepare("select count(*) n from internet_pages where campaign_id=?").get(campId).n,
+  }; db.close(); return r; };
+  const dominioAntes = contarDominio();
+  const expJ = await req(BASE, "GET", `/campaigns/${campId}/exportar`, { cookie: C.cookieMestre });
+  const impJ = await req(BASE, "POST", "/campaigns/importar", {
+    cookie: C.cookieMestre,
+    body: { pacote: expJ.json, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+  });
+  t("J1 substituir round-trip → 200", impJ.status === 200, `status=${impJ.status} ${JSON.stringify(impJ.json).slice(0, 160)}`);
+  {
+    const db = abrirDb(BANCO);
+    const site = db.prepare("select * from internet_sites where id=?").get(idsJ.siteId);
+    const page = db.prepare("select * from internet_pages where id=?").get(idsJ.pageId);
+    const conv = db.prepare("select * from internet_conversations where id=?").get(idsJ.convId);
+    const msgs = db.prepare("select * from internet_messages where conversa_id=?").all(idsJ.convId);
+    const parts = db.prepare("select * from internet_participantes where conversa_id=?").all(idsJ.convId);
+    t("J1 site preservado (id+slug+dono)", !!site && site.slug === "templo-j1" && site.owner_conta_id === contaJ1);
+    t("J1 página preservada (id+version+autor)", !!page && page.version === 3 && page.autor_conta_id === contaJ1);
+    t("J1 conversa preservada (parKey)", !!conv && conv.par_key === [contaJ1, contaJ2].sort().join("|"));
+    t("J1 mensagem preservada", msgs.length === 1 && msgs[0].conteudo === "O sino tocou três vezes.");
+    t("J1 participantes preservados (2)", parts.length === 2);
+    t("J1 contagens idênticas nas 9 tabelas", JSON.stringify(dominioAntes) === JSON.stringify(contarDominio()), `${JSON.stringify(dominioAntes)} → ${JSON.stringify(contarDominio())}`);
+    db.close();
+  }
+
+  // J2 — titularidade P7 intacta: j1 continua autorizada; j2 lê o
+  // histórico; mestre mantém leitura P10
+  const contaApos = await API("GET", `/account?characterId=${charJ1}`, j1.cookie);
+  t("J2 conta j1 segue autorizada pós-restore", contaApos.status === 200 && contaApos.json?.conta?.id === contaJ1, `status=${contaApos.status} ${JSON.stringify(contaApos.json).slice(0, 120)}`);
+  const msgsJ2 = await API("GET", `/conversations/${idsJ.convId}/messages`, j2.cookie);
+  t("J2 j2 lê mensagem histórica", msgsJ2.status === 200 && JSON.stringify(msgsJ2.json).includes("sino tocou"), `status=${msgsJ2.status}`);
+  const msgsMestre = await API("GET", `/conversations/${idsJ.convId}/messages`, C.cookieMestre);
+  t("J2 mestre lê conversa (P10)", msgsMestre.status === 200, `status=${msgsMestre.status}`);
+
+  // J3 — cross-campaign: outra campanha com domínio Internet não é tocada
+  const campFalso = crypto.randomUUID();
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    db.prepare("insert into campaigns (id,name,status,owner_id,settings,created_at,updated_at) values (?,?,?,?,?,?,?)")
+      .run(campFalso, "Campanha Fake", "andamento", C.adminId, "{}", agora, agora);
+    // usuário+membership+personagem PRÓPRIOS da campanha fake — conta
+    // Internet sempre referencia personagem da MESMA campanha (invariante
+    // do domínio; sem isso o cascade de characters cruzaria campanhas).
+    const uidFake = crypto.randomUUID(), midFake = crypto.randomUUID(), charFake = crypto.randomUUID();
+    db.prepare("insert into users (id,username,display_name,password_hash,is_admin,status,created_at,updated_at) values (?,?,?,?,0,'ativo',?,?)")
+      .run(uidFake, "fake_user", "Fake User", "x", agora, agora);
+    db.prepare("insert into memberships (id,campaign_id,user_id,role,status,joined_at,created_at,updated_at) values (?,?,?,'jogador','ativo',?,?,?)")
+      .run(midFake, campFalso, uidFake, agora, agora, agora);
+    db.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+      .run(charFake, campFalso, midFake, "Fake Herói", "{}", "{}", "aprovada", 0, agora, agora);
+    db.prepare("insert into internet_accounts (id,campaign_id,character_id,handle,status,mostrar_presenca,mostrar_digitando,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)")
+      .run("conta-fake-1", campFalso, charFake, "fake.handle", "ativa", 0, 0, agora, agora);
+    db.prepare("insert into internet_publicacoes (id,campaign_id,tipo,titulo,corpo,formato,status,visibilidade,autor_modo,autor_conta_id,origem,version,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run("pub-fake-1", campFalso, "noticia", "Fake", "corpo", "texto", "publicado", "campanha", "identificado", "conta-fake-1", "usuario", 1, agora, agora);
+    db.close();
+  }
+
+  // J4 — pacote SEM o personagem j3 (Cida) e SEM sua membership:
+  // âncora arquivada + membership 'removido' + conta inativa
+  const expJ4 = await req(BASE, "GET", `/campaigns/${campId}/exportar`, { cookie: C.cookieMestre });
+  const pacoteJ4 = expJ4.json;
+  pacoteJ4.estado.characters = (pacoteJ4.estado.characters ?? []).filter((c) => c.id !== charJ3);
+  pacoteJ4.estado.memberships = (pacoteJ4.estado.memberships ?? []).filter((m) => m.id !== C.jogadores.j3.membershipId);
+  // remove dependentes do personagem em todas as coleções do pacote
+  for (const chave of Object.keys(pacoteJ4.estado)) {
+    if (!Array.isArray(pacoteJ4.estado[chave])) continue;
+    pacoteJ4.estado[chave] = pacoteJ4.estado[chave].filter(
+      (r) => r && typeof r === "object" && r.characterId !== charJ3 && r.personagemId !== charJ3,
+    );
+  }
+  const impJ4 = await req(BASE, "POST", "/campaigns/importar", {
+    cookie: C.cookieMestre,
+    body: { pacote: pacoteJ4, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+  });
+  t("J4 substituir sem personagem → 200", impJ4.status === 200, `status=${impJ4.status} ${JSON.stringify(impJ4.json).slice(0, 200)}`);
+  {
+    const db = abrirDb(BANCO);
+    const anc = db.prepare("select status, template_version_id, data from characters where id=?").get(charJ3);
+    t("J4 âncora arquivada sem template/dados", !!anc && anc.status === "arquivado" && anc.template_version_id === null && anc.data === "{}", JSON.stringify(anc));
+    const memJ3 = db.prepare("select status from memberships where campaign_id=? and user_id=?").get(campId, C.jogadores.j3.id);
+    t("J4 membership reintroduzida 'removido'", !!memJ3 && memJ3.status === "removido", JSON.stringify(memJ3));
+    const contaJ3b = db.prepare("select status from internet_accounts where id=?").get(contaJ3);
+    t("J4 conta do ausente fica inativa", !!contaJ3b && contaJ3b.status === "inativa", JSON.stringify(contaJ3b));
+    db.close();
+  }
+  // j3 não consegue criar/alterar; j2 segue lendo; cross-campaign intacta
+  const pubJ3 = await API("POST", "/publicacoes", j3.cookie, { tipo: "noticia", titulo: "x", corpo: "y", visibilidade: "campanha" });
+  t("J4 j3 sem acesso à conta → 4xx", pubJ3.status >= 400 && pubJ3.status < 500, `status=${pubJ3.status}`);
+  const msgsJ2b = await API("GET", `/conversations/${idsJ.convId}/messages`, j2.cookie);
+  t("J4 j2 continua lendo histórico", msgsJ2b.status === 200, `status=${msgsJ2b.status}`);
+  const contaFakeApos = (() => { const db = abrirDb(BANCO); const r = db.prepare("select count(*) n from internet_accounts where campaign_id=?").get(campFalso).n; db.close(); return r; })();
+  t("J4 cross-campaign intacta", contaFakeApos === 1);
+
+  // J5 — atomicidade: pacote com membershipId pendurado → rollback integral
+  const expJ5 = await req(BASE, "GET", `/campaigns/${campId}/exportar`, { cookie: C.cookieMestre });
+  const pacoteJ5 = expJ5.json;
+  const algumChar = pacoteJ5.estado.characters?.[0];
+  if (algumChar) algumChar.membershipId = crypto.randomUUID();
+  const contarJ5 = () => { const db = abrirDb(BANCO); const r = {
+    pubs: db.prepare("select count(*) n from internet_publicacoes where campaign_id=?").get(campId).n,
+    contas: db.prepare("select count(*) n from internet_accounts where campaign_id=?").get(campId).n,
+    chars: db.prepare("select count(*) n from characters where campaign_id=?").get(campId).n,
+  }; db.close(); return r; };
+  const antesJ5 = contarJ5();
+  const impJ5 = await req(BASE, "POST", "/campaigns/importar", {
+    cookie: C.cookieMestre,
+    body: { pacote: pacoteJ5, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+  });
+  t("J5 import corrompido → erro (não 200)", impJ5.status !== 200, `status=${impJ5.status}`);
+  t("J5 rollback integral (nada mudou)", JSON.stringify(antesJ5) === JSON.stringify(contarJ5()), `${JSON.stringify(antesJ5)} → ${JSON.stringify(contarJ5())}`);
 } finally {
   if (proc) await encerrarServidor(proc);
   console.log(`\n${pass} ok, ${fail} falhas`);
