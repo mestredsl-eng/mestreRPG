@@ -202,7 +202,10 @@ function capturarDominioInternet(tx: Tx, campaignId: string): DominioInternetPre
  *  transação; nunca filtrar, apagar ou reparar silenciosamente. */
 function validarIntegridadeDominioInternet(d: DominioInternetPreservado, campaignId: string) {
   function falha(aresta: string, id: string): never {
-    throw new Error(`restore: aresta Internet inconsistente — ${aresta} → ${id} fora do conjunto da campanha ${campaignId}`);
+    // detalhe rico só no log do servidor — a mensagem ao cliente é
+    // genérica para não confirmar existência de id estrangeiro
+    console.error(`restore: aresta Internet inconsistente — ${aresta} → ${id} fora do conjunto da campanha ${campaignId}`);
+    throw new Error("restore: domínio Internet inconsistente — restauração abortada");
   }
   const contaIds = new Set(d.contas.map((c) => c.id));
   const charIds = new Set(d.personagens.map((c) => c.id));
@@ -298,7 +301,8 @@ function restaurarDominioInternet(tx: Tx, campaignId: string, d: DominioInternet
     const memAntiga = antigo ? memAntigaPorId.get(antigo.membershipId) : undefined;
     const userId = memAntiga?.userId;
     if (!antigo || !memAntiga || !userId) {
-      throw new Error(`restore: personagem ${charId} referenciado pela Internet sem membership resolvível — abortando`);
+      console.error(`restore: personagem ${charId} referenciado pela Internet sem membership resolvível — abortando`);
+      throw new Error("restore: personagem referenciado sem vínculo resolvível — restauração abortada");
     }
     // membership alvo: a importada para o mesmo usuário, se houver;
     // senão reintroduz a antiga com status='removido' (nunca duplicata

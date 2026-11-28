@@ -586,7 +586,8 @@ try {
     cookie: C.cookieMestre,
     body: { pacote: expJ.json, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
   });
-  t("J6 aresta cross-campaign → erro (não 200)", impJ6.status !== 200, `status=${impJ6.status} ${JSON.stringify(impJ6.json).slice(0, 160)}`);
+  t("J6 aresta cross-campaign → erro (não 200)", impJ6.status !== 200, `status=${impJ6.status}`);
+  t("J6 erro não vaza id estrangeiro ao cliente", !JSON.stringify(impJ6.json).includes(charFake2), JSON.stringify(impJ6.json).slice(0, 200));
   const estadoAposJ6 = (() => { const db = abrirDb(BANCO); const r = {
     dominio: contarDominio(),
     chars: db.prepare("select count(*) n from characters where campaign_id=?").get(campId).n,
