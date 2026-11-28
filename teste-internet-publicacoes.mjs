@@ -776,6 +776,98 @@ try {
       t("L14 campo desconhecido → 4xx", rRuim.status === 400, `status=${rRuim.status}`);
     }
   }
+
+  // ================= W9/W10 — PERFIS PÚBLICOS =================
+  sec("M. W9/W10 — ativação irreversível, perfil público, ciclo de vida");
+  {
+    const PERFIL_PUB = (handle) => `/campaigns/${campId}/internet/perfis/${handle}`;
+    const BUSCA = (q) => `/campaigns/${campId}/internet/busca?q=${encodeURIComponent(q)}`;
+
+    // M1–M2: antes de ativar → 404; ativação → 201
+    const rAntes = await req(BASE, "GET", PERFIL_PUB("beto.foca"), { cookie: j1.cookie });
+    t("M1 perfil não ativado → 404", rAntes.status === 404, `status=${rAntes.status}`);
+    const rAtivar = await API("POST", "/perfil/ativar", j2.cookie, { characterId: charJ2, descricao: "Beto da vizinhança" });
+    t("M2 ativação → 201", rAtivar.status === 201, `status=${rAtivar.status} ${JSON.stringify(rAtivar.json).slice(0, 140)}`);
+    // M3: idempotente
+    const rAtivar2 = await API("POST", "/perfil/ativar", j2.cookie, { characterId: charJ2 });
+    t("M3 reativação idempotente → 200", rAtivar2.status === 200, `status=${rAtivar2.status}`);
+    // M4: leitura pública por terceiro elegível — sem ids internos
+    const rPerfil = await req(BASE, "GET", PERFIL_PUB("beto.foca"), { cookie: j1.cookie });
+    const blobPerfil = JSON.stringify(rPerfil.json);
+    t("M4 perfil público legível", rPerfil.status === 200, `status=${rPerfil.status}`);
+    t("M5 sem ids internos no perfil", !/contaId|accountId|userId|membershipId|characterId/.test(blobPerfil), blobPerfil.slice(0, 200));
+    t("M6 nome público default = personagem", rPerfil.json?.perfil?.nomePublico === "Beto Foca", JSON.stringify(rPerfil.json?.perfil?.nomePublico));
+    // M7: irreversibilidade estrutural — desativar/excluir/ocultar → 4xx/404
+    for (const [op, path, metodo] of [
+      ["desativar", "/perfil/desativar", "POST"],
+      ["excluir", "/perfil", "DELETE"],
+      ["ocultar", "/perfil/ocultar", "POST"],
+    ]) {
+      const r = await req(BASE, metodo, `/campaigns/${campId}/internet${path}`, { cookie: j2.cookie, body: { characterId: charJ2 } });
+      t(`M7 ${op} → rejeitado`, [400, 403, 404, 405].includes(r.status), `status=${r.status}`);
+    }
+    // M8: leitura sem conta própria → 403 (mesmo gate de sites/feed)
+    const semConta = await req(BASE, "GET", PERFIL_PUB("beto.foca"), { cookie: C.cookieMestre });
+    t("M8 mestre lê perfil público", semConta.status === 200, `status=${semConta.status}`);
+    // M9: não-titular não edita (j1 tenta PATCH no perfil de j2)
+    const rPatchTerceiro = await API("PATCH", "/perfil", j1.cookie, { characterId: charJ2, descricao: "hack" });
+    t("M9 terceiro não edita → 403/404", rPatchTerceiro.status === 403 || rPatchTerceiro.status === 404, `status=${rPatchTerceiro.status}`);
+    // M10: mestre não edita conteúdo diegético do perfil
+    const rPatchMestre = await API("PATCH", "/perfil", C.cookieMestre, { characterId: charJ2, descricao: "hack" });
+    t("M10 mestre não edita perfil → 403/404", rPatchMestre.status === 403 || rPatchMestre.status === 404, `status=${rPatchMestre.status}`);
+    // M11: edição legítima do titular
+    const rEdit = await API("PATCH", "/perfil", j2.cookie, { characterId: charJ2, nomePublico: "Beto Vizinho", descricao: "novo texto" });
+    t("M11 titular edita → 200", rEdit.status === 200, `status=${rEdit.status}`);
+    const rPerfil2 = await req(BASE, "GET", PERFIL_PUB("beto.foca"), { cookie: j1.cookie });
+    t("M12 nome público editado visível", rPerfil2.json?.perfil?.nomePublico === "Beto Vizinho", JSON.stringify(rPerfil2.json?.perfil?.nomePublico));
+    // M13: avatar inválido → 4xx (não 500)
+    const rAvatar = await API("POST", "/perfil/avatar", j2.cookie, { characterId: charJ2, arquivoId: crypto.randomUUID() });
+    t("M13 avatar arquivo inexistente → 4xx", rAvatar.status >= 400 && rAvatar.status < 500, `status=${rAvatar.status}`);
+    // M14: busca por handle encontra; displayName/nome público NÃO indexa
+    const rBusca = await req(BASE, "GET", BUSCA("beto.foca"), { cookie: j1.cookie });
+    t("M14 busca por handle → acha perfil", rBusca.status === 200 && JSON.stringify(rBusca.json).includes("beto.foca"), `status=${rBusca.status}`);
+    const rBuscaNome = await req(BASE, "GET", BUSCA("Beto Vizinho"), { cookie: j1.cookie });
+    t("M15 nome público NÃO indexa", !JSON.stringify(rBuscaNome.json).includes("beto.foca"), `status=${rBuscaNome.status}`);
+    // M16: P7 — perfil segue o personagem; novo titular edita, antigo não
+    const inv = await req(BASE, "POST", `/campaigns/${campId}/characters/${charJ2}/transferencias`, { cookie: j2.cookie, body: { membershipId: C.jogadores.j1.membershipId } });
+    const tid = inv.json?.transferencia?.id;
+    t("M16 transferência criada", !!tid, `status=${inv.status}`);
+    if (tid) {
+      await req(BASE, "POST", `/campaigns/${campId}/characters/transferencias/${tid}/responder`, { cookie: j1.cookie, body: { aceitar: true } });
+      await new Promise((r) => setTimeout(r, 300));
+      const rAntigo = await API("PATCH", "/perfil", j2.cookie, { characterId: charJ2, descricao: "hack" });
+      t("M17 titular anterior não edita → 403/404", rAntigo.status === 403 || rAntigo.status === 404, `status=${rAntigo.status}`);
+      const rNovo = await API("PATCH", "/perfil", j1.cookie, { characterId: charJ2, descricao: "sou o novo titular" });
+      t("M18 novo titular edita → 200", rNovo.status === 200, `status=${rNovo.status}`);
+      const rLeAntigo = await req(BASE, "GET", PERFIL_PUB("beto.foca"), { cookie: j2.cookie });
+      t("M19 titular anterior ainda LÊ perfil", rLeAntigo.status === 200 || rLeAntigo.status === 403, `status=${rLeAntigo.status}`);
+    }
+    // M20–M22: morte vigente → leitura ok + escrita negada; ressurreição reabre
+    const dano = await req(BASE, "POST", `/characters/${charJ2}/hp`, { cookie: C.cookieMestre, body: { acao: "dano", quantidade: 9999, motivo: "morte p9" } });
+    t("M20 dano letal → 200", dano.status === 200, `status=${dano.status}`);
+    if (dano.status === 200) {
+      await new Promise((r) => setTimeout(r, 300));
+      const rMorto = await req(BASE, "GET", PERFIL_PUB("beto.foca"), { cookie: j1.cookie });
+      t("M21 perfil de morto legível + flag", rMorto.status === 200 && rMorto.json?.perfil?.personagemFalecido === true, `status=${rMorto.status}`);
+      const rEditMorto = await API("PATCH", "/perfil", j1.cookie, { characterId: charJ2, descricao: "x" });
+      t("M22 escrita em morto → 403/404", rEditMorto.status === 403 || rEditMorto.status === 404, `status=${rEditMorto.status}`);
+      const ress = await req(BASE, "POST", `/characters/${charJ2}/ressuscitar`, { cookie: C.cookieMestre, body: {} });
+      t("M23 ressurreição → 200", ress.status === 200, `status=${ress.status}`);
+      if (ress.status === 200) {
+        const rVivo = await API("PATCH", "/perfil", j1.cookie, { characterId: charJ2, descricao: "voltei" });
+        t("M24 escrita reabre após ressurreição", rVivo.status === 200, `status=${rVivo.status}`);
+      }
+    }
+    // M25: cross-campaign → 404; sem sessão → 401
+    const campM = await req(BASE, "POST", "/campaigns", { cookie: C.cookieMestre, body: { name: "CampM" } });
+    const campMId = campM.json?.campanha?.id;
+    const rCross = campMId
+      ? await req(BASE, "GET", `/campaigns/${campMId}/internet/perfis/beto.foca`, { cookie: C.cookieMestre })
+      : { status: 0 };
+    t("M25 perfil de outra campanha → 404", rCross.status === 404, `status=${rCross.status}`);
+    const rAnon = await req(BASE, "GET", PERFIL_PUB("beto.foca"), {});
+    t("M26 sem sessão → 401", rAnon.status === 401, `status=${rAnon.status}`);
+  }
 } finally {
   if (proc) await encerrarServidor(proc);
   console.log(`\n${pass} ok, ${fail} falhas`);

@@ -1024,6 +1024,28 @@ export const internetDenuncias = sqliteTable("internet_denuncias", {
   index("internet_denuncias_campaign_idx").on(t.campaignId),
 ]);
 
+// Perfil público 1.1.2 (#365, fatia W9/W10 — D10/DP-4/DP-5): opcional,
+// ativação IRREVERSÍVEL, segue o PERSONAGEM (characterId) — transferência
+// P7 e ressurreição preservam o perfil. Localizador público = handle da
+// conta Internet do mesmo personagem (não duplicado aqui). Exibe só
+// nome público (default = nome do personagem), avatar (arquivo da
+// biblioteca `files`) e descrição — nunca ids internos (V-08). Não há
+// status ativo/inativo: a linha existir É o perfil ativado.
+export const internetPerfis = sqliteTable("internet_perfis", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  characterId: text("character_id").notNull().references(() => characters.id, { onDelete: "cascade" }),
+  nomePublico: text("nome_publico"), // null → cai no characters.name
+  descricao: text("descricao"),
+  avatarFileId: text("avatar_file_id").references(() => files.id, { onDelete: "set null" }),
+  ativadoEm: integer("ativado_em", { mode: "timestamp_ms" }).notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex("internet_perfis_char_idx").on(t.characterId),
+  index("internet_perfis_campaign_idx").on(t.campaignId),
+]);
+
 // Transferência de personagem (P7, contrato #349): convite do titular
 // atual + aceite explícito do novo titular. No máximo 1 `pendente` por
 // personagem (índice parcial). Conta diegética e histórico acompanham
