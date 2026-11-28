@@ -325,6 +325,25 @@ try {
     t("R4: campanha fake intacta após rollback", difFakeR4.length === 0, `divergem: ${difFakeR4.join(",")}`);
   }
 
+  // ---------- R5. P1 TG — aresta cross-campaign no domínio → rollback ----------
+  sec("R5. P1 — conta apontando para personagem de OUTRA campanha aborta restore");
+  {
+    // corrompe uma aresta real: contaJ1 passa a referenciar o personagem
+    // da campanha fake (characterId é global — FK simples não pega;
+    // é exatamente o vetor do P1 do TG)
+    comDb((db) => db.prepare("update internet_accounts set character_id=? where id=?").run(ids.fakeChar, ids.contaJ1));
+    const snapAntes = snapshotDominio(campId); // baseline JÁ corrompido
+    const pacote = await exportar();
+    const imp = await importar(pacote);
+    t("R5: restore com aresta cross-campaign → erro (não 200)", imp.status !== 200, `status=${imp.status} ${JSON.stringify(imp.json).slice(0, 160)}`);
+    const snapDepois = snapshotDominio(campId);
+    const difR5 = Object.keys(TABELAS).filter((tab) => !igual(snapAntes[tab], snapDepois[tab]));
+    t("R5: rollback integral — 9 tabelas idênticas após rejeição", difR5.length === 0, `divergem: ${difR5.join(",")}`);
+    const snapFake = snapshotDominio(ids.fakeCamp);
+    const difFake = Object.keys(TABELAS).filter((tab) => !igual(snapFake0[tab], snapFake[tab]));
+    t("R5: campanha fake intacta", difFake.length === 0, `divergem: ${difFake.join(",")}`);
+  }
+
   console.log(`\n===== Restore × Internet black-box (FILHO): ${pass} ok / ${fail} falhas / ${skip} skips =====`);
 } catch (e) {
   console.error("ERRO FATAL", e);
