@@ -350,9 +350,10 @@ internetPatrociniosRouter.post("/patrocinios", limitePatrocinios, async (req, re
     .limit(1);
   if (!beneficiario) { erroHttp(res, 404, "Beneficiário não encontrado"); return; }
   // Dono #401: arquivado é somente leitura — não pode ser alvo de
-  // proposta (criaria acordo zumbi). Pagador/aceitante já são
-  // cobertos por contaAutorizadaPara; aqui é só o destinatário.
-  if (beneficiario.status === "arquivado") { erroHttp(res, 400, "beneficiario_arquivado"); return; }
+  // proposta (criaria acordo zumbi). 404 uniforme, idêntico a
+  // "não encontrado" — não confirmar existência/estado de arquivado.
+  // Pagador/aceitante já cobertos por contaAutorizadaPara.
+  if (beneficiario.status === "arquivado") { erroHttp(res, 404, "Beneficiário não encontrado"); return; }
 
   // Conta de origem: do pagador, na campanha, tipo utilizável.
   const [contaOrigem] = await db.select().from(financialAccounts)
