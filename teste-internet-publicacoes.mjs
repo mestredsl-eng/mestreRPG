@@ -830,8 +830,25 @@ try {
         dbM.prepare("insert into memberships (id,campaign_id,user_id,role,status,created_at,updated_at) values (?,?,?,?,?,?,?)")
           .run(memB, campBId, C.jogadores.j1.id, "jogador", "ativo", agoraM, agoraM);
         const j2char = dbM.prepare("select * from characters where campaign_id=? and name='Beto Foca' limit 1").get(campId);
+        // template_version_id tem que ser de campB: apontar para a versão
+        // de campId criava aresta cross-campaign em sheet_versions e o
+        // restore "substituir" de campId falhava com FK (sheet_versions
+        // não pode ser deletada enquanto campB referencia). Clona a
+        // estrutura sob um template novo da própria campB.
+        let tplVerB = null;
+        if (j2char?.template_version_id) {
+          const verOrig = dbM.prepare("select * from sheet_versions where id=?").get(j2char.template_version_id);
+          if (verOrig) {
+            const tplB = crypto.randomUUID();
+            dbM.prepare("insert into sheet_templates (id,campaign_id,name,description,owner_id,is_active,is_default,current_version_id,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+              .run(tplB, campBId, "Ficha Nina B", null, C.adminId, 1, 0, null, agoraM, agoraM);
+            tplVerB = crypto.randomUUID();
+            dbM.prepare("insert into sheet_versions (id,template_id,version,structure,published_at,created_at) values (?,?,?,?,?,?)")
+              .run(tplVerB, tplB, 1, verOrig.structure, verOrig.published_at, agoraM);
+          }
+        }
         dbM.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,is_npc,template_version_id,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
-          .run(charB, campBId, memB, "Nina B", j2char?.data ?? "{}", j2char?.overrides ?? "{}", "aprovada", 0, j2char?.template_version_id ?? null, agoraM, agoraM);
+          .run(charB, campBId, memB, "Nina B", j2char?.data ?? "{}", j2char?.overrides ?? "{}", "aprovada", 0, tplVerB, agoraM, agoraM);
         for (const t2 of ["inventory_entries", "equipment_entries"]) {
           const cols = dbM.prepare(`select * from ${t2} where character_id=?`).all(j2char?.id);
           for (const e of cols) {
