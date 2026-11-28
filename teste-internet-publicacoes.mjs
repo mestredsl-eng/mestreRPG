@@ -853,6 +853,91 @@ try {
       }
     }
   }
+
+  // ================= D6 HARDENING (P1 residual + P2s) ==========
+  sec("M. D6 — linhagem dedupe, denuncianteRef, rascunho, contatos");
+  {
+    const rExpM = await API("GET", "/exportar", C.cookieMestre);
+    const pacoteM = rExpM.json;
+
+    // M1 (P2-1 INTERMEDIÁRIO 7232738783): rascunho é trabalho não
+    // publicado — pacote público não o transporta.
+    const idRasc = crypto.randomUUID();
+    {
+      const db = abrirDb(BANCO); const ag = Date.now();
+      db.prepare("insert into internet_publicacoes (id,campaign_id,tipo,titulo,corpo,formato,status,visibilidade,autor_modo,origem,version,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run(idRasc, campId, "post_perfil", "RASCUNHO_SECRETO", "corpo", "texto", "rascunho", "campanha", "identificado", "usuario", 1, ag, ag);
+      db.close();
+    }
+    const rExp2 = await API("GET", "/exportar", C.cookieMestre);
+    t("M1 export omite rascunho", !JSON.stringify(rExp2.json).includes("RASCUNHO_SECRETO"), "vazou rascunho");
+
+    // M2 (P1 residual 7232925593 / PoC Gerente 7232846030): página
+    // forjada NÃO pendura em site de JOGADOR — dedupe por id não
+    // prova linhagem; siteMap só resolve site sem dono local.
+    const forjadoM = JSON.parse(JSON.stringify(pacoteM));
+    const pagForjadaM = {
+      id: crypto.randomUUID(), siteId: idsJ.siteId, slug: "pagina-injetada-m",
+      titulo: "Injetada", corpo: "sem autor", formato: "texto",
+      status: "publicado", version: 1,
+      criadoEm: new Date().toISOString(), atualizadoEm: new Date().toISOString(),
+    };
+    forjadoM.estado.paginas = [pagForjadaM];
+    forjadoM.estado.publicacoes = [];
+    forjadoM.estado.denuncias = [];
+    const rImpM = await API("POST", "/importar", C.cookieMestre, { pacote: forjadoM, confirmacao: "IMPORTAR" });
+    t("M2 import forjado → 200", rImpM.status === 200, `status=${rImpM.status}`);
+    const pgM = (() => { const db = abrirDb(BANCO); const r = db.prepare("select id from internet_pages where id=?").get(pagForjadaM.id); db.close(); return r; })();
+    t("M2b página em site de jogador NÃO inserida", !pgM, JSON.stringify(pgM));
+    const rejM = (rImpM.json?.rejeitadas ?? []).find((r) => r.id === pagForjadaM.id);
+    t("M2c rejeitada como site_orfao", rejM?.motivo === "site_orfao", JSON.stringify(rImpM.json?.rejeitadas).slice(0, 200));
+
+    // M3/M4 precisam de campanha com publicações importadas (origem
+    //='importado' é a única âncora válida de denúncia).
+    const campM = await req(BASE, "POST", "/campaigns", { cookie: C.cookieMestre, body: { name: "CampM" } });
+    const campMId = campM.json?.campanha?.id;
+    t("M3 campanha M criada", !!campMId);
+    if (campMId) {
+      const rImpM0 = await req(BASE, "POST", `/campaigns/${campMId}/internet/importar`, { cookie: C.cookieMestre, body: { pacote: pacoteM, confirmacao: "IMPORTAR" } });
+      t("M3a import pacote em M → 200", rImpM0.status === 200, `status=${rImpM0.status}`);
+
+      // M3b (P2-2): denuncianteRef forjado (UUID de conta real de
+      // outra campanha) grava com prefixo pkg: — nunca colide com
+      // conta.id de denúncia local na UNIQUE.
+      const pkgM3 = JSON.parse(JSON.stringify(pacoteM));
+      const pubRefM3 = pkgM3.estado.publicacoes[0]?.id;
+      if (pubRefM3) {
+        const denM = {
+          id: crypto.randomUUID(), publicacaoId: pubRefM3,
+          denuncianteRef: contaJ1, motivo: "spam", denunciaGrave: 0,
+          status: "aberta", resolucao: null, prazoContestacaoEm: null,
+          criadoEm: new Date().toISOString(), atualizadoEm: new Date().toISOString(),
+        };
+        pkgM3.estado.denuncias = [denM];
+        const rImpM3 = await req(BASE, "POST", `/campaigns/${campMId}/internet/importar`, { cookie: C.cookieMestre, body: { pacote: pkgM3, confirmacao: "IMPORTAR" } });
+        t("M3b import denúncia → 200", rImpM3.status === 200, `status=${rImpM3.status} ${JSON.stringify(rImpM3.json).slice(0,140)}`);
+        const denRow = (() => { const db = abrirDb(BANCO); const r = db.prepare("select denunciante_ref from internet_denuncias where id=?").get(denM.id); db.close(); return r; })();
+        t("M3c denunciante_ref prefixado pkg:", denRow?.denunciante_ref === `pkg:${contaJ1}`, JSON.stringify(denRow));
+      }
+
+      // M4 (P2-4): visibilidade 'contatos' é insatisfativel sem autor
+      // — rejeitada com relatório em vez de virar zumbi.
+      const pkgM4 = JSON.parse(JSON.stringify(pacoteM));
+      const pubCt = pkgM4.estado.publicacoes.find((p) => p.status === "publicado") ?? pkgM4.estado.publicacoes[0];
+      if (pubCt) {
+        pubCt.id = crypto.randomUUID(); pubCt.titulo = "CT_" + pubCt.titulo;
+        pubCt.visibilidade = "contatos";
+        pkgM4.estado.publicacoes = [pubCt];
+        pkgM4.estado.sites = []; pkgM4.estado.paginas = []; pkgM4.estado.denuncias = [];
+        const rImpM4 = await req(BASE, "POST", `/campaigns/${campMId}/internet/importar`, { cookie: C.cookieMestre, body: { pacote: pkgM4, confirmacao: "IMPORTAR" } });
+        t("M4 import contatos → 200", rImpM4.status === 200, `status=${rImpM4.status}`);
+        const rejCt = (rImpM4.json?.rejeitadas ?? []).find((r) => r.id === pubCt.id);
+        t("M4b rejeitada visibilidade_insatisfativel", rejCt?.motivo === "visibilidade_insatisfativel", JSON.stringify(rImpM4.json?.rejeitadas).slice(0, 200));
+        const pubCtRow = (() => { const db = abrirDb(BANCO); const r = db.prepare("select id from internet_publicacoes where id=?").get(pubCt.id); db.close(); return r; })();
+        t("M4c publicação contatos NÃO inserida", !pubCtRow, JSON.stringify(pubCtRow));
+      }
+    }
+  }
 } finally {
   if (proc) await encerrarServidor(proc);
   console.log(`\n${pass} ok, ${fail} falhas`);
