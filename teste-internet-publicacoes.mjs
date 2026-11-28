@@ -936,6 +936,47 @@ try {
         const pubCtRow = (() => { const db = abrirDb(BANCO); const r = db.prepare("select id from internet_publicacoes where id=?").get(pubCt.id); db.close(); return r; })();
         t("M4c publicação contatos NÃO inserida", !pubCtRow, JSON.stringify(pubCtRow));
       }
+
+      // M5 (INTERMEDIÁRIO O1 #399): contadores derivados contam só
+      // status='aberta' — denúncias terminais do pacote não podem
+      // disparar o limiar de auto-remoção na primeira denúncia local.
+      const pkgM5 = JSON.parse(JSON.stringify(pacoteM));
+      const pubM5 = pkgM5.estado.publicacoes.find((p) => p.status === "publicado") ?? pkgM5.estado.publicacoes[0];
+      if (pubM5) {
+        pubM5.id = crypto.randomUUID(); pubM5.titulo = "DEN_M5_" + pubM5.titulo;
+        pkgM5.estado.publicacoes = [pubM5];
+        pkgM5.estado.sites = []; pkgM5.estado.paginas = [];
+        const agM5 = new Date().toISOString();
+        pkgM5.estado.denuncias = [
+          { id: crypto.randomUUID(), publicacaoId: pubM5.id, denuncianteRef: crypto.randomUUID(), motivo: "spam", denunciaGrave: 1, status: "encerrada", resolucao: null, prazoContestacaoEm: null, criadoEm: agM5, atualizadoEm: agM5 },
+          { id: crypto.randomUUID(), publicacaoId: pubM5.id, denuncianteRef: crypto.randomUUID(), motivo: "spam", denunciaGrave: 0, status: "resolvida_admin", resolucao: "ok", prazoContestacaoEm: null, criadoEm: agM5, atualizadoEm: agM5 },
+          { id: crypto.randomUUID(), publicacaoId: pubM5.id, denuncianteRef: crypto.randomUUID(), motivo: "spam", denunciaGrave: 0, status: "aberta", resolucao: null, prazoContestacaoEm: null, criadoEm: agM5, atualizadoEm: agM5 },
+          { id: crypto.randomUUID(), publicacaoId: pubM5.id, denuncianteRef: crypto.randomUUID(), motivo: "grave", denunciaGrave: 1, status: "aberta", resolucao: null, prazoContestacaoEm: null, criadoEm: agM5, atualizadoEm: agM5 },
+        ];
+        const rImpM5 = await req(BASE, "POST", `/campaigns/${campMId}/internet/importar`, { cookie: C.cookieMestre, body: { pacote: pkgM5, confirmacao: "IMPORTAR" } });
+        t("M5 import com denuncias mistas → 200", rImpM5.status === 200, `status=${rImpM5.status}`);
+        const ctrM5 = (() => { const db = abrirDb(BANCO); const r = db.prepare("select denuncia_aberta, denuncia_grave from internet_publicacoes where id=?").get(pubM5.id); db.close(); return r; })();
+        t("M5b denuncia_aberta=2 (só 'aberta')", ctrM5?.denuncia_aberta === 2, JSON.stringify(ctrM5));
+        t("M5c denuncia_grave=1 (grave só entre abertas)", ctrM5?.denuncia_grave === 1, JSON.stringify(ctrM5));
+
+        // M6 (INTERMEDIÁRIO O2 #399): resolver admin encerra irmãs
+        // 'aberta'/'em_analise' trazidas pelo pacote — não ficam
+        // presas na fila para sempre.
+        const pubM6 = pkgM5.estado.publicacoes[0];
+        {
+          const db = abrirDb(BANCO); const ag = Date.now();
+          const ins = db.prepare("insert into internet_denuncias (id,campaign_id,publicacao_id,denunciante_conta_id,denunciante_ref,motivo,denuncia_grave,status,prazo_contestacao_em,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)");
+          ins.run(crypto.randomUUID(), campMId, pubM6.id, null, "pkg:b1", "spam", 0, "aberta", null, ag, ag);
+          ins.run(crypto.randomUUID(), campMId, pubM6.id, null, "pkg:b2", "spam", 0, "em_analise", null, ag, ag);
+          db.close();
+        }
+        const denM6 = (() => { const db = abrirDb(BANCO); const r = db.prepare("select id from internet_denuncias where publicacao_id=? and status='aberta' order BY created_at DESC limit 1").get(pubM6.id); db.close(); return r?.id; })();
+        const resM6 = await req(BASE, "POST", `/admin/internet-denuncias/${denM6}/resolver`, { cookie: C.cookieMestre, body: { decisao: "manter", resolucao: " improcedente " } });
+        t("M6 resolver admin → 200", resM6.status === 200, `status=${resM6.status}`);
+        const irmasM6 = (() => { const db = abrirDb(BANCO); const r = db.prepare("select status from internet_denuncias where publicacao_id=? and id!=?").all(pubM6.id, denM6); db.close(); return r.map((x) => x.status); })();
+        t("M6b irmãs pendentes encerradas", irmasM6.length > 0 && irmasM6.every((s) => s === "encerrada" || s === "resolvida_admin"), JSON.stringify(irmasM6));
+        t("M6c nenhuma 'aberta'/'em_analise' restante", irmasM6.every((s) => s !== "aberta" && s !== "em_analise"), JSON.stringify(irmasM6));
+      }
     }
   }
 } finally {

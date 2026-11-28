@@ -446,9 +446,11 @@ export async function importarDominioPublico(
       }
     }
 
-    // 5) contadores server-derived (A16): abertas = total de denúncias
-    //    da publicação; graves = as com denuncia_grave=1. Só toca em
-    //    publicações do pacote (ids locais).
+    // 5) contadores server-derived (A16): abertas = denúncias com
+    //    status='aberta' (mesma semântica do POST /denunciar —
+    //    terminais não podem disparar o limiar de remoção); graves =
+    //    as graves DENTRO das abertas. INTERMEDIÁRIO O1 #399.
+    //    Só toca em publicações do pacote (ids locais).
     const pubsAfetadas = new Set([...pubMap.values(), ...pubIdsAfetadas]);
     if (pubsAfetadas.size) {
       const todas = tx.select({
@@ -456,7 +458,10 @@ export async function importarDominioPublico(
         n: sql<number>`count(*)`,
         graves: sql<number>`sum(${internetDenuncias.denunciaGrave})`,
       }).from(internetDenuncias)
-        .where(eq(internetDenuncias.campaignId, campaignId))
+        .where(and(
+          eq(internetDenuncias.campaignId, campaignId),
+          eq(internetDenuncias.status, "aberta"),
+        ))
         .groupBy(internetDenuncias.publicacaoId).all();
       const porPub = new Map(todas.map((r) => [r.publicacaoId, r]));
       for (const pid of pubsAfetadas) {
