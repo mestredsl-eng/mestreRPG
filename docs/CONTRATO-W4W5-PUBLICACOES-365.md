@@ -1,6 +1,6 @@
 # Contrato — Publicações da Internet pública (W4/W5 + W8 subset)
 
-**Issue:** #365 (F1/6 — Internet pública) · **Ordem:** checkpoint operacional W4/W5 (`7229145994`) · **Base:** `main@d8221ec` (W1/W3 leitura + W3 escrita mergeados)
+**Issue:** #365 (F1/6 — Internet pública) · **Ordem:** checkpoint operacional W4/W5 (`7229145994`) · **Base:** `main@c2925e4` (contrato mergeado via #394; código W4/W5 em #395)
 **Status:** proposta de implementação — consolidando decisões já fechadas (v2.x + DP-1…DP-9 + D1/D2/D6/D12 + SITE-12) em contrato executável. Itens `[PROPOSTA]` exigem deliberação antes do código.
 
 ## 1. Escopo desta fatia
@@ -146,22 +146,30 @@ Moderação (DP-2 — **admin da plataforma**, nunca o mestre da campanha; `requ
 - `__morte` sobrevive a importação (sanear como chave reservada; dedup `(characterId, em)`).
   Cobertura de escritores de `__hp`: rota `/hp` (tx), criação de personagem (HP inicial
   patológico ≤0) e init legado no PATCH — todos passam por `avaliarMorte`.
-- **Restauração "substituir"** (`restaurarEstado`): o domínio Internet **não**
-  viaja no pacote (P9) e é **preservado localmente** — captura integral das 9
-  tabelas por `campaignId` antes de qualquer delete e recriação em ordem FK
+- **Restauração "substituir" — backup interno** (`restaurarEstado`): o domínio
+  Internet **não** viaja no pacote interno (P9) e é **preservado localmente** —
+  captura integral das 9 tabelas antes de qualquer delete (todas por
+  `campaignId`, exceto `internet_participantes`, resolvida via `conversaId` das
+  conversas da campanha — ela não tem `campaign_id`) e recriação em ordem FK
   após `inserirEstado`, na mesma tx (ordem do Dono; implementado em #395
-  `9f23448`). Conta cujo personagem não veio no pacote ganha **âncora**
-  (`characters.status='arquivado'`, dados vazios, sem template, mesmo
-  `characterId`) e a conta fica `status='inativa'` — sem acesso/escrita
+  `9f23448`). Conta cujo personagem não veio no pacote — **ou**
+  `publicacoes.personagemId` de notícia de sistema sem conta associada — ganha
+  **âncora** (`characters.status='arquivado'`, dados vazios, sem template,
+  mesmo `characterId`) e a conta fica `status='inativa'` — sem acesso/escrita
   residual; membership alvo resolve por `userId` (importada do pacote ou
   reintroduzida `removido`). FK não resolvida aborta a tx inteira. Efeitos
   registrados: o `handle` da conta ancorada permanece **reservado**
   (UNIQUE campaignId+handle — não reciclável nesta fatia) e não há caminho
   de reativação/migração da conta para novo personagem (decisão de produto
   pendente). `__morte` volta a ser derivado do `__hp` saneado — epoch
-  preservada para dedup, **sem** notícia retroativa. Questão **D6**
-  remanescente: se/quando o pacote poderá carregar domínio público
-  explícito — o restore hoje sempre preserva o local.
+  preservada para dedup, **sem** notícia retroativa.
+- **Export/import público — D6 (decidido, implementação pendente):** o
+  proprietário **aprovou** que o pacote de exportação passe a carregar o
+  domínio público — sites, páginas, publicações e moderação — em fatia
+  própria; ficam **fora** chats/mensagens privados e a identidade de
+  denúncia anônima. O que resta é o formato/round-trip, não a decisão.
+  Enquanto isso não chega, o caminho vigente é o backup interno acima:
+  restore preserva o domínio local e o pacote público continua sem ele.
 
 ## 6. Decisões registradas (deliberação Dono `7229555079` — fechadas)
 
