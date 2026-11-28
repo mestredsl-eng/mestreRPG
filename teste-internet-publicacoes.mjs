@@ -733,6 +733,49 @@ try {
       t("K12c contatos com aresta aceita → 200/201", rCtJ2.status === 200 || rCtJ2.status === 201, `status=${rCtJ2.status}`);
     }
   }
+
+  // ---------- L. D6 — export/import público do domínio Internet ----------
+  sec("L. D6 — pacote público sem identidade; import read-only");
+  {
+    const rExp = await API("GET", "/exportar", C.cookieMestre);
+    t("L1 export D6 → 200", rExp.status === 200, `status=${rExp.status}`);
+    const pacote = rExp.json;
+    const blob = JSON.stringify(pacote);
+    t("L2 pacote sem ids internos de conta", !blob.includes(contaJ1) && !blob.includes(contaJ2), "vazou conta");
+    t("L3 pacote sem handle", !blob.includes("ada.foca") && !blob.includes("beto.foca"), "vazou handle");
+    t("L4 pacote sem ids de campanha/usuário", !blob.includes(campId) && !blob.includes(C.jogadores.j1.id), "vazou id interno");
+    t("L5 pacote tem formato internet-publica", pacote?.formato === "internet-publica" && pacote?.versao === 1);
+    t("L6 pacote sem coleções privadas", !/internet_(accounts|contacts|conversations|participants|messages)/.test(JSON.stringify(Object.keys(pacote?.estado ?? {}))));
+    // import na mesma campanha → dedupe, nada muda
+    const domAntes = (() => { const db = abrirDb(BANCO); const n = db.prepare("select count(*) n from internet_publicacoes where campaign_id=?").get(campId).n; db.close(); return n; })();
+    const rImp = await API("POST", "/importar", C.cookieMestre, { pacote, confirmacao: "IMPORTAR" });
+    t("L7 import round-trip → 200", rImp.status === 200, `status=${rImp.status} ${JSON.stringify(rImp.json).slice(0, 140)}`);
+    const domDepois = (() => { const db = abrirDb(BANCO); const n = db.prepare("select count(*) n from internet_publicacoes where campaign_id=?").get(campId).n; db.close(); return n; })();
+    t("L8 reimport não duplica", domAntes === domDepois, `${domAntes}→${domDepois}`);
+    // import em campanha nova → tudo read-only
+    const campB = await req(BASE, "POST", "/campaigns", { cookie: C.cookieMestre, body: { name: "CampB L" } });
+    const campBId = campB.json?.campanha?.id;
+    t("L9 campanha B criada", !!campBId);
+    if (campBId) {
+      const rImpB = await req(BASE, "POST", `/campaigns/${campBId}/internet/importar`, { cookie: C.cookieMestre, body: { pacote, confirmacao: "IMPORTAR" } });
+      t("L10 import em B → 200", rImpB.status === 200, `status=${rImpB.status}`);
+      const pubB = (() => { const db = abrirDb(BANCO); const r = db.prepare("select id,origem,autor_conta_id from internet_publicacoes where campaign_id=? and titulo='ANUNC_K_Vendo'").get(campBId); db.close(); return r; })();
+      t("L11 importado nasce origem=importado sem conta", pubB?.origem === "importado" && pubB?.autor_conta_id === null, JSON.stringify(pubB));
+      if (pubB) {
+        const rPatch = await req(BASE, "PATCH", `/campaigns/${campBId}/internet/publicacoes/${pubB.id}`, { cookie: C.cookieMestre, body: { titulo: "hack", expectedVersion: 1 } });
+        t("L12 mestre NÃO edita importado → 4xx", rPatch.status === 403 || rPatch.status === 404, `status=${rPatch.status}`);
+      }
+      // anonRef novo no reexport da campanha B
+      const rExpB = await req(BASE, "GET", `/campaigns/${campBId}/internet/exportar`, { cookie: C.cookieMestre });
+      const refsB = JSON.stringify(rExpB.json).match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g) ?? [];
+      t("L13 reexport emite refs opacas", rExpB.status === 200 && refsB.length > 0, `status=${rExpB.status}`);
+      // pacote adulterado → rejeitado
+      const ruim = JSON.parse(JSON.stringify(pacote));
+      ruim.estado.publicacoes[0].campoSecreto = "x";
+      const rRuim = await req(BASE, "POST", `/campaigns/${campBId}/internet/importar`, { cookie: C.cookieMestre, body: { pacote: ruim, confirmacao: "IMPORTAR" } });
+      t("L14 campo desconhecido → 4xx", rRuim.status === 400, `status=${rRuim.status}`);
+    }
+  }
 } finally {
   if (proc) await encerrarServidor(proc);
   console.log(`\n${pass} ok, ${fail} falhas`);

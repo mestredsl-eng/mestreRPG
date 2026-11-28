@@ -195,7 +195,8 @@ function auditTx(
  *  P7 commita antes (visto aqui → aborta) ou depois (nossa mutação
  *  foi linearizada sob titularidade válida). Não inclui o gate P5
  *  (avaliação assíncrona de regras — permanece pré-tx). */
-function titularNaTx(tx: Tx, contaId: string, userId: string, cid: string): boolean {
+function titularNaTx(tx: Tx, contaId: string | null, userId: string, cid: string): boolean {
+  if (!contaId) return false; // D6: sem titular local → ninguém é titular
   const [conta] = tx.select({
     characterId: internetAccounts.characterId,
     status: internetAccounts.status,
@@ -246,7 +247,7 @@ type Ator = AtorPersonagem | AtorMestre;
  *  conta própria opera como titular, nunca alterna implicitamente.
  *  Retorna null quando ninguém está autorizado. */
 async function resolverAtor(
-  req: Request, cid: string, contaRefId: string,
+  req: Request, cid: string, contaRefId: string | null,
 ): Promise<Ator | null> {
   const auth = await contaAutorizadaPara(contaRefId, req.usuario!.id);
   if (auth) return { auth, papel: "titular" };
@@ -845,7 +846,7 @@ internetEscritaRouter.get("/sites/:slug/paginas", requirePapel("mestre", "jogado
 
   const visiveis = ehMestre
     ? todas
-    : todas.filter((p) => p.status === "publicado" || contaIds.includes(p.autorContaId));
+    : todas.filter((p) => p.status === "publicado" || (!!p.autorContaId && contaIds.includes(p.autorContaId)));
 
   res.json({
     ok: true,
@@ -855,7 +856,7 @@ internetEscritaRouter.get("/sites/:slug/paginas", requirePapel("mestre", "jogado
       publicadoEm: p.publishedAt, atualizadoEm: p.updatedAt,
       // UUID interno da conta só para o próprio autor ou mestre —
       // páginas publicadas de sites alheios expõem só o handle público
-      autorContaId: (ehMestre || contaIds.includes(p.autorContaId)) ? p.autorContaId : null,
+      autorContaId: (ehMestre || (!!p.autorContaId && contaIds.includes(p.autorContaId))) ? p.autorContaId : null,
     })),
   });
 });
@@ -1036,7 +1037,9 @@ internetEscritaRouter.patch("/publicacoes/:id", requirePapel("mestre", "jogador"
   const pub = await publicacaoPorId(cid, req.params.id);
   // Inexistente / campanha errada / origem='sistema' → 404 uniforme
   // (a notícia de morte é imutável — não vaza que a linha é especial).
-  if (!pub || pub.origem === "sistema" || pub.status === "removido") {
+  // D6/A12: origem='importado' também é read-only para TODOS,
+  // inclusive mestre — conteúdo importado nunca vira editável.
+  if (!pub || pub.origem === "sistema" || pub.origem === "importado" || pub.status === "removido") {
     erroHttp(res, 404, "Publicação não encontrada"); return;
   }
   const ehMestre = await mestreLeitorDaCampanha(cid, req.usuario!.id);
@@ -1212,6 +1215,9 @@ internetEscritaRouter.post("/publicacoes/:id/denunciar", requirePapel("mestre", 
       tx.insert(internetDenuncias).values({
         id, campaignId: cid, publicacaoId: pub.id,
         denuncianteContaId: denunciante.conta.id,
+        // D6: ref local = conta_id (mesmo backfill da migration);
+        // o export público re-opacifica por pacote
+        denuncianteRef: denunciante.conta.id,
         motivo: body.data.motivo, denunciaGrave: grave,
         status: "aberta", prazoContestacaoEm: prazoContestacao,
         createdAt: agora, updatedAt: agora,

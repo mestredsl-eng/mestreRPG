@@ -243,12 +243,13 @@ function validarIntegridadeDominioInternet(d: DominioInternetPreservado, campaig
     if (!contaIds.has(m.autorContaId)) falha("internet_messages.autor_conta_id", m.autorContaId);
   }
   for (const s of d.sites) {
-    if (!contaIds.has(s.ownerContaId)) falha("internet_sites.owner_conta_id", s.ownerContaId);
+    // D6: owner NULL = site importado sem conta local — legítimo
+    if (s.ownerContaId && !contaIds.has(s.ownerContaId)) falha("internet_sites.owner_conta_id", s.ownerContaId);
   }
   for (const p of d.paginas) {
     if (p.campaignId !== campaignId) falha("internet_pages.campaign_id", p.campaignId);
     if (!siteIds.has(p.siteId)) falha("internet_pages.site_id", p.siteId);
-    if (!contaIds.has(p.autorContaId)) falha("internet_pages.autor_conta_id", p.autorContaId);
+    if (p.autorContaId && !contaIds.has(p.autorContaId)) falha("internet_pages.autor_conta_id", p.autorContaId);
   }
   for (const p of d.publicacoes) {
     if (p.campaignId !== campaignId) falha("internet_publicacoes.campaign_id", p.campaignId);
@@ -258,7 +259,8 @@ function validarIntegridadeDominioInternet(d: DominioInternetPreservado, campaig
   for (const n of d.denuncias) {
     if (n.campaignId !== campaignId) falha("internet_denuncias.campaign_id", n.campaignId);
     if (!pubIds.has(n.publicacaoId)) falha("internet_denuncias.publicacao_id", n.publicacaoId);
-    if (!contaIds.has(n.denuncianteContaId)) falha("internet_denuncias.denunciante_conta_id", n.denuncianteContaId);
+    // D6: denunciante NULL = denúncia importada (ref opaca) — legítimo
+    if (n.denuncianteContaId && !contaIds.has(n.denuncianteContaId)) falha("internet_denuncias.denunciante_conta_id", n.denuncianteContaId);
   }
 }
 
