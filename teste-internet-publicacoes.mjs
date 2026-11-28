@@ -560,6 +560,47 @@ try {
   });
   t("J5 import corrompido → erro (não 200)", impJ5.status !== 200, `status=${impJ5.status}`);
   t("J5 rollback integral (nada mudou)", JSON.stringify(antesJ5) === JSON.stringify(contarJ5()), `${JSON.stringify(antesJ5)} → ${JSON.stringify(contarJ5())}`);
+
+  // J6 — P1 integridade cross-campaign: aresta cujo ID existe no banco
+  // mas aponta para entidade de OUTRA campanha. FK passa; a validação
+  // de pertencimento precisa abortar antes de qualquer delete.
+  const charFake2 = crypto.randomUUID();
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    // segundo personagem da campanha fake, sem conta própria
+    db.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+      .run(charFake2, campFalso, db.prepare("select id from memberships where campaign_id=? limit 1").get(campFalso).id, "Fake Dois", "{}", "{}", "aprovada", 0, agora, agora);
+    // corrupção: contaJ1 passa a apontar para personagem de campFalso —
+    // FK satisfeito (id existe), pertencimento violado
+    db.prepare("update internet_accounts set character_id=? where id=?").run(charFake2, contaJ1);
+    db.close();
+  }
+  const estadoCorrompido = (() => { const db = abrirDb(BANCO); const r = {
+    dominio: contarDominio(),
+    chars: db.prepare("select count(*) n from characters where campaign_id=?").get(campId).n,
+    charJ1: db.prepare("select character_id from internet_accounts where id=?").get(contaJ1).character_id,
+    fakeContas: db.prepare("select count(*) n from internet_accounts where campaign_id=?").get(campFalso).n,
+  }; db.close(); return r; })();
+  const impJ6 = await req(BASE, "POST", "/campaigns/importar", {
+    cookie: C.cookieMestre,
+    body: { pacote: expJ.json, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+  });
+  t("J6 aresta cross-campaign → erro (não 200)", impJ6.status !== 200, `status=${impJ6.status} ${JSON.stringify(impJ6.json).slice(0, 160)}`);
+  const estadoAposJ6 = (() => { const db = abrirDb(BANCO); const r = {
+    dominio: contarDominio(),
+    chars: db.prepare("select count(*) n from characters where campaign_id=?").get(campId).n,
+    charJ1: db.prepare("select character_id from internet_accounts where id=?").get(contaJ1).character_id,
+    fakeContas: db.prepare("select count(*) n from internet_accounts where campaign_id=?").get(campFalso).n,
+  }; db.close(); return r; })();
+  t("J6 rollback integral — nada alterado na alvo", JSON.stringify(estadoCorrompido) === JSON.stringify(estadoAposJ6), `${JSON.stringify(estadoCorrompido)} → ${JSON.stringify(estadoAposJ6)}`);
+  t("J6 campanha estrangeira intacta", estadoAposJ6.fakeContas === 1);
+  // desfaz a corrupção para não contaminar o restante (DIR é descartável)
+  {
+    const db = abrirDb(BANCO);
+    db.prepare("update internet_accounts set character_id=? where id=?").run(charJ1, contaJ1);
+    db.close();
+  }
 } finally {
   if (proc) await encerrarServidor(proc);
   console.log(`\n${pass} ok, ${fail} falhas`);

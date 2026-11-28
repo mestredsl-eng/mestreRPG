@@ -195,6 +195,70 @@ function capturarDominioInternet(tx: Tx, campaignId: string): DominioInternetPre
   };
 }
 
+/** P1 integridade cross-campaign: IDs globais existentes em OUTRA
+ *  campanha não são prova de pertencimento. Toda aresta do snapshot
+ *  capturado precisa resolver DENTRO dos conjuntos da campanha-alvo —
+ *  qualquer inconsistência lança erro e provoca rollback integral da
+ *  transação; nunca filtrar, apagar ou reparar silenciosamente. */
+function validarIntegridadeDominioInternet(d: DominioInternetPreservado, campaignId: string) {
+  const falha = (aresta: string, id: string) => {
+    throw new Error(`restore: aresta Internet inconsistente — ${aresta} → ${id} fora do conjunto da campanha ${campaignId}`);
+  };
+  const contaIds = new Set(d.contas.map((c) => c.id));
+  const charIds = new Set(d.personagens.map((c) => c.id));
+  const memIds = new Set(d.memberships.map((m) => m.id));
+  const convIds = new Set(d.conversas.map((c) => c.id));
+  const siteIds = new Set(d.sites.map((s) => s.id));
+  const pubIds = new Set(d.publicacoes.map((p) => p.id));
+  const memPorId = new Map(d.memberships.map((m) => [m.id, m] as const));
+  const charPorId = new Map(d.personagens.map((c) => [c.id, c] as const));
+
+  for (const c of d.contas) {
+    // personagem precisa ser DA campanha (characterId é global — um id
+    // de outra campanha passaria no FK mas é corrupção de dados)
+    const char = charPorId.get(c.characterId);
+    if (!char) falha("internet_accounts.characterId", c.characterId);
+    // membership do personagem precisa existir e ser da mesma campanha
+    const mem = memPorId.get(char.membershipId);
+    if (!mem || mem.campaignId !== campaignId) falha("characters.membershipId", char.membershipId);
+  }
+  for (const c of d.contatos) {
+    if (!contaIds.has(c.contaOrigemId)) falha("internet_contacts.conta_origem_id", c.contaOrigemId);
+    if (!contaIds.has(c.contaDestinoId)) falha("internet_contacts.conta_destino_id", c.contaDestinoId);
+    if (c.bloqueadoPorContaId && !contaIds.has(c.bloqueadoPorContaId)) falha("internet_contacts.bloqueado_por_conta_id", c.bloqueadoPorContaId);
+  }
+  for (const c of d.conversas) {
+    if (c.createdByContaId && !contaIds.has(c.createdByContaId)) falha("internet_conversations.created_by_conta_id", c.createdByContaId);
+  }
+  for (const p of d.participantes) {
+    if (!contaIds.has(p.contaId)) falha("internet_participantes.conta_id", p.contaId);
+    if (p.convidadoPorContaId && !contaIds.has(p.convidadoPorContaId)) falha("internet_participantes.convidado_por_conta_id", p.convidadoPorContaId);
+  }
+  for (const m of d.mensagens) {
+    if (m.campaignId !== campaignId) falha("internet_messages.campaign_id", m.campaignId);
+    if (!convIds.has(m.conversaId)) falha("internet_messages.conversa_id", m.conversaId);
+    if (!contaIds.has(m.autorContaId)) falha("internet_messages.autor_conta_id", m.autorContaId);
+  }
+  for (const s of d.sites) {
+    if (!contaIds.has(s.ownerContaId)) falha("internet_sites.owner_conta_id", s.ownerContaId);
+  }
+  for (const p of d.paginas) {
+    if (p.campaignId !== campaignId) falha("internet_pages.campaign_id", p.campaignId);
+    if (!siteIds.has(p.siteId)) falha("internet_pages.site_id", p.siteId);
+    if (!contaIds.has(p.autorContaId)) falha("internet_pages.autor_conta_id", p.autorContaId);
+  }
+  for (const p of d.publicacoes) {
+    if (p.campaignId !== campaignId) falha("internet_publicacoes.campaign_id", p.campaignId);
+    if (p.autorContaId && !contaIds.has(p.autorContaId)) falha("internet_publicacoes.autor_conta_id", p.autorContaId);
+    if (p.personagemId && !charIds.has(p.personagemId)) falha("internet_publicacoes.personagem_id", p.personagemId);
+  }
+  for (const n of d.denuncias) {
+    if (n.campaignId !== campaignId) falha("internet_denuncias.campaign_id", n.campaignId);
+    if (!pubIds.has(n.publicacaoId)) falha("internet_denuncias.publicacao_id", n.publicacaoId);
+    if (!contaIds.has(n.denuncianteContaId)) falha("internet_denuncias.denunciante_conta_id", n.denuncianteContaId);
+  }
+}
+
 /** Recria o domínio Internet preservado, em ordem FK. Personagens
  *  referenciados que não vieram no pacote ganham âncora mínima
  *  (status='arquivado', dados vazios, sem template) com o MESMO id —
@@ -434,6 +498,10 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
     // Domínio Internet ANTES de qualquer delete: o pacote não o carrega
     // (P9/D6) — captura integral para recriação preservada ao final.
     const dominioInternet = capturarDominioInternet(tx, campaignId);
+    // P1: arestas precisam resolver DENTRO da campanha — id global de
+    // outra campanha não é prova de pertencimento. Inconsistência
+    // lança erro → rollback integral, sem filtro/reparo silencioso.
+    validarIntegridadeDominioInternet(dominioInternet, campaignId);
     // filhos primeiro
     limpar(tests, eq(tests.campaignId, campaignId));
     limpar(rolls, eq(rolls.campaignId, campaignId));
