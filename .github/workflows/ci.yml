@@ -268,6 +268,20 @@ jobs:
         run: |
           node diagnostico-c7-ci.mjs 40 4
           node diagnostico-c7-ci.mjs 40 2
+      # Repete a suíte #298 completa (contexto integral do C7: seções
+      # anteriores, banco compartilhado, WAL) — não falha o job, só
+      # registra o exit code para evidência.
+      - name: Diagnóstico C7 — suíte #298 integral 2× (#365)
+        shell: bash
+        run: |
+          for i in 1 2; do
+            echo "===== suíte #298 rodada $i ====="
+            if node teste-runtime-processos-298.mjs; then
+              echo "SUITE298_RODADA_${i}_EXIT=0"
+            else
+              echo "SUITE298_RODADA_${i}_EXIT=FALHOU"
+            fi
+          done
       - name: Suítes da stack #189 — Servidor sem navegador
         shell: bash
         run: |
