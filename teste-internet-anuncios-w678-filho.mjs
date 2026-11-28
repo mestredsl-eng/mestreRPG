@@ -312,9 +312,9 @@ try {
       const rCross = await api(BASE, campBId, J2, "GET", `/publicacoes/${idAnuncio}`);
       t("cross-campaign anuncio → 404", rCross.status === 404 || rCross.status === 403, `status=${rCross.status}`);
     }
-    const rFeedAnuncio = await api(BASE, C.campId, J2, "GET", "/publicacoes?tipo=anuncio&limit=50");
+    const rFeedAnuncio = await api(BASE, C.campId, J4, "GET", "/publicacoes?tipo=anuncio&limit=50");
     t("feed filtra tipo=anuncio", rFeedAnuncio.status === 200, `status=${rFeedAnuncio.status}`);
-    const rFeedNoticia = await api(BASE, C.campId, J2, "GET", "/publicacoes?tipo=noticia&limit=50");
+    const rFeedNoticia = await api(BASE, C.campId, J4, "GET", "/publicacoes?tipo=noticia&limit=50");
     t("feed tipo=noticia não lista anuncios", !JSON.stringify(rFeedNoticia.json).includes("ANUNC_"), `status=${rFeedNoticia.status}`);
     // conta inativa → criar anuncio negado
     const contaJ3 = comDb((db) => db.prepare("select id from internet_accounts where character_id=?").get(ch3)?.id);
