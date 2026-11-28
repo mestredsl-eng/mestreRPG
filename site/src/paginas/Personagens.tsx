@@ -37,6 +37,11 @@ export default function Personagens({ campaignId, campanha }: Props) {
   const [personagens, setPersonagens] = useState<PersonagemResumo[]>([]);
   const [modelos, setModelos] = useState<ModeloResumo[]>([]);
   const [selecionado, setSelecionado] = useState<PersonagemDetalhe | null>(null);
+  // Issue #132: personagem recém-criado abre direto em modo edição —
+  // um clique em "Novo personagem" já leva à ficha preenchível, sem
+  // o "Editar ficha" intermediário. Só a criação liga a flag; abrir
+  // personagem existente continua em visualização.
+  const [abrirEditando, setAbrirEditando] = useState(false);
   // Identifica a abertura atual; respostas de uma ficha anterior não podem
   // sobrescrever outra seleção, mesmo se o usuário reabrir o mesmo personagem.
   const selecaoEpochRef = useRef(0);
@@ -108,6 +113,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
 
   const abrir = async (id: string) => {
     const epoch = ++selecaoEpochRef.current;
+    setAbrirEditando(false);
     try {
       const detalhe = await api.obterPersonagem(id);
       if (selecaoEpochRef.current === epoch) setSelecionado(detalhe);
@@ -134,6 +140,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
         key={selecionado.personagem.id}
         detalhe={selecionado}
         souMestre={souMestre}
+        iniciarEmEdicao={abrirEditando}
         biblioteca={biblioteca}
         metadadosPoderes={metadadosPoderes}
         campaignId={campaignId}
@@ -141,6 +148,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
           // Invalida qualquer GET de atualização iniciado pela ficha que
           // está sendo fechada antes de voltar à lista.
           selecaoEpochRef.current += 1;
+          setAbrirEditando(false);
           setSelecionado(null);
           await carregar();
         }}
@@ -205,6 +213,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
             aoCriar={async (nome, templateVersionId, isNpc) => {
               const criado = await api.criarPersonagem(campaignId, { name: nome, templateVersionId, isNpc });
               setCriando(false);
+              setAbrirEditando(true);
               setSelecionado(criado);
             }}
             aoCancelar={() => setCriando(false)}
@@ -360,9 +369,12 @@ function extrairErrosValidacao(detalhes: unknown): ErroValidacao[] {
   return Object.entries(d).map(([campoId, v]) => ({ campoId, mensagem: String(v) }));
 }
 
-function PersonagemDetalheView({ detalhe, souMestre, biblioteca, metadadosPoderes, campaignId, aoVoltar, aoSalvar, aoRecarregar }: {
+function PersonagemDetalheView({ detalhe, souMestre, iniciarEmEdicao, biblioteca, metadadosPoderes, campaignId, aoVoltar, aoSalvar, aoRecarregar }: {
   detalhe: PersonagemDetalhe;
   souMestre: boolean;
+  /** Issue #132: true só na abertura pós-criação — ficha já nasce em
+   *  edição. Reaberturas/recargas voltam à visualização normal. */
+  iniciarEmEdicao?: boolean;
   biblioteca: Record<string, ElementoVinculavel[]> | null;
   metadadosPoderes: MetadadoPoder[];
   campaignId: string;
@@ -398,7 +410,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, metadadosPodere
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [versaoServidor]);
   const [nome, setNome] = useState(personagem.name);
-  const [editando, setEditando] = useState(false);
+  const [editando, setEditando] = useState(iniciarEmEdicao === true);
   const [sincronizandoPoder, setSincronizandoPoder] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);

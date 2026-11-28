@@ -74,9 +74,15 @@ async function criarFichaUI(page, j) {
   await page.getByLabel("Nome do personagem").fill(j.nome);
   await page.getByLabel("Modelo de ficha").selectOption({ label: MODELO });
   await page.getByRole("button", { name: "Criar e preencher" }).click();
-  // detalhe da ficha → editar → preencher FOR → enviar p/ aprovação
-  await page.getByRole("button", { name: "Editar ficha" }).waitFor({ timeout: 15000 });
-  await page.getByRole("button", { name: "Editar ficha" }).click();
+  // detalhe da ficha → preencher FOR → enviar p/ aprovação
+  // Issue #132: pós-criação a ficha já abre em modo edição — o
+  // "Editar ficha" só existe no fluxo antigo (visualização primeiro).
+  await page.waitForFunction(
+    () => [...document.querySelectorAll("button")].some((b) => /Editar ficha|Salvar/.test(b.textContent ?? "")),
+    null, { timeout: 15000 },
+  );
+  const btnEditarFicha = page.getByRole("button", { name: "Editar ficha" });
+  if (await btnEditarFicha.count() > 0) await btnEditarFicha.click();
   try {
     await page.getByRole("button", { name: "Salvar", exact: true }).waitFor({ timeout: 8000 });
   } catch {
