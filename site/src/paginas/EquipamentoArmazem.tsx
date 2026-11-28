@@ -82,7 +82,17 @@ export default function EquipamentoArmazem({ characterId, campaignId, aoVenderIt
     void carregar();
     const socket = getSocket();
     socket.emit("entrar-campanha", campaignId, () => undefined);
-    const aoMudar = () => void recarregarRef.current();
+    // A1 (#132): `patrimonio:atualizado`/`inventario:atualizado` podem
+    // carregar `characterId` do personagem afetado — evento de OUTRA
+    // ficha não deve recarregar esta (antes: 1 mutação gerava até 3
+    // requisições por ficha aberta na campanha). Payload SEM
+    // characterId é evento legitimamente global — regras da campanha,
+    // catálogo e liquidação de patrocínio emitem `{}` — e continua
+    // recarregando.
+    const aoMudar = (payload?: { characterId?: string | null }) => {
+      if (payload?.characterId && payload.characterId !== characterId) return;
+      void recarregarRef.current();
+    };
     socket.on("patrimonio:atualizado", aoMudar);
     socket.on("inventario:atualizado", aoMudar);
     socket.on("regras:atualizadas", aoMudar);
@@ -92,7 +102,7 @@ export default function EquipamentoArmazem({ characterId, campaignId, aoVenderIt
       socket.off("regras:atualizadas", aoMudar);
       socket.emit("sair-campanha", campaignId);
     };
-  }, [campaignId, carregar]);
+  }, [campaignId, characterId, carregar]);
 
   const abas: [Aba, string][] = [
     ["inventario", "Inventário"],
