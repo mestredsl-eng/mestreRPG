@@ -167,6 +167,12 @@ try {
       .run(ids.fakeMem, ids.fakeCamp, ids.fakeUser, agora2, agora2, agora2);
     db.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
       .run(ids.fakeChar, ids.fakeCamp, ids.fakeMem, "Fake Herói R1", "{}", "{}", "aprovada", 0, agora2, agora2);
+    // segundo personagem fake SEM conta — alvo do vetor cross-campaign
+    // do R5 (internet_accounts.character_id é UNIQUE: não posso
+    // reapontar para fakeChar que já tem conta)
+    ids.fakeChar2 = crypto.randomUUID();
+    db.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+      .run(ids.fakeChar2, ids.fakeCamp, ids.fakeMem, "Fake Sem Conta R1", "{}", "{}", "aprovada", 0, agora2, agora2);
     const fc = (suf) => `fake-${suf}-r1`;
     db.prepare("insert into internet_accounts (id,campaign_id,character_id,handle,status,mostrar_presenca,mostrar_digitando,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)")
       .run(fc("conta"), ids.fakeCamp, ids.fakeChar, "fake.r1", "ativa", 0, 0, agora2, agora2);
@@ -331,7 +337,7 @@ try {
     // corrompe uma aresta real: contaJ1 passa a referenciar o personagem
     // da campanha fake (characterId é global — FK simples não pega;
     // é exatamente o vetor do P1 do TG)
-    comDb((db) => db.prepare("update internet_accounts set character_id=? where id=?").run(ids.fakeChar, ids.contaJ1));
+    comDb((db) => db.prepare("update internet_accounts set character_id=? where id=?").run(ids.fakeChar2, ids.contaJ1));
     const snapAntes = snapshotDominio(campId); // baseline JÁ corrompido
     const pacote = await exportar();
     const imp = await importar(pacote);
