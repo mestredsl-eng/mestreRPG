@@ -18,22 +18,27 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { ApiError } from "../../api";
 import { criarAdaptadorInternetPublica, type AdaptadorInternetPublica } from "./adaptador-publica";
 import Publicacoes from "./Publicacoes";
+import Perfis, { PerfilPublicoView } from "./Perfis";
 import type { PaginaPublica, PaginaPublicaResumo, SitePublico, SitePublicoResumo } from "./tipos-publica";
 import { Carregando, ErroRetry, Vazio } from "./estados";
 
 type Visao =
   | { tipo: "inicio" }
   | { tipo: "site"; slug: string }
-  | { tipo: "pagina"; siteSlug: string; pageSlug: string };
+  | { tipo: "pagina"; siteSlug: string; pageSlug: string }
+  | { tipo: "perfil"; handle: string };
 
 interface Props {
   campaignId: string;
   adaptador?: AdaptadorInternetPublica;
+  /** characterId do personagem atual — habilita o card "Seu perfil"
+   *  (W9/W10) na sub-aba Perfis. Sem ele só busca/leitura pública. */
+  characterId?: string;
 }
 
 const ROTULO_DATA = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short" });
 
-export default function Explorar({ campaignId, adaptador }: Props) {
+export default function Explorar({ campaignId, adaptador, characterId }: Props) {
   const adapt = adaptador ?? criarAdaptadorInternetPublica({ campaignId });
   // Pilha de navegação: o último elemento é a visão atual; "voltar"
   // desempilha preservando o contexto (diretório → site → página).
@@ -41,6 +46,7 @@ export default function Explorar({ campaignId, adaptador }: Props) {
   const visao = pilha[pilha.length - 1];
 
   const irPara = (v: Visao) => setPilha((p) => [...p, v]);
+  const irParaPerfil = (handle: string) => irPara({ tipo: "perfil", handle });
   const voltar = () => setPilha((p) => (p.length > 1 ? p.slice(0, -1) : p));
   const irParaSite = (slug: string) => irPara({ tipo: "site", slug });
   const irParaPagina = (siteSlug: string, p: PaginaPublicaResumo) =>
@@ -56,7 +62,16 @@ export default function Explorar({ campaignId, adaptador }: Props) {
         </div>
       )}
       {visao.tipo === "inicio" && (
-        <InicioPublico adaptador={adapt} aoAbrirSite={irParaSite} />
+        <InicioPublico adaptador={adapt} campaignId={campaignId} characterId={characterId} aoAbrirSite={irParaSite} aoAbrirPerfil={irParaPerfil} />
+      )}
+      {visao.tipo === "perfil" && (
+        <PerfilPublicoView
+          key={visao.handle}
+          adaptador={adapt}
+          campaignId={campaignId}
+          handle={visao.handle}
+          aoVoltar={voltar}
+        />
       )}
       {visao.tipo === "site" && (
         <SitePublicoView
@@ -87,11 +102,14 @@ export default function Explorar({ campaignId, adaptador }: Props) {
  *  W4/W5/W8-subset (#365): sub-abas "Sites" e "Publicações" — a
  *  segunda hospeda o feed/matéria/publicar/minhas com navegação
  *  interna própria (Publicacoes.tsx). */
-function InicioPublico({ adaptador, aoAbrirSite }: {
+function InicioPublico({ adaptador, campaignId, characterId, aoAbrirSite, aoAbrirPerfil }: {
   adaptador: AdaptadorInternetPublica;
+  campaignId: string;
+  characterId?: string;
   aoAbrirSite: (slug: string) => void;
+  aoAbrirPerfil: (handle: string) => void;
 }) {
-  const [secao, setSecao] = useState<"sites" | "publicacoes">("sites");
+  const [secao, setSecao] = useState<"sites" | "publicacoes" | "perfis">("sites");
   const [busca, setBusca] = useState("");
   const [qAplicada, setQAplicada] = useState("");
   const [sites, setSites] = useState<SitePublicoResumo[] | null>(null);
@@ -148,8 +166,17 @@ function InicioPublico({ adaptador, aoAbrirSite }: {
           className={secao === "publicacoes" ? "secundario ativo" : "secundario"}
           onClick={() => setSecao("publicacoes")}
         >Publicações</button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={secao === "perfis"}
+          className={secao === "perfis" ? "secundario ativo" : "secundario"}
+          onClick={() => setSecao("perfis")}
+        >Perfis</button>
       </div>
-      {secao === "publicacoes" ? (
+      {secao === "perfis" ? (
+        <Perfis adaptador={adaptador} campaignId={campaignId} characterId={characterId} aoAbrirPerfil={aoAbrirPerfil} />
+      ) : secao === "publicacoes" ? (
         <Publicacoes adaptador={adaptador} />
       ) : (
       <>
