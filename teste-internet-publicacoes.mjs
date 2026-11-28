@@ -78,8 +78,7 @@ function lerPub(banco, id) {
 }
 
 try {
-  // ================= MIGRAÇÃO =================
-  sec("A. Migração 0044 — banco limpo");
+  // ================= MIGRAÇÃO ==========  sec("A. Migração 0044 — banco limpo");
   await prepararBanco(BANCO);
   {
     const db = abrirDb(BANCO);
@@ -89,8 +88,7 @@ try {
     db.close();
   }
 
-  // ================= CENÁRIO =================
-  sec("B. Cenário — campanha, contas com gate, arestas");
+  // ================= CENÁRIO ==========  sec("B. Cenário — campanha, contas com gate, arestas");
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: join(DIR, "arq"), backups: join(DIR, "bks") });
   proc.stderr.on("data", (d) => process.stderr.write("[srv] " + d));
   await esperarSaudavel(BASE, proc);
@@ -122,8 +120,7 @@ try {
   // aresta aceita j2→j1 (j2 vê 'contatos' de j1; j3 não)
   aresta(BANCO, { campId, origemId: contaJ2, destinoId: contaJ1, status: "aceito" });
 
-  // ================= CRIAÇÃO (W8 subset) =================
-  sec("C. POST /publicacoes — criação, validação, gate");
+  // ================= CRIAÇÃO (W8 subset) ==========  sec("C. POST /publicacoes — criação, validação, gate");
 
   // mestre sem conta diegética publica como autorContaId NULL (DP-9)
   const semConta = await API("POST", "/publicacoes", C.cookieMestre, { tipo: "noticia", titulo: "X", corpo: "y", visibilidade: "campanha" });
@@ -172,8 +169,7 @@ try {
   t("POST sempre rascunho", rascunho.status === 201 && rascunho.json?.publicacao?.status === "rascunho");
   const pubR = rascunho.json?.publicacao?.id;
 
-  // ================= LISTA W4 =================
-  sec("D. GET /publicacoes — feed, visibilidade, keyset");
+  // ================= LISTA W4 ==========  sec("D. GET /publicacoes — feed, visibilidade, keyset");
 
   const feedJ1 = await API("GET", "/publicacoes?tipo=noticia", j1.cookie);
   t("feed j1 200", feedJ1.status === 200);
@@ -198,8 +194,7 @@ try {
   t("pseudônimo expõe pseudoNome", itemB?.autor?.modo === "pseudonimo" && itemB?.autor?.nome === "A.F.");
   t("pseudônimo não vaza handle", !("handle" in (itemB?.autor ?? {})));
 
-  // ================= MATÉRIA W5 =================
-  sec("E. GET /publicacoes/:id — matéria, oráculo, prévia");
+  // ================= MATÉRIA W5 ==========  sec("E. GET /publicacoes/:id — matéria, oráculo, prévia");
 
   const mat = await API("GET", `/publicacoes/${pubA}`, j2.cookie);
   t("matéria publicada → 200", mat.status === 200, JSON.stringify(mat.json).slice(0, 200));
@@ -214,8 +209,7 @@ try {
   t("inexistente → 404", (await API("GET", "/publicacoes/nao-existe", j1.cookie)).status === 404);
   t("mestre lê qualquer publicação", (await API("GET", `/publicacoes/${pubR}`, C.cookieMestre)).status === 200);
 
-  // ================= PATCH =================
-  sec("F. PATCH /publicacoes/:id — versão, idempotência, fronteiras");
+  // ================= PATCH ==========  sec("F. PATCH /publicacoes/:id — versão, idempotência, fronteiras");
 
   const semVersao = await API("PATCH", `/publicacoes/${pubA}`, j1.cookie, { titulo: "Novo" });
   t("sem expectedVersion → 400", semVersao.status === 400);
@@ -237,8 +231,7 @@ try {
   const republicar = await API("PATCH", `/publicacoes/${pubA}`, j1.cookie, { status: "publicado", expectedVersion: 4 });
   t("republicar → publicadoEm preservado (1ª publicação)", republicar.status === 200 && !!republicar.json?.publicacao?.publicadoEm);
 
-  // ================= DENÚNCIAS (DP-3) =================
-  sec("G. POST /publicacoes/:id/denunciar — limiar e remoção");
+  // ================= DENÚNCIAS (DP-3) ==========  sec("G. POST /publicacoes/:id/denunciar — limiar e remoção");
 
   // j1 tem 1 conta; denúncia exige conta ≠ autor → j1 não pode denunciar a própria
   const autoDenuncia = await API("POST", `/publicacoes/${pubB}/denunciar`, j1.cookie, { motivo: "spam" });
@@ -281,8 +274,7 @@ try {
   const linhaG = lerPub(BANCO, pubG);
   t("grave: denuncia_grave=1 + removido", linhaG.denuncia_grave === 1 && linhaG.status === "removido");
 
-  // ================= DP-2 — contestação + resolução admin ==========
-  sec("G2. DP-2 — contestação do autor e decisão do admin da plataforma");
+  // ================= DP-2 — contestação + resolução admin ===  sec("G2. DP-2 — contestação do autor e decisão do admin da plataforma");
 
   // pubD removida por 2 denúncias → autor contesta dentro de 7 dias
   const contD = await API("POST", `/publicacoes/${pubD}/contestar`, j1.cookie, {});
@@ -318,8 +310,7 @@ try {
   t("mestre não acessa fila admin → 403", (await req(BASE, "GET", `/admin/internet-denuncias?campaignId=${campId}`, { cookie: C.cookieMestre })).status === 200); // cookieMestre É admin — prova negativa fica p/ jogador:
   t("jogador não acessa fila admin → 403", (await req(BASE, "GET", `/admin/internet-denuncias?campaignId=${campId}`, { cookie: j1.cookie })).status === 403);
 
-  // ================= MORTE AUTOMÁTICA (DP-8/9) =================
-  sec("H. __morte + notícia de sistema + ressurreição");
+  // ================= MORTE AUTOMÁTICA (DP-8/9) ==========  sec("H. __morte + notícia de sistema + ressurreição");
 
   // HP da charJ1: max=100 (sem atributo) — dano letal via endpoint real
   const hpAntes = await req(BASE, "GET", `/characters/${charJ1}`, { cookie: j1.cookie });
@@ -376,8 +367,7 @@ try {
   t("__morte tem 2 epochs (vigente + revertida)", mortes2.length === 2, JSON.stringify(mortes2.map((m) => !!m.revertidaEm)));
   dbM2.close();
 
-  // ================= IMPORTAÇÃO — __morte re-derivada (v2.6) =========
-  sec("I. Importação — morte re-derivada do __hp saneado");
+  // ================= IMPORTAÇÃO — __morte re-derivada (v2.6) ==  sec("I. Importação — morte re-derivada do __hp saneado");
 
   // exporta a campanha (charJ1 está morto: hp≤0, __morte com 2 epochs)
   const exp = await req(BASE, "GET", `/campaigns/${campId}/exportar`, { cookie: C.cookieMestre });
@@ -968,9 +958,209 @@ try {
     t("H26 sem sessão → 401", rAnon.status === 401, `status=${rAnon.status}`);
   }
 
-  // ================= RESTAURAÇÃO × PERFIS (TG P1) =================
-  sec("O. Restore substituir — perfis preservados, avatar saneado");
-  try {
+  // ================= PATROCÍNIO AUTOMÁTICO ==========  sec("N. Patrocínio — acordo, aceite bilateral, liquidação atômica");
+  {
+    // charJ3 foi arquivado e a membership de j3 removida na seção J
+    // (D6/restore) — o beneficiário precisa ser um personagem vivo com
+    // conta Internet ativa: charJ4 (novo, de j2).
+    const charJ4 = C.novoPersonagem(C.jogadores.j2.membershipId, "Duda Foca", { comp: 1, prof: "medico" });
+    darDispositivo(BANCO, charJ4);
+    const c4 = await API("POST", "/account", j2.cookie, { characterId: charJ4, handle: "duda.foca" });
+    t("N0 conta Internet do beneficiário → 201", c4.status === 201, `status=${c4.status}`);
+    // contas financeiras fictícias: pagador=charJ2 (titular j1 pós-P7),
+    // beneficiário=charJ4 (titular j2). Saldo em centavos.
+    const fin = (charId, cents) => {
+      const db = abrirDb(BANCO); const id = crypto.randomUUID(); const agora = Date.now();
+      db.prepare(`insert into financial_accounts (id,character_id,campaign_id,type,name,currency,balance_cents,data,created_at,updated_at)
+        values (?,?,?,?,?,?,?,?,?,?)`)
+        .run(id, charId, campId, "banco", `Conta ${charId.slice(0, 6)}`, "BRL", cents, "{}", agora, agora);
+      db.close(); return id;
+    };
+    const accPagador = fin(charJ2, 50000);
+    const accBenef = fin(charJ4, 1000);
+    const saldo = (accId) => { const db = abrirDb(BANCO); const r = db.prepare("select balance_cents b from financial_accounts where id=?").get(accId); db.close(); return r?.b; };
+    const txs = () => { const db = abrirDb(BANCO); const r = db.prepare("select kind,amount_cents,request_id from money_transactions where campaign_id=? and request_id like 'patrocinios:%'").all(campId); db.close(); return r; };
+
+    // N1: propor sem titular → 404; beneficiário sem conta Internet → 404
+    const rPropSemTitular = await API("POST", "/patrocinios", j2.cookie, { characterId: charJ2, beneficiarioCharacterId: charJ4, pagadorAccountId: accPagador, amountCents: 5000, condicao: { tipo: "imediato" } });
+    t("N1 propor sem titularidade → 404", rPropSemTitular.status === 404, `status=${rPropSemTitular.status}`);
+    // N2: propor válido (j1 é titular de charJ2)
+    const prop = await API("POST", "/patrocinios", j1.cookie, { characterId: charJ2, beneficiarioCharacterId: charJ4, pagadorAccountId: accPagador, amountCents: 5000, condicao: { tipo: "imediato" }, requestId: "prop-n2-0001" });
+    t("N2 propor → 201 proposto", prop.status === 201 && prop.json?.acordo?.estado === "proposto", `status=${prop.status} body=${JSON.stringify(prop.json).slice(0,200)}`);
+    const acordoId = prop.json?.acordo?.id;
+    // N3: replay requestId → mesmo acordo, sem duplicar
+    const replay = await API("POST", "/patrocinios", j1.cookie, { characterId: charJ2, beneficiarioCharacterId: charJ4, pagadorAccountId: accPagador, amountCents: 5000, condicao: { tipo: "imediato" }, requestId: "prop-n2-0001" });
+    t("N3 replay requestId → 200 mesmo id", replay.status === 200 && replay.json?.acordo?.id === acordoId, `status=${replay.status}`);
+    const nAcordos = (() => { const db = abrirDb(BANCO); const r = db.prepare("select count(*) n from internet_patrocinios where campaign_id=?").get(campId); db.close(); return r?.n; })();
+    t("N3b nenhuma linha duplicada", nAcordos === 1, `linhas=${nAcordos}`);
+    // N4: IDOR — j2 (não-partes) não vê o acordo
+    const rIdor = await API("GET", `/patrocinios/${acordoId}`, j3.cookie);
+    t("N4 IDOR detalhe → 404", rIdor.status === 404, `status=${rIdor.status}`);
+    // N5: auto-aceite pelo pagador → 404 (só beneficiário aceita)
+    const rAutoAceite = await API("POST", `/patrocinios/${acordoId}/aceitar`, j1.cookie, { beneficiarioAccountId: accBenef });
+    t("N5 pagador não aceita → 404", rAutoAceite.status === 404, `status=${rAutoAceite.status}`);
+    // N6: beneficiário aceita com conta própria → liquida imediato
+    const ace = await API("POST", `/patrocinios/${acordoId}/aceitar`, j2.cookie, { beneficiarioAccountId: accBenef });
+    t("N6 aceite beneficiário → 200 liquidado", ace.status === 200 && ace.json?.liquidado === true, `status=${ace.status} body=${JSON.stringify(ace.json).slice(0,120)}`);
+    t("N6b saldo pagador debitado", saldo(accPagador) === 45000, `saldo=${saldo(accPagador)}`);
+    t("N6c saldo beneficiário creditado", saldo(accBenef) === 6000, `saldo=${saldo(accBenef)}`);
+    const pernas = txs();
+    t("N6d duas pernas pix_ficticio idempotentes", pernas.length === 2 && pernas.every((p) => p.kind === "pix_ficticio"), `pernas=${pernas.length}`);
+    // N7: segundo aceite → 409 (estado terminal)
+    const reAce = await API("POST", `/patrocinios/${acordoId}/aceitar`, j2.cookie, { beneficiarioAccountId: accBenef });
+    t("N7 re-aceite → 409", reAce.status === 409, `status=${reAce.status}`);
+    const saldoFinal = saldo(accPagador);
+    t("N7b saldo não duplicou", saldoFinal === 45000, `saldo=${saldoFinal}`);
+
+    // N8: saldo insuficiente → falha_liquidacao sem débito
+    const accPobre = fin(charJ2, 100);
+    const prop2 = await API("POST", "/patrocinios", j1.cookie, { characterId: charJ2, beneficiarioCharacterId: charJ4, pagadorAccountId: accPobre, amountCents: 99999, condicao: { tipo: "imediato" }, requestId: "prop-n8-0001" });
+    const acordo2 = prop2.json?.acordo?.id;
+    const ace2 = await API("POST", `/patrocinios/${acordo2}/aceitar`, j2.cookie, { beneficiarioAccountId: accBenef });
+    t("N8 aceite c/ saldo insuficiente → 200 liquidado=false", ace2.status === 200 && ace2.json?.liquidado === false, `status=${ace2.status}`);
+    const det2 = await API("GET", `/patrocinios/${acordo2}`, j2.cookie);
+    t("N8b estado falha_liquidacao", det2.json?.acordo?.estado === "falha_liquidacao", `estado=${det2.json?.acordo?.estado}`);
+    t("N8c saldo intacto", saldo(accPobre) === 100, `saldo=${saldo(accPobre)}`);
+
+    // N9: data_alvo futuro → aceito não liquida; data passada → lazy liquida na leitura
+    const futuro = new Date(Date.now() + 3600_000).toISOString();
+    const prop3 = await API("POST", "/patrocinios", j1.cookie, { characterId: charJ2, beneficiarioCharacterId: charJ4, pagadorAccountId: accPagador, amountCents: 1000, condicao: { tipo: "data_alvo", em: futuro }, requestId: "prop-n9-0001" });
+    const acordo3 = prop3.json?.acordo?.id;
+    const ace3 = await API("POST", `/patrocinios/${acordo3}/aceitar`, j2.cookie, { beneficiarioAccountId: accBenef });
+    t("N9 aceite data_alvo futuro → não liquida", ace3.status === 200 && ace3.json?.liquidado === false, `status=${ace3.status}`);
+    t("N9b saldo inalterado", saldo(accPagador) === 45000, `saldo=${saldo(accPagador)}`);
+    // força a data para o passado e lê → lazy settlement
+    const dbF = abrirDb(BANCO);
+    dbF.prepare("update internet_patrocinios set condicao_json=? where id=?")
+      .run(JSON.stringify({ tipo: "data_alvo", em: new Date(Date.now() - 1000).toISOString() }), acordo3);
+    dbF.close();
+    const det3 = await API("GET", `/patrocinios/${acordo3}`, j2.cookie);
+    t("N9c lazy settlement após data → liquidado", det3.json?.acordo?.estado === "liquidado", `estado=${det3.json?.acordo?.estado}`);
+    t("N9d débito aplicado", saldo(accPagador) === 44000, `saldo=${saldo(accPagador)}`);
+
+    // N10: cancelar — proposta e aceite
+    const prop4 = await API("POST", "/patrocinios", j1.cookie, { characterId: charJ2, beneficiarioCharacterId: charJ4, pagadorAccountId: accPagador, amountCents: 700, condicao: { tipo: "imediato" }, requestId: "prop-n10-0001" });
+    const acordo4 = prop4.json?.acordo?.id;
+    const canc = await API("POST", `/patrocinios/${acordo4}/cancelar`, j2.cookie);
+    t("N10 beneficiário cancela proposta → 200", canc.status === 200, `status=${canc.status}`);
+    const ace4 = await API("POST", `/patrocinios/${acordo4}/aceitar`, j2.cookie, { beneficiarioAccountId: accBenef });
+    t("N10b aceite após cancelar → 409", ace4.status === 409, `status=${ace4.status}`);
+
+    // N11: condicaoTipo não suportada → 400 (metrica reservada)
+    const prop5 = await API("POST", "/patrocinios", j1.cookie, { characterId: charJ2, beneficiarioCharacterId: charJ4, pagadorAccountId: accPagador, amountCents: 100, condicao: { tipo: "metrica_publicacao" }, requestId: "prop-n11-0001" });
+    t("N11 condição não-verificável → 400", prop5.status === 400, `status=${prop5.status}`);
+    // N12: valor zero/negativo/float → 400
+    const prop6 = await API("POST", "/patrocinios", j1.cookie, { characterId: charJ2, beneficiarioCharacterId: charJ4, pagadorAccountId: accPagador, amountCents: 0, condicao: { tipo: "imediato" } });
+    t("N12 amountCents=0 → 400", prop6.status === 400, `status=${prop6.status}`);
+    // N13: conta de outro personagem → 404
+    const prop7 = await API("POST", "/patrocinios", j1.cookie, { characterId: charJ2, beneficiarioCharacterId: charJ4, pagadorAccountId: accBenef, amountCents: 100, condicao: { tipo: "imediato" } });
+    t("N13 conta alheia como origem → 404", prop7.status === 404, `status=${prop7.status}`);
+    // N14: beneficiário sem conta Internet → 404 (charJ1 tem conta? sim — usa char inexistente)
+    const prop8 = await API("POST", "/patrocinios", j1.cookie, { characterId: charJ2, beneficiarioCharacterId: crypto.randomUUID(), pagadorAccountId: accPagador, amountCents: 100, condicao: { tipo: "imediato" } });
+    t("N14 beneficiário inexistente → 404", prop8.status === 404, `status=${prop8.status}`);
+    // N15: trilha de auditoria — transições registradas
+    const aud = (() => { const db = abrirDb(BANCO); const r = db.prepare("select action from audit_logs where campaign_id=? and action like 'patrocinio.%' order by created_at").all(campId); db.close(); return r.map((x) => x.action); })();
+    t("N15 auditoria propor/aceitar/liquidar", aud.includes("patrocinio.propor") && aud.includes("patrocinio.aceitar") && aud.includes("patrocinio.liquidar"), JSON.stringify(aud));
+
+    // N16 (Dono #401 / TG 7233180172): expiresAt só limita a
+    // PROPOSTA. Aceite bilateral com expiresAt vencido + data_alvo
+    // atingida → liquida mesmo assim; e nunca exibe "expirado".
+    const propX7 = await API("POST", "/patrocinios", j1.cookie, {
+      characterId: charJ2, beneficiarioCharacterId: charJ4, pagadorAccountId: accPagador,
+      amountCents: 300, condicao: { tipo: "data_alvo", em: new Date(Date.now() + 3600_000).toISOString() },
+      expiresAt: new Date(Date.now() + 1800_000).toISOString(), requestId: "prop-n16-0001",
+    });
+    const acordoX7 = propX7.json?.acordo?.id;
+    t("N16a proposta com expiresAt → 201", propX7.status === 201, `status=${propX7.status}`);
+    const aceX7 = await API("POST", `/patrocinios/${acordoX7}/aceitar`, j2.cookie, { beneficiarioAccountId: accBenef });
+    t("N16b aceite dentro da validade → 200", aceX7.status === 200, `status=${aceX7.status}`);
+    // vence expiresAt E atinge data_alvo via SQL (relógio não espera)
+    const dbXa = abrirDb(BANCO);
+    dbXa.prepare("update internet_patrocinios set expires_at=?, condicao_json=? where id=?")
+      .run(new Date(Date.now() - 1000).toISOString(), JSON.stringify({ tipo: "data_alvo", em: new Date(Date.now() - 500).toISOString() }), acordoX7);
+    dbXa.close();
+    const detX7 = await API("GET", `/patrocinios/${acordoX7}`, j2.cookie);
+    t("N16c aceito+expiresAt vencido NÃO vira 'expirado' e liquida", detX7.json?.acordo?.estado === "liquidado", `estado=${detX7.json?.acordo?.estado} real=${detX7.json?.acordo?.estadoReal}`);
+    t("N16d débito aplicado", saldo(accPagador) === 43700, `saldo=${saldo(accPagador)}`);
+
+    // N16e: proposta NÃO aceita com expiresAt vencido → aceite 409
+    // (expiresAt continua limitando a janela de aceite — M38).
+    const propX8 = await API("POST", "/patrocinios", j1.cookie, {
+      characterId: charJ2, beneficiarioCharacterId: charJ4, pagadorAccountId: accPagador,
+      amountCents: 100, condicao: { tipo: "imediato" },
+      expiresAt: new Date(Date.now() + 60000).toISOString(), requestId: "prop-n16e-001",
+    });
+    const acordoX8 = propX8.json?.acordo?.id;
+    const dbXb = abrirDb(BANCO);
+    dbXb.prepare("update internet_patrocinios set expires_at=? where id=?").run(new Date(Date.now() - 1000).toISOString(), acordoX8);
+    dbXb.close();
+    const aceX8 = await API("POST", `/patrocinios/${acordoX8}/aceitar`, j2.cookie, { beneficiarioAccountId: accBenef });
+    t("N16e proposta expirada → aceite 409", aceX8.status === 409, `status=${aceX8.status}`);
+    const detX8 = await API("GET", `/patrocinios/${acordoX8}`, j2.cookie);
+    t("N16f proposta expirada serializa 'expirado'", detX8.json?.acordo?.estado === "expirado", `estado=${detX8.json?.acordo?.estado}`);
+
+    // N17 (Dono #401): beneficiário ARQUIVADO não pode ser alvo —
+    // sem proposta zumbi. (Pagador/aceitante já bloqueados por
+    // contaAutorizadaPara — não duplicar.)
+    const charJ11x = C.novoPersonagem(C.jogadores.j2.membershipId, "Arquivado Foca", { comp: 1, prof: "medico" });
+    darDispositivo(BANCO, charJ11x);
+    const c11 = await API("POST", "/account", j2.cookie, { characterId: charJ11x, handle: "arq.foca" });
+    t("N17a conta do arquivado → 201", c11.status === 201, `status=${c11.status}`);
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update characters set status='arquivado' where id=?").run(charJ11x);
+      db.close();
+    }
+    const propX9 = await API("POST", "/patrocinios", j1.cookie, { characterId: charJ2, beneficiarioCharacterId: charJ11x, pagadorAccountId: accPagador, amountCents: 100, condicao: { tipo: "imediato" }, requestId: "prop-n17-0001" });
+    t("N17 beneficiário arquivado → 404", propX9.status === 404, `status=${propX9.status}`);
+    // Dono #401: arquivado indistinguível de inexistente — mesma
+    // resposta, mesmo corpo.
+    const propInex = await API("POST", "/patrocinios", j1.cookie, { characterId: charJ2, beneficiarioCharacterId: crypto.randomUUID(), pagadorAccountId: accPagador, amountCents: 100, condicao: { tipo: "imediato" }, requestId: "prop-n17-0002" });
+    t("N17b arquivado ≡ inexistente (status+corpo)", propInex.status === propX9.status && JSON.stringify(propInex.json) === JSON.stringify(propX9.json),
+      `${propX9.status}/${JSON.stringify(propX9.json)} vs ${propInex.status}/${JSON.stringify(propInex.json)}`);
+
+    // N18 (TG #401 TOCTOU-1): titularidade relida DENTRO da tx das
+    // três mutações. A janela exata (entre a checagem externa e o
+    // commit) não é reproduzível de forma determinística neste
+    // harness — better-sqlite3 executa a tx de forma síncrona e o
+    // servidor é processo separado; o que é determinístico é o
+    // ESTADO FINAL: quem perdeu a titularidade não propõe, não
+    // aceita e não cancela — 404 uniforme nas três.
+    const propT = await API("POST", "/patrocinios", j1.cookie, {
+      characterId: charJ2, beneficiarioCharacterId: charJ4, pagadorAccountId: accPagador,
+      amountCents: 100, condicao: { tipo: "imediato" }, requestId: "prop-n18-0001",
+    });
+    const acordoT = propT.json?.acordo?.id;
+    t("N18a proposta p/ teste TOCTOU → 201", propT.status === 201 && !!acordoT, `status=${propT.status}`);
+    // "transferência" instantânea: charJ4 passa a pertencer a j1 —
+    // j2 deixa de ser titular da conta Internet dela.
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update characters set membership_id=? where id=?").run(C.jogadores.j1.membershipId, charJ4);
+      db.close();
+    }
+    const aceT = await API("POST", `/patrocinios/${acordoT}/aceitar`, j2.cookie, { beneficiarioAccountId: accBenef });
+    t("N18b ex-titular não aceita → 404", aceT.status === 404, `status=${aceT.status}`);
+    const cancT = await API("POST", `/patrocinios/${acordoT}/cancelar`, j2.cookie);
+    t("N18c ex-parte não cancela → 404", cancT.status === 404, `status=${cancT.status}`);
+    const propT2 = await API("POST", "/patrocinios", j2.cookie, {
+      characterId: charJ2, beneficiarioCharacterId: charJ4, pagadorAccountId: accPagador,
+      amountCents: 100, condicao: { tipo: "imediato" }, requestId: "prop-n18-0002",
+    });
+    t("N18d ex-titular não propõe → 404", propT2.status === 404, `status=${propT2.status}`);
+    // novo titular (j1) recupera o controle: cancelar como parte
+    const cancT1 = await API("POST", `/patrocinios/${acordoT}/cancelar`, j1.cookie);
+    t("N18e titular atual cancela → 200", cancT1.status === 200, `status=${cancT1.status}`);
+    // devolve charJ4 a j2 — seções seguintes não dependem, mas o
+    // estado fica consistente com o restante da suíte.
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update characters set membership_id=? where id=?").run(C.jogadores.j2.membershipId, charJ4);
+      db.close();
+    }
+  }
+  // ================= RESTAURAÇÃO × PERFIS (TG P1) ==========  sec("O. Restore substituir — perfis preservados, avatar saneado");
+  {
     // perfil de charJ2 já existe (seção M, titular j1 pós-P7). Cria um
     // arquivo real e o referencia como avatar; depois o pacote de
     // restore NÃO carrega o arquivo → avatar_file_id deve virar NULL
@@ -991,6 +1181,10 @@ try {
     if (Array.isArray(expO.json?.estado?.files)) {
       expO.json.estado.files = expO.json.estado.files.filter((f) => f.id !== arquivoAvatar);
     }
+    // O5: acordos de patrocínio (seção N) preservados pelo restore —
+    // snapshot ANTES do importar, compara DEPOIS (TG P1 #401).
+    const patAntes = (() => { const db = abrirDb(BANCO); const r = db.prepare("select estado,count(*) n from internet_patrocinios where campaign_id=? group by estado").all(campId); db.close(); return r; })();
+    const pernasAntes = (() => { const db = abrirDb(BANCO); const r = db.prepare("select count(*) n from money_transactions where campaign_id=? and request_id like 'patrocinios:%'").get(campId); db.close(); return r?.n; })();
     const impO = await req(BASE, "POST", "/campaigns/importar", {
       cookie: C.cookieMestre,
       body: { pacote: expO.json, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
@@ -1006,7 +1200,15 @@ try {
     db1.close();
     const rPerfilO = await req(BASE, "GET", `/campaigns/${campId}/internet/perfis/beto.foca`, { cookie: j1.cookie });
     t("O4 perfil público segue legível", rPerfilO.status === 200, `status=${rPerfilO.status}`);
-  } catch (e) { console.log("  FALHOU O exceção:", String(e).slice(0, 300)); fail++; }
+    // O5: acordos de patrocínio (seção N) preservados pelo restore —
+    // estados e pernas financeiras intactos (TG P1 #401).
+    const patDepois = (() => { const db = abrirDb(BANCO); const r = db.prepare("select estado,count(*) n from internet_patrocinios where campaign_id=? group by estado").all(campId); db.close(); return r; })();
+    t("O5 patrocínios preservados no restore",
+      JSON.stringify(patDepois.map((r) => [r.estado, r.n]).sort()) === JSON.stringify(patAntes.map((r) => [r.estado, r.n]).sort()),
+      JSON.stringify({ antes: patAntes, depois: patDepois }));
+    const pernasO = (() => { const db = abrirDb(BANCO); const r = db.prepare("select count(*) n from money_transactions where campaign_id=? and request_id like 'patrocinios:%'").get(campId); db.close(); return r?.n; })();
+    t("O6 pernas financeiras dos acordos preservadas", pernasO === pernasAntes, `pernas=${pernasO} antes=${pernasAntes}`);
+  }
 
   // ================= D6 HARDENING (P1 residual + P2s) ==========
   sec("L2. D6 — linhagem dedupe, denuncianteRef, rascunho, contatos");

@@ -1046,6 +1046,45 @@ export const internetPerfis = sqliteTable("internet_perfis", {
   index("internet_perfis_campaign_idx").on(t.campaignId),
 ]);
 
+// Acordo de patrocínio (veredito Dono 7232130363 — modo AUTOMÁTICO):
+// partes, campanha, valor em centavos, condição de liquidação
+// verificável server-side e estado. NÃO é transação financeira — a
+// liquidação gera as pernas em money_transactions na mesma tx do CAS
+// de estado (atomicidade + idempotência por requestId por perna).
+// Estados: proposto|aceito|cancelado|liquidado|falha_liquidacao;
+// `expirado` é derivado na leitura (now > expiresAt), mesmo padrão D11.
+export const internetPatrocinios = sqliteTable("internet_patrocinios", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  proponenteCharacterId: text("proponente_character_id").notNull().references(() => characters.id),
+  pagadorCharacterId: text("pagador_character_id").notNull().references(() => characters.id),
+  beneficiarioCharacterId: text("beneficiario_character_id").notNull().references(() => characters.id),
+  pagadorAccountId: text("pagador_account_id").notNull().references(() => financialAccounts.id),
+  beneficiarioAccountId: text("beneficiario_account_id").references(() => financialAccounts.id), // fixada no aceite
+  amountCents: integer("amount_cents").notNull(), // centavos inteiros > 0
+  currency: text("currency").notNull().default("BRL"),
+  condicaoTipo: text("condicao_tipo").notNull(), // imediato|data_alvo|metrica_publicacao
+  condicaoJson: text("condicao_json", { mode: "json" }).notNull().default({}),
+  estado: text("estado").notNull().default("proposto"),
+  propostaRequestId: text("proposta_request_id"), // idempotência da proposta
+  liquidacaoRequestId: text("liquidacao_request_id"), // requestId base das pernas
+  propostoEm: integer("proposto_em", { mode: "timestamp_ms" }).notNull(),
+  aceitoEm: integer("aceito_em", { mode: "timestamp_ms" }),
+  aceitoPor: text("aceito_por").references(() => users.id),
+  canceladoEm: integer("cancelado_em", { mode: "timestamp_ms" }),
+  canceladoPor: text("cancelado_por").references(() => users.id),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+  liquidadoEm: integer("liquidado_em", { mode: "timestamp_ms" }),
+  falhaMotivo: text("falha_motivo"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  index("internet_patrocinios_campaign_idx").on(t.campaignId, t.estado),
+  index("internet_patrocinios_pagador_idx").on(t.pagadorCharacterId),
+  index("internet_patrocinios_beneficiario_idx").on(t.beneficiarioCharacterId),
+  uniqueIndex("internet_patrocinios_prop_req_idx").on(t.campaignId, t.propostaRequestId),
+]);
+
 // Transferência de personagem (P7, contrato #349): convite do titular
 // atual + aceite explícito do novo titular. No máximo 1 `pendente` por
 // personagem (índice parcial). Conta diegética e histórico acompanham

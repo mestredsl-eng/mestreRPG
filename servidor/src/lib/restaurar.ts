@@ -10,7 +10,7 @@ import {
   users, internetPublicacoes,
   internetAccounts, internetContacts, internetConversations,
   internetDenuncias, internetMessages, internetPages,
-  internetParticipantes, internetPerfis, internetSites,
+  internetParticipantes, internetPatrocinios, internetPerfis, internetSites,
 } from "../db/schema.js";
 import { avaliarMorte, CHAVE_MORTE } from "./morte.js";
 import { lerHp } from "./vida.js";
@@ -154,6 +154,7 @@ type PaginaInternet = typeof internetPages.$inferSelect;
 type PublicacaoInternet = typeof internetPublicacoes.$inferSelect;
 type DenunciaInternet = typeof internetDenuncias.$inferSelect;
 type PerfilInternet = typeof internetPerfis.$inferSelect;
+type PatrocinioInternet = typeof internetPatrocinios.$inferSelect;
 type PersonagemRef = { id: string; name: string; membershipId: string; isNpc: boolean | null; createdAt: Date | null; updatedAt: Date | null };
 type MembershipRow = typeof memberships.$inferSelect;
 
@@ -168,6 +169,7 @@ interface DominioInternetPreservado {
   publicacoes: PublicacaoInternet[];
   denuncias: DenunciaInternet[];
   perfis: PerfilInternet[];
+  patrocinios: PatrocinioInternet[];
   personagens: PersonagemRef[];
   memberships: MembershipRow[];
 }
@@ -190,6 +192,7 @@ function capturarDominioInternet(tx: Tx, campaignId: string): DominioInternetPre
     publicacoes: tx.select().from(internetPublicacoes).where(eq(internetPublicacoes.campaignId, campaignId)).all(),
     denuncias: tx.select().from(internetDenuncias).where(eq(internetDenuncias.campaignId, campaignId)).all(),
     perfis: tx.select().from(internetPerfis).where(eq(internetPerfis.campaignId, campaignId)).all(),
+    patrocinios: tx.select().from(internetPatrocinios).where(eq(internetPatrocinios.campaignId, campaignId)).all(),
     personagens: tx.select({
       id: characters.id, name: characters.name, membershipId: characters.membershipId,
       isNpc: characters.isNpc, createdAt: characters.createdAt, updatedAt: characters.updatedAt,
@@ -272,6 +275,12 @@ function validarIntegridadeDominioInternet(d: DominioInternetPreservado, campaig
     // 7232390928 crit. 3-4) e avatar cross-campanha vira NULL — nenhum
     // descarte silencioso (contagem no log da restauração).
   }
+  for (const a of d.patrocinios) {
+    if (a.campaignId !== campaignId) falha("internet_patrocinios.campaign_id", a.campaignId);
+    // partes/contas NÃO abortam aqui: acordo com parte ou conta
+    // financeira ausente é descartado explicitamente na recriação
+    // (TG 7232463932 P1) — log de contagem, nunca silencioso.
+  }
 }
 
 /** Recria o domínio Internet preservado, em ordem FK. Personagens
@@ -285,7 +294,7 @@ function validarIntegridadeDominioInternet(d: DominioInternetPreservado, campaig
 function restaurarDominioInternet(tx: Tx, campaignId: string, d: DominioInternetPreservado) {
   const vazio = !d.contas.length && !d.contatos.length && !d.conversas.length &&
     !d.mensagens.length && !d.sites.length && !d.paginas.length &&
-    !d.publicacoes.length && !d.denuncias.length && !d.perfis.length;
+    !d.publicacoes.length && !d.denuncias.length && !d.perfis.length && !d.patrocinios.length;
   if (vazio) return;
 
   const charsPresentes = new Set(
@@ -368,6 +377,32 @@ function restaurarDominioInternet(tx: Tx, campaignId: string, d: DominioInternet
       console.warn(`restore: ${descartados} perfil(is) Internet descartados — personagem ausente no estado restaurado (campanha ${campaignId})`);
     }
     inserir(tx, internetPerfis, perfisOk);
+  }
+
+  // Patrocínios (veredito Dono 7232130363): acordo sem qualquer parte
+  // ou conta financeira restaurada não pode existir (FK no action
+  // quebraria o restore inteiro — TG 7232463932 P1). Descarte
+  // explícito com log; contas/characters ausentes nunca são
+  // re-ancoradas aqui — o acordo morre com a parte.
+  if (d.patrocinios.length) {
+    const contaIds = new Set(
+      tx.select({ id: financialAccounts.id }).from(financialAccounts)
+        .where(eq(financialAccounts.campaignId, campaignId)).all().map((r) => r.id),
+    );
+    const acordosOk: PatrocinioInternet[] = [];
+    let descartados = 0;
+    for (const a of d.patrocinios) {
+      const partesOk = [a.proponenteCharacterId, a.pagadorCharacterId, a.beneficiarioCharacterId]
+        .every((id) => charsPresentes.has(id));
+      const contasOk = contaIds.has(a.pagadorAccountId)
+        && (!a.beneficiarioAccountId || contaIds.has(a.beneficiarioAccountId));
+      if (!partesOk || !contasOk) { descartados++; continue; }
+      acordosOk.push(a);
+    }
+    if (descartados) {
+      console.warn(`restore: ${descartados} acordo(s) de patrocínio descartados — parte ou conta ausente no estado restaurado (campanha ${campaignId})`);
+    }
+    inserir(tx, internetPatrocinios, acordosOk);
   }
 }
 
@@ -549,6 +584,9 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
     if (sessIds.length) limpar(turns, inArray(turns.sessionId, sessIds));
     limpar(sessions, eq(sessions.campaignId, campaignId));
     limpar(moneyTransactions, eq(moneyTransactions.campaignId, campaignId));
+    // patrocínios referenciam financial_accounts/characters com FK
+    // NO ACTION — precisam sair antes das contas (e dos personagens).
+    limpar(internetPatrocinios, eq(internetPatrocinios.campaignId, campaignId));
     limpar(financialAccounts, eq(financialAccounts.campaignId, campaignId));
     // lojas: filhas primeiro; shops só depois das contas/transações que a referenciam
     limpar(shopOrders, eq(shopOrders.campaignId, campaignId));

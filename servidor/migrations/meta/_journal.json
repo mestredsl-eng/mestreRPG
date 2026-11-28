@@ -337,6 +337,13 @@
       "when": 1795831430814,
       "tag": "0047_w910_perfis",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1795832627280,
+      "tag": "0048_patrocinio",
+      "breakpoints": true
     }
   ]
 }
