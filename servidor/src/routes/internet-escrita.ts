@@ -1337,6 +1337,14 @@ internetEscritaRouter.post("/publicacoes/:id/contatar", requirePapel("mestre", "
   }
   const auth = await contaAutorizadaPara(origem.id, req.usuario!.id);
   if (!auth) { erroHttp(res, 403, "Conta não autorizada"); return; }
+  // DP-2/visibilidade: só se contata o que se pode ler — 'contatos'
+  // exige aresta aceita vigente com o autor, sem bloqueio P3 (mesmo
+  // gate do /denunciar; sem ele haveria oráculo de existência).
+  if (pub.visibilidade === "contatos") {
+    const aceito = await contatoAceitoEntre(db, cid, origem.id, destino.id);
+    const bloqueado = aceito ? await contatoBloqueadoEntre(db, cid, origem.id, destino.id) : false;
+    if (!aceito || bloqueado) { erroHttp(res, 404, "Publicação não encontrada"); return; }
+  }
   if (origem.id === destino.id) { erroHttp(res, 400, "Não é possível contatar a si mesmo"); return; }
   if (await contatoBloqueadoEntre(db, cid, origem.id, destino.id)) {
     erroHttp(res, 403, "Contato bloqueado"); return;

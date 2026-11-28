@@ -691,6 +691,48 @@ try {
     const rMsgParalela = await API("POST", `/publicacoes/${idAnK}/mensagem`, j2.cookie, { texto: "oi" });
     t("K11 sem endpoint de chat paralelo", rMsgParalela.status === 404, `status=${rMsgParalela.status}`);
   }
+  {
+    // INTERMEDIÁRIO #398: /contatar deve respeitar visibilidade='contatos'
+    // (mesmo gate do /denunciar) — sem aresta aceita → 404, sem oráculo.
+    const rCt = await API("POST", "/publicacoes", j1.cookie, { tipo: "anuncio", titulo: "ANUNC_K_CONT", corpo: "só contatos", visibilidade: "contatos" });
+    t("K12 anuncio visibilidade=contatos criado", rCt.status === 201, `status=${rCt.status}`);
+    const idCtK = rCt.json?.publicacao?.id;
+    if (idCtK) {
+      await API("PATCH", `/publicacoes/${idCtK}`, j1.cookie, { status: "publicado", expectedVersion: rCt.json?.publicacao?.version ?? 1 });
+      // j2 ganha 2ª conta ativa sem arestas (a de j3 está inativa
+      // pós-restore J4) — seed SQL no padrão das fixtures da suíte
+      const charJ2b = crypto.randomUUID(), contaJ2b = crypto.randomUUID();
+      {
+        const db = abrirDb(BANCO); const agora = Date.now();
+        // clona data/overrides do charJ2 p/ passar o gate de elegibilidade
+        const j2char = db.prepare("select * from characters where campaign_id=? and membership_id=? limit 1")
+          .get(campId, C.jogadores.j2.membershipId);
+        db.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,is_npc,template_version_id,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
+          .run(charJ2b, campId, C.jogadores.j2.membershipId, "Bia Sem Aresta", j2char?.data ?? "{}", j2char?.overrides ?? "{}", "aprovada", 0, j2char?.template_version_id ?? null, agora, agora);
+        // patrimônio do gate (inventário+equipamento) — sem isso o
+        // personagem clonado não tem o dispositivo físico reconhecido
+        for (const t of ["inventory_entries", "equipment_entries"]) {
+          const cols = db.prepare(`select * from ${t} where character_id=?`).all(j2char?.id);
+          for (const e of cols) {
+            const { id: _id, character_id: _cid, ...rest } = e;
+            const chaves = Object.keys(rest);
+            db.prepare(`insert into ${t} (id,character_id,${chaves.join(",")}) values (?,?${chaves.map(() => ",?").join("")})`)
+              .run(crypto.randomUUID(), charJ2b, ...chaves.map((k) => rest[k]));
+          }
+        }
+        db.prepare("insert into internet_accounts (id,campaign_id,character_id,handle,display_name,status,mostrar_presenca,mostrar_digitando,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+          .run(contaJ2b, campId, charJ2b, "bia.semaresta", null, "ativa", 0, 0, agora, agora);
+        db.close();
+      }
+      // sem aresta aceita com j1 → 404 (antes: 201/200 = oráculo)
+      const rCtJ3 = await API("POST", `/publicacoes/${idCtK}/contatar`, j2.cookie, { origemContaId: contaJ2b });
+      t("K12b contatos sem aresta → 404 uniforme", rCtJ3.status === 404, `status=${rCtJ3.status}`);
+      // j2 tem aresta aceita com j1 → caminho normal (origem explícita:
+      // j2 agora tem 2 contas — a seeded sem arestas + a original)
+      const rCtJ2 = await API("POST", `/publicacoes/${idCtK}/contatar`, j2.cookie, { origemContaId: contaJ2 });
+      t("K12c contatos com aresta aceita → 200/201", rCtJ2.status === 200 || rCtJ2.status === 201, `status=${rCtJ2.status}`);
+    }
+  }
 } finally {
   if (proc) await encerrarServidor(proc);
   console.log(`\n${pass} ok, ${fail} falhas`);
