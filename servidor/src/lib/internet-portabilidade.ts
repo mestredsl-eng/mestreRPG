@@ -315,10 +315,12 @@ export async function importarDominioPublico(
         .from(internetPages).where(eq(internetPages.id, p.id)).limit(1).all();
       if (global?.campaignId === campaignId) { rel.jaExistentes!++; continue; }
       const localId = global ? crypto.randomUUID() : p.id;
-      const siteIdLocal = siteMap.get(p.siteId) ?? p.siteId;
-      const [siteExiste] = tx.select({ id: internetSites.id }).from(internetSites)
-        .where(and(eq(internetSites.campaignId, campaignId), eq(internetSites.id, siteIdLocal))).limit(1).all();
-      if (!siteExiste) {
+      // P1 (INTERMEDIÁRIO 7232671701): siteId resolve SOMENTE pelo
+      // mapa do que esta tx inseriu/dedupou — um UUID de site local
+      // pré-existente fora do pacote NÃO é âncora válida (página
+      // importada não pode pendurar em site que não veio junto).
+      const siteIdLocal = siteMap.get(p.siteId);
+      if (!siteIdLocal) {
         rel.rejeitadas!.push({ tipo: "pagina", id: p.id, motivo: "site_orfao" });
         continue;
       }
@@ -379,10 +381,11 @@ export async function importarDominioPublico(
         .from(internetDenuncias).where(eq(internetDenuncias.id, n.id)).limit(1).all();
       if (global?.campaignId === campaignId) { rel.jaExistentes!++; continue; }
       const localId = global ? crypto.randomUUID() : n.id;
-      const pubIdLocal = pubMap.get(n.publicacaoId) ?? n.publicacaoId;
-      const [pubOk] = tx.select({ id: internetPublicacoes.id }).from(internetPublicacoes)
-        .where(and(eq(internetPublicacoes.campaignId, campaignId), eq(internetPublicacoes.id, pubIdLocal))).limit(1).all();
-      if (!pubOk) {
+      // P1 (INTERMEDIÁRIO 7232671701): publicacaoId resolve SOMENTE
+      // pelo mapa — denúncia forjada contra publicação local
+      // pré-existente (resolvida_admin, contadores) é rejeitada.
+      const pubIdLocal = pubMap.get(n.publicacaoId);
+      if (!pubIdLocal) {
         rel.rejeitadas!.push({ tipo: "denuncia", id: n.id, motivo: "publicacao_orfa" });
         continue;
       }

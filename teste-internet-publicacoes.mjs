@@ -774,6 +774,83 @@ try {
       ruim.estado.publicacoes[0].campoSecreto = "x";
       const rRuim = await req(BASE, "POST", `/campaigns/${campBId}/internet/importar`, { cookie: C.cookieMestre, body: { pacote: ruim, confirmacao: "IMPORTAR" } });
       t("L14 campo desconhecido → 4xx", rRuim.status === 400, `status=${rRuim.status}`);
+
+      // L15 (P1-1 INTERMEDIÁRIO 7232671701): página NÃO pode pendurar
+      // em site local pré-existente fora do pacote — siteId resolve
+      // só pelo mapa do que a tx inseriu/dedupou.
+      const forjado = JSON.parse(JSON.stringify(pacote));
+      const paginaOrig = forjado.estado.paginas[0];
+      const paginaForjada = { ...paginaOrig, id: crypto.randomUUID() };
+      forjado.estado.sites = [];
+      forjado.estado.paginas = [paginaForjada];
+      forjado.estado.publicacoes = [];
+      forjado.estado.denuncias = [];
+      const rForjado = await req(BASE, "POST", `/campaigns/${campBId}/internet/importar`, { cookie: C.cookieMestre, body: { pacote: forjado, confirmacao: "IMPORTAR" } });
+      t("L15 import forjado site-orfão → 200", rForjado.status === 200, `status=${rForjado.status}`);
+      const pgForjada = (() => { const db = abrirDb(BANCO); const r = db.prepare("select id from internet_pages where id=?").get(paginaForjada.id); db.close(); return r; })();
+      t("L15b página órfã NÃO inserida", !pgForjada, JSON.stringify(pgForjada));
+
+      // L16 (P1-1b): denúncia forjada contra publicação local
+      // pré-existente (fora do pacote) → rejeitada, não pollue
+      // contadores rederivados.
+      const pubLocalB = (() => { const db = abrirDb(BANCO); const r = db.prepare("select id from internet_publicacoes where campaign_id=? limit 1").get(campBId); db.close(); return r; })();
+      if (pubLocalB) {
+        const denForjada = {
+          id: crypto.randomUUID(), publicacaoId: pubLocalB.id,
+          denuncianteRef: crypto.randomUUID(), motivo: "spam", denunciaGrave: 0,
+          status: "resolvida_admin", resolucao: "forjada", prazoContestacaoEm: null,
+          criadoEm: new Date().toISOString(), atualizadoEm: new Date().toISOString(),
+        };
+        const forjado2 = JSON.parse(JSON.stringify(pacote));
+        forjado2.estado.sites = []; forjado2.estado.paginas = [];
+        forjado2.estado.publicacoes = []; forjado2.estado.denuncias = [denForjada];
+        const rForjado2 = await req(BASE, "POST", `/campaigns/${campBId}/internet/importar`, { cookie: C.cookieMestre, body: { pacote: forjado2, confirmacao: "IMPORTAR" } });
+        t("L16 import denúncia órfã → 200", rForjado2.status === 200, `status=${rForjado2.status}`);
+        const denNoBanco = (() => { const db = abrirDb(BANCO); const r = db.prepare("select id from internet_denuncias where id=?").get(denForjada.id); db.close(); return r; })();
+        t("L16b denúncia forjada NÃO inserida", !denNoBanco, JSON.stringify(denNoBanco));
+      }
+
+      // L17 (P1-2): conteúdo importado (autorContaId NULL) É
+      // denunciável por conta local elegível — sem via de moderação
+      // era o bloqueio. j1 ganha personagem+conta em campB via SQL.
+      {
+        const dbM = abrirDb(BANCO); const agoraM = Date.now();
+        // campB não tem ruleset — semeia o mesmo gate da fixture (o
+        // personagem clonado resolve escolhas contra estas definições)
+        const rsB = crypto.randomUUID();
+        dbM.prepare("insert into rule_sets (id,campaign_id,name,version,is_active,config,created_at,updated_at) values (?,?,?,?,1,?,?,?)")
+          .run(rsB, campBId, "Regras B", 1, "{}", agoraM, agoraM);
+        const insDef = dbM.prepare("insert or ignore into rule_definitions (id,rule_set_id,kind,key,name,category,parent_key,definition,created_at,updated_at) values (?,?,?,?,?,?,?, '{}',?,?)");
+        for (const [kind, key, name] of [
+          ["pericia", "computador", "Computador"],
+          ["conhecimento", "tecnologia", "Tecnologia"],
+          ["item", "notebook", "Notebook"],
+        ]) insDef.run(crypto.randomUUID(), rsB, kind, key, name, null, null, agoraM, agoraM);
+        const memB = crypto.randomUUID(), charB = crypto.randomUUID(), contaB = crypto.randomUUID();
+        dbM.prepare("insert into memberships (id,campaign_id,user_id,role,status,created_at,updated_at) values (?,?,?,?,?,?,?)")
+          .run(memB, campBId, C.jogadores.j1.id, "jogador", "ativo", agoraM, agoraM);
+        const j2char = dbM.prepare("select * from characters where campaign_id=? and name='Beto Foca' limit 1").get(campId);
+        dbM.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,is_npc,template_version_id,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
+          .run(charB, campBId, memB, "Nina B", j2char?.data ?? "{}", j2char?.overrides ?? "{}", "aprovada", 0, j2char?.template_version_id ?? null, agoraM, agoraM);
+        for (const t2 of ["inventory_entries", "equipment_entries"]) {
+          const cols = dbM.prepare(`select * from ${t2} where character_id=?`).all(j2char?.id);
+          for (const e of cols) {
+            const { id: _i, character_id: _c, ...rest } = e;
+            const chaves = Object.keys(rest);
+            dbM.prepare(`insert into ${t2} (id,character_id,${chaves.join(",")}) values (?,?${chaves.map(() => ",?").join("")})`)
+              .run(crypto.randomUUID(), charB, ...chaves.map((k) => rest[k]));
+          }
+        }
+        dbM.prepare("insert into internet_accounts (id,campaign_id,character_id,handle,display_name,status,mostrar_presenca,mostrar_digitando,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+          .run(contaB, campBId, charB, "nina.b", null, "ativa", 0, 0, agoraM, agoraM);
+        dbM.close();
+        if (pubLocalB) {
+          const rDen = await req(BASE, "POST", `/campaigns/${campBId}/internet/publicacoes/${pubLocalB.id}/denunciar`, { cookie: j1.cookie, body: { motivo: "ilegal" } });
+          t("L17 denunciar importado → 201", rDen.status === 201, `status=${rDen.status} ${JSON.stringify(rDen.json).slice(0,140)}`);
+          const pubApos = (() => { const db = abrirDb(BANCO); const r = db.prepare("select status,denuncia_aberta,denuncia_grave from internet_publicacoes where id=?").get(pubLocalB.id); db.close(); return r; })();
+          t("L17b denúncia grave auto-remove importado", pubApos?.status === "removido" && pubApos?.denuncia_grave === 1, JSON.stringify(pubApos));
+        }
+      }
     }
   }
 
