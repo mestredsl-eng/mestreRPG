@@ -1168,7 +1168,13 @@ internetEscritaRouter.post("/publicacoes/:id/denunciar", requirePapel("mestre", 
   if (!body.success) { erroHttp(res, 400, "Dados inválidos", { detalhes: body.error.issues }); return; }
 
   const pub = await publicacaoPorId(cid, req.params.id);
-  if (!pub || pub.status !== "publicado" || pub.origem === "sistema" || !pub.autorContaId) {
+  // D6/P1 (INTERMEDIÁRIO 7232671701): conteúdo importado tem
+  // autorContaId NULL por contrato — sem esta exceção ele ficava
+  // INDENUNCIÁVEL (sem via de moderação). A denúncia usa a conta
+  // local do denunciante (denuncianteContaId/Ref) e a máquina
+  // DP-2/DP-3 funciona igual; nunca expõe o autor inexistente.
+  if (!pub || pub.status !== "publicado" || pub.origem === "sistema"
+    || (!pub.autorContaId && pub.origem !== "importado")) {
     erroHttp(res, 404, "Publicação não encontrada"); return;
   }
   const minhas = await contasDoUsuario(cid, req.usuario!.id);
@@ -1182,12 +1188,20 @@ internetEscritaRouter.post("/publicacoes/:id/denunciar", requirePapel("mestre", 
 
   // DP-2/visibilidade: só se denuncia o que se pode ler. 'contatos'
   // exige aresta aceita vigente com o autor, sem bloqueio P3.
+  // 'contatos' exige aresta aceita COM O AUTOR — importado sem
+  // autorContaId não tem aresta possível: fail-closed 404 (sem
+  // oráculo de existência para conteúdo que o leitor não pode ler).
+  if (pub.visibilidade === "contatos" && !pub.autorContaId) {
+    erroHttp(res, 404, "Publicação não encontrada"); return;
+  }
   if (pub.visibilidade === "contatos") {
+    // autorContaId non-null aqui: o fail-closed acima já saiu no NULL.
+    const autorId = pub.autorContaId as string;
     let alcancavel = false;
     for (const e of elegiveis) {
-      const aceito = await contatoAceitoEntre(db, cid, e.conta.id, pub.autorContaId);
+      const aceito = await contatoAceitoEntre(db, cid, e.conta.id, autorId);
       if (!aceito) continue;
-      const bloqueado = await contatoBloqueadoEntre(db, cid, e.conta.id, pub.autorContaId);
+      const bloqueado = await contatoBloqueadoEntre(db, cid, e.conta.id, autorId);
       if (!bloqueado) { alcancavel = true; break; }
     }
     if (!alcancavel) { erroHttp(res, 404, "Publicação não encontrada"); return; }

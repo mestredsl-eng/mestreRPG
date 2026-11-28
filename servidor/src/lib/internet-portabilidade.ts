@@ -22,7 +22,7 @@
 //  - Denúncias: denunciante_ref opaca por pacote, resolvido_por
 //    nunca viaja; contadores denuncia_aberta/denuncia_grave são
 //    SEMPRE rederivados das linhas importadas (A16).
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "node:crypto";
 import { getDb } from "../db/index.js";
@@ -142,8 +142,11 @@ const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 export async function exportarDominioPublico(campaignId: string, nomeCampanha = ""): Promise<PacoteInternetPublica> {
   const [sites, paginas, pubs, denuncias] = await Promise.all([
     db.select().from(internetSites).where(eq(internetSites.campaignId, campaignId)),
-    db.select().from(internetPages).where(eq(internetPages.campaignId, campaignId)),
-    db.select().from(internetPublicacoes).where(eq(internetPublicacoes.campaignId, campaignId)),
+    // P2 (INTERMEDIÁRIO 7232738783): rascunho é trabalho não
+    // publicado de jogador — pacote PÚBLICO não o transporta
+    // (backup full-fidelity é o EstadoCampanha, não este pacote).
+    db.select().from(internetPages).where(and(eq(internetPages.campaignId, campaignId), ne(internetPages.status, "rascunho"))),
+    db.select().from(internetPublicacoes).where(and(eq(internetPublicacoes.campaignId, campaignId), ne(internetPublicacoes.status, "rascunho"))),
     db.select().from(internetDenuncias).where(eq(internetDenuncias.campaignId, campaignId)),
   ]);
 
@@ -286,9 +289,19 @@ export async function importarDominioPublico(
     // 1) sites — slug UNIQUE(campaignId,slug): colisão com id
     //    divergente rejeita a linha (A7).
     for (const s of est.sites) {
-      const [global] = tx.select({ id: internetSites.id, campaignId: internetSites.campaignId })
+      const [global] = tx.select({ id: internetSites.id, campaignId: internetSites.campaignId, ownerContaId: internetSites.ownerContaId })
         .from(internetSites).where(eq(internetSites.id, s.id)).limit(1).all();
-      if (global?.campaignId === campaignId) { rel.jaExistentes!++; siteMap.set(s.id, s.id); continue; }
+      if (global?.campaignId === campaignId) {
+        rel.jaExistentes!++;
+        // P1 residual (INTERMEDIÁRIO 7232925593 / PoC Gerente
+        // 7232846030): dedupe por id NÃO prova linhagem — o pacote
+        // pode reivindicar o UUID de um site local de jogador e
+        // pendurar páginas publicadas sem autor. siteMap só resolve
+        // âncora para site SEM dono local (importado ou domínio
+        // admin do mestre — residual aceito/documentado).
+        if (global.ownerContaId == null) siteMap.set(s.id, s.id);
+        continue;
+      }
       const localId = global ? crypto.randomUUID() : s.id;
       const [slugOcupado] = tx.select({ id: internetSites.id }).from(internetSites)
         .where(and(eq(internetSites.campaignId, campaignId), eq(internetSites.slug, s.slug))).limit(1).all();
@@ -315,10 +328,12 @@ export async function importarDominioPublico(
         .from(internetPages).where(eq(internetPages.id, p.id)).limit(1).all();
       if (global?.campaignId === campaignId) { rel.jaExistentes!++; continue; }
       const localId = global ? crypto.randomUUID() : p.id;
-      const siteIdLocal = siteMap.get(p.siteId) ?? p.siteId;
-      const [siteExiste] = tx.select({ id: internetSites.id }).from(internetSites)
-        .where(and(eq(internetSites.campaignId, campaignId), eq(internetSites.id, siteIdLocal))).limit(1).all();
-      if (!siteExiste) {
+      // P1 (INTERMEDIÁRIO 7232671701): siteId resolve SOMENTE pelo
+      // mapa do que esta tx inseriu/dedupou — um UUID de site local
+      // pré-existente fora do pacote NÃO é âncora válida (página
+      // importada não pode pendurar em site que não veio junto).
+      const siteIdLocal = siteMap.get(p.siteId);
+      if (!siteIdLocal) {
         rel.rejeitadas!.push({ tipo: "pagina", id: p.id, motivo: "site_orfao" });
         continue;
       }
@@ -343,9 +358,25 @@ export async function importarDominioPublico(
     // 3) publicações — origem SEMPRE 'importado' (A13/A18); conta,
     //    personagem e fonteRef nunca vêm do pacote.
     for (const p of est.publicacoes) {
-      const [global] = tx.select({ id: internetPublicacoes.id, campaignId: internetPublicacoes.campaignId })
+      const [global] = tx.select({ id: internetPublicacoes.id, campaignId: internetPublicacoes.campaignId, origem: internetPublicacoes.origem })
         .from(internetPublicacoes).where(eq(internetPublicacoes.id, p.id)).limit(1).all();
-      if (global?.campaignId === campaignId) { rel.jaExistentes!++; pubMap.set(p.id, p.id); continue; }
+      if (global?.campaignId === campaignId) {
+        rel.jaExistentes!++;
+        // P1 residual: pubMap só ancora denúncia em publicação com
+        // linhagem de pacote (origem='importado') — pub local
+        // ('usuario'/'sistema') não é alvo de denúncia forjada.
+        if (global.origem === "importado") pubMap.set(p.id, p.id);
+        continue;
+      }
+      // P2-4 (INTERMEDIÁRIO 7232738783): 'contatos' exige aresta com
+      // o autor — importado nasce autorContaId NULL → zumbi
+      // permanente (invisível e, pelo fail-closed da denúncia,
+      // inmodificável). Rejeita com relatório em vez de fabricar
+      // conteúdo morto; mapear p/ 'campanha' exporia o restrito.
+      if (p.visibilidade === "contatos") {
+        rel.rejeitadas!.push({ tipo: "publicacao", id: p.id, motivo: "visibilidade_insatisfativel" });
+        continue;
+      }
       const localId = global ? crypto.randomUUID() : p.id;
       tx.insert(internetPublicacoes).values({
         id: localId, campaignId, tipo: p.tipo, titulo: p.titulo, corpo: p.corpo,
@@ -379,10 +410,11 @@ export async function importarDominioPublico(
         .from(internetDenuncias).where(eq(internetDenuncias.id, n.id)).limit(1).all();
       if (global?.campaignId === campaignId) { rel.jaExistentes!++; continue; }
       const localId = global ? crypto.randomUUID() : n.id;
-      const pubIdLocal = pubMap.get(n.publicacaoId) ?? n.publicacaoId;
-      const [pubOk] = tx.select({ id: internetPublicacoes.id }).from(internetPublicacoes)
-        .where(and(eq(internetPublicacoes.campaignId, campaignId), eq(internetPublicacoes.id, pubIdLocal))).limit(1).all();
-      if (!pubOk) {
+      // P1 (INTERMEDIÁRIO 7232671701): publicacaoId resolve SOMENTE
+      // pelo mapa — denúncia forjada contra publicação local
+      // pré-existente (resolvida_admin, contadores) é rejeitada.
+      const pubIdLocal = pubMap.get(n.publicacaoId);
+      if (!pubIdLocal) {
         rel.rejeitadas!.push({ tipo: "denuncia", id: n.id, motivo: "publicacao_orfa" });
         continue;
       }
@@ -390,7 +422,11 @@ export async function importarDominioPublico(
         tx.insert(internetDenuncias).values({
           id: localId, campaignId, publicacaoId: pubIdLocal,
           denuncianteContaId: null,
-          denuncianteRef: n.denuncianteRef,
+          // P2-2: prefixo 'pkg:' — pacote pode trazer o UUID de uma
+          // conta local como denuncianteRef e a UNIQUE bloquearia a
+          // denúncia legítima da vítima. Refs importadas nunca
+          // colidem com conta.id (refs locais são UUIDs crus).
+          denuncianteRef: `pkg:${n.denuncianteRef}`,
           motivo: n.motivo, denunciaGrave: n.denunciaGrave,
           status: n.status, resolucao: n.resolucao ?? null,
           resolvidoPor: null,
@@ -400,9 +436,13 @@ export async function importarDominioPublico(
         }).run();
         rel.importadas!.denuncias++;
         pubIdsAfetadas.add(pubIdLocal);
-      } catch {
-        // UNIQUE(publicacao_id, denunciante_ref) — duplicata lógica
-        rel.rejeitadas!.push({ tipo: "denuncia", id: n.id, motivo: "denuncia_duplicada" });
+      } catch (e) {
+        // UNIQUE(publicacao_id, denunciante_ref) — duplicata lógica.
+        // P2-3: só isso é rejeição; qualquer outro erro propaga e
+        // derruba a tx (fail-closed, nada de relatório falso).
+        if (String(e).includes("UNIQUE")) {
+          rel.rejeitadas!.push({ tipo: "denuncia", id: n.id, motivo: "denuncia_duplicada" });
+        } else throw e;
       }
     }
 
