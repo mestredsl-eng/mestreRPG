@@ -24,6 +24,8 @@ const BANCO = join(DIR, "banco", "mestre-rpg.db");
 const ARQ = join(DIR, "arquivos", "campanhas");
 const BKS = join(DIR, "backups");
 const SHOTS = join(process.cwd(), "_evidencias", "primeira-partida");
+// #407: abas do Patrimônio são role="tab" — escopo à section (EquipArmazém tem homônimas).
+const secaoPatrimonio = (p) => p.locator("section.cartao").filter({ has: p.locator("h3", { hasText: "Patrimônio" }) });
 mkdirSync(SHOTS, { recursive: true });
 const PORTA = await portaLivre();
 const BASE = `http://localhost:${PORTA}`;
@@ -375,7 +377,7 @@ try {
   await irCampanha(pgM);
   await aba(pgM, "Personagens");
   await pgM.locator("tr.clicavel", { hasText: J1.nome }).first().click();
-  await pgM.getByRole("button", { name: "Inventário" }).click();
+  await secaoPatrimonio(pgM).getByRole("tab", { name: "Inventário", exact: true }).click();
   await pgM.getByPlaceholder("Nome do item").fill("Poção de cura");
   await pgM.locator(".formulario input[placeholder='Qtd']").fill("3");
   await pgM.getByRole("button", { name: "Adicionar" }).first().click();

@@ -77,10 +77,13 @@ async function abrirPersonagem(page, nome) {
   await page.locator(".abas button", { hasText: "Personagens" }).first().click();
   await page.locator("tr.clicavel", { hasText: nome }).first().click();
   // O detalhe carrega a ficha e o Patrimônio de forma assíncrona.
-  await page.getByRole("button", { name: "Inventário", exact: true }).waitFor({ timeout: 15000 });
+  await secaoPatrimonio(page).getByRole("tab", { name: "Inventário", exact: true }).waitFor({ timeout: 15000 });
 }
+// #407: abas do Patrimônio são role="tab" — escopo à section do
+// Patrimônio (EquipamentoArmazém tem abas homônimas).
+const secaoPatrimonio = (page) => page.locator("section.cartao").filter({ has: page.locator("h3", { hasText: "Patrimônio" }) });
 async function abaPatrimonio(page, nome) {
-  await page.getByRole("button", { name: nome, exact: true }).first().click();
+  await secaoPatrimonio(page).getByRole("tab", { name: nome, exact: true }).click();
   await page.waitForTimeout(600);
 }
 // Conta quantos botões/elementos correspondem — usado para asserts de

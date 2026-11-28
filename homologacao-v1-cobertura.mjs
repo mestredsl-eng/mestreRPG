@@ -20,6 +20,8 @@ const BANCO = join(DIR, "banco", "mestre-rpg.db");
 const ARQ = join(DIR, "arquivos", "campanhas");
 const BKS = join(DIR, "backups");
 const SHOTS = join(process.cwd(), "_evidencias", "cobertura-v1");
+// #407: abas do Patrimônio são role="tab" — escopo à section (EquipArmazém tem homônimas).
+const secaoPatrimonio = (p) => p.locator("section.cartao").filter({ has: p.locator("h3", { hasText: "Patrimônio" }) });
 import { mkdirSync } from "node:fs";
 mkdirSync(SHOTS, { recursive: true });
 const PORTA = await portaLivre();
@@ -81,7 +83,7 @@ try {
   sec("2. Patrimônio — veículo");
   await aba(pgM, "Personagens");
   await pgM.locator("tr.clicavel", { hasText: "Mestre Herói" }).first().click();
-  await pgM.getByRole("button", { name: "Veículos" }).click();
+  await secaoPatrimonio(pgM).getByRole("tab", { name: "Veículos", exact: true }).click();
   await pgM.getByLabel("Nome", { exact: true }).first().fill("Opala Diplomata");
   await pgM.getByRole("button", { name: "Adicionar veículo" }).click();
   await pgM.getByText("Opala Diplomata").first().waitFor({ timeout: 10000 });
@@ -89,7 +91,7 @@ try {
 
   // ===== 3. PATRIMÔNIO: financeiro =====
   sec("3. Patrimônio — conta e movimentação");
-  await pgM.getByRole("button", { name: "Dinheiro" }).click();
+  await secaoPatrimonio(pgM).getByRole("tab", { name: "Dinheiro", exact: true }).click();
   await pgM.getByRole("button", { name: "Nova conta" }).click();
   await pgM.getByPlaceholder("Nome (ex.: Carteira, Banco X)").fill("Carteira");
   await pgM.locator("form.formulario", { has: pgM.getByPlaceholder("Nome (ex.: Carteira, Banco X)") })

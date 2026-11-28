@@ -134,18 +134,19 @@ try {
     t("readonly: sem Adicionar item", (await p.getByRole("button", { name: "Adicionar", exact: true }).count()) === 0);
     t("readonly: sem Equipar", (await p.getByRole("button", { name: "Equipar" }).count()) === 0);
     t("readonly: sem Transferir item", (await p.getByRole("button", { name: "Transferir", exact: true }).count()) === 0);
-    // demais abas
-    await p.getByRole("button", { name: "Equipamentos" }).click();
+    // demais abas — #407: abas do Patrimônio são role="tab" dentro da
+    // section "Patrimônio" (EquipamentoArmazém tem homônimas).
+    const pat = p.locator("section.cartao").filter({ has: p.locator("h3", { hasText: "Patrimônio" }) });
+    await pat.getByRole("tab", { name: "Equipamentos", exact: true }).click();
     await p.waitForTimeout(600);
     t("readonly: sem Adicionar equipamento", (await p.getByRole("button", { name: "Adicionar", exact: true }).count()) === 0);
     t("readonly: sem Equipar/Desequipar", (await p.getByRole("button", { name: /^(Equipar|Desequipar)$/ }).count()) === 0);
-    await p.getByRole("button", { name: "Veículos" }).click();
+    await pat.getByRole("tab", { name: "Veículos", exact: true }).click();
     await p.waitForTimeout(600);
     t("readonly: sem Adicionar veículo", (await p.getByRole("button", { name: "Adicionar veículo" }).count()) === 0);
     // .perigo no escopo do Patrimônio (o Excluir do cabeçalho do personagem é legítimo)
-    const pat = p.locator("section.cartao").filter({ has: p.locator("h3", { hasText: "Patrimônio" }) });
     t("readonly: sem remover veículo", (await pat.locator(".perigo").count()) === 0);
-    await p.getByRole("button", { name: "Dinheiro" }).click();
+    await pat.getByRole("tab", { name: "Dinheiro", exact: true }).click();
     await p.waitForTimeout(800);
     t("readonly: sem Nova conta", (await p.getByRole("button", { name: "Nova conta" }).count()) === 0);
     t("readonly: sem Registrar movimentação", (await p.getByRole("button", { name: "Registrar" }).count()) === 0);

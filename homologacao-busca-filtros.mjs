@@ -20,6 +20,8 @@ await esperarSaudavel(BASE, proc);
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
 const sec = (n) => console.log("\n== " + n + " ==");
+// #407: abas do Patrimônio são role="tab" — escopo à section (EquipArmazém tem homônimas).
+const secaoPatrimonio = (p) => p.locator("section.cartao").filter({ has: p.locator("h3", { hasText: "Patrimônio" }) });
 
 const browser = await chromium.launch();
 try {
@@ -187,7 +189,7 @@ try {
     await p.waitForTimeout(900);
     await p.locator("tr", { hasText: "Mestre Herói" }).first().click();
     await p.waitForTimeout(1500);
-    await p.getByRole("button", { name: "Equipamentos" }).click();
+    await secaoPatrimonio(p).getByRole("tab", { name: "Equipamentos", exact: true }).click();
     await p.waitForTimeout(800);
     const buscaEq = p.getByLabel("Buscar equipamento");
     await buscaEq.fill("Espada");
@@ -197,7 +199,7 @@ try {
     await p.waitForTimeout(300);
     t("equipamentos: busca sem resultado mostra vazio", (await p.getByText("Nenhum equipamento corresponde à busca.").count()) > 0);
     await buscaEq.fill("");
-    await p.getByRole("button", { name: "Veículos" }).click();
+    await secaoPatrimonio(p).getByRole("tab", { name: "Veículos", exact: true }).click();
     await p.waitForTimeout(700);
     const buscaV = p.getByLabel("Buscar veículo");
     await buscaV.fill("Honda");
@@ -250,7 +252,7 @@ try {
     await p.getByLabel("Buscar personagem").fill("");
     await p.locator("tr", { hasText: "E2E Gama" }).first().click();
     await p.waitForTimeout(1500);
-    await p.getByRole("button", { name: "Equipamentos" }).click();
+    await secaoPatrimonio(p).getByRole("tab", { name: "Equipamentos", exact: true }).click();
     await p.waitForTimeout(800);
     await p.getByLabel("Buscar equipamento").fill("Arco");
     await p.waitForTimeout(300);
@@ -259,7 +261,7 @@ try {
     await p.waitForTimeout(300);
     t("mobile: busca equipamento sem resultado", (await p.getByText("Nenhum equipamento corresponde à busca.").count()) > 0);
     await p.getByLabel("Buscar equipamento").fill("");
-    await p.getByRole("button", { name: "Veículos" }).click();
+    await secaoPatrimonio(p).getByRole("tab", { name: "Veículos", exact: true }).click();
     await p.waitForTimeout(700);
     await p.getByLabel("Buscar veículo").fill("Skate");
     await p.waitForTimeout(300);
