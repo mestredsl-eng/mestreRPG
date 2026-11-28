@@ -31,6 +31,8 @@ function fixtureGate(banco, campId) {
     ["item", "notebook", "Notebook"],
     ["profissao", "jornalista", "Jornalista"],
     ["profissao", "medico", "Médico"],
+    ["profissao", "streamer", "Streamer"],
+    ["pericia", "influencer", "Influencer"],
   ]) ins.run(crypto.randomUUID(), rs.id, kind, key, name, null, null, agora, agora);
   const ver = db.prepare("select id, structure from sheet_versions order by created_at desc limit 1").get();
   const est = JSON.parse(ver.structure);
@@ -38,6 +40,7 @@ function fixtureGate(banco, campId) {
     { id: "comp", label: "Computador", tipo: "inteiro", regra: { kind: "pericia", key: "computador" } },
     { id: "tec", label: "Tecnologia", tipo: "inteiro", regra: { kind: "conhecimento", key: "tecnologia" } },
     { id: "prof", label: "Profissão", tipo: "selecao_unica", regraKind: "profissao" },
+    { id: "infl", label: "Influencer", tipo: "inteiro", regra: { kind: "pericia", key: "influencer" } },
   );
   db.prepare("update sheet_versions set structure=? where id=?").run(JSON.stringify(est), ver.id);
   db.close();
@@ -1336,6 +1339,221 @@ try {
         t("M6b irmãs pendentes encerradas", irmasM6.length > 0 && irmasM6.every((s) => s === "encerrada" || s === "resolvida_admin"), JSON.stringify(irmasM6));
         t("M6c nenhuma 'aberta'/'em_analise' restante", irmasM6.every((s) => s !== "aberta" && s !== "em_analise"), JSON.stringify(irmasM6));
       }
+    }
+  }
+
+  // ================= LIVE + MÉTRICAS ==========  sec("P. Streamer ao vivo, seguidores, views");
+  {
+    // charJ5: streamer real — profissão streamer no ruleset ativo.
+    const charJ5 = C.novoPersonagem(C.jogadores.j1.membershipId, "Live Foca", { comp: 1, prof: "streamer" });
+    darDispositivo(BANCO, charJ5);
+    const c5 = await API("POST", "/account", j1.cookie, { characterId: charJ5, handle: "live.foca" });
+    t("P0 conta Internet do streamer → 201", c5.status === 201, `status=${c5.status}`);
+    // P12 precisa do perfil ativado — sem isso /perfis/live.foca → 404
+    // e o assert morria silencioso (JSON.stringify(undefined).slice).
+    const atv5 = await API("POST", "/perfil/ativar", j1.cookie, { characterId: charJ5 });
+    t("P0b perfil do streamer ativado", atv5.status === 201 || atv5.status === 200, `status=${atv5.status}`);
+
+    // P1: sem sessão → 401
+    const rAnon = await req(BASE, "POST", `/campaigns/${campId}/internet/ao-vivo`, { body: { characterId: charJ5, titulo: "Live teste" } });
+    t("P1 sem sessão → 401", rAnon.status === 401, `status=${rAnon.status}`);
+    // P2: sem gate streamer (charJ2 = médico) → 403
+    const rSemGate = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ2, titulo: "Live teste" });
+    t("P2 sem profissao:streamer → 403", rSemGate.status === 403, `status=${rSemGate.status}`);
+    // P3: morto não transmite (charJ1 falecido, conta ativa) → 403
+    const rMorto = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ1, titulo: "Live teste" });
+    t("P3 personagem falecido → 403", rMorto.status === 403 && rMorto.json?.erro === "personagem_falecido", `status=${rMorto.status} ${JSON.stringify(rMorto.json).slice(0,120)}`);
+    // P4: streamer entra ao vivo → 201
+    const entrar = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ5, titulo: "Noite de terror", descricao: "campanha ao vivo" });
+    t("P4 entrar ao vivo → 201", entrar.status === 201 && entrar.json?.live?.vigente === true, `status=${entrar.status} body=${JSON.stringify(entrar.json).slice(0,160)}`);
+    const liveId = entrar.json?.live?.id;
+    // P5: segunda live aberta na mesma conta → 409
+    const rDup = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ5, titulo: "Segunda live" });
+    t("P5 live duplicada → 409", rDup.status === 409, `status=${rDup.status}`);
+    // P6: diretório público — leitor elegível vê a live com handle, sem ids internos
+    const dir = await API("GET", "/ao-vivo", j2.cookie);
+    const livePub = dir.json?.lives?.find((l) => l.id === liveId);
+    t("P6 diretório lista a live", !!livePub && livePub.handle === "live.foca", JSON.stringify(dir.json?.lives?.[0]).slice(0, 200));
+    t("P6b sem ids internos na serialização", !!livePub && livePub.personagemId === undefined && livePub.contaId === undefined, JSON.stringify(livePub).slice(0, 200));
+    // P7: não-titular não encerra a live alheia (j2 tenta sair da live de j1) → 404
+    const rSairAlheio = await API("POST", `/ao-vivo/${liveId}/sair`, j2.cookie);
+    t("P7 sair live alheia → 404", rSairAlheio.status === 404, `status=${rSairAlheio.status}`);
+    // P8: titular sai → diretório esvazia
+    const sair = await API("POST", `/ao-vivo/${liveId}/sair`, j1.cookie);
+    t("P8 sair → 200", sair.status === 200, `status=${sair.status}`);
+    const dir2 = await API("GET", "/ao-vivo", j2.cookie);
+    t("P8b diretório vazio após sair", (dir2.json?.lives ?? []).length === 0, JSON.stringify(dir2.json).slice(0, 120));
+    // P9: live expirada some da leitura (TTL derivado — força expira_em)
+    const reEntrar = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ5, titulo: "Live dois" });
+    const liveId2 = reEntrar.json?.live?.id;
+    const dbExp = abrirDb(BANCO);
+    dbExp.prepare("update internet_ao_vivo set expira_em=? where id=?").run(Date.now() - 1000, liveId2);
+    dbExp.close();
+    const dir3 = await API("GET", "/ao-vivo", j2.cookie);
+    t("P9 live expirada fora do diretório", !(dir3.json?.lives ?? []).some((l) => l.id === liveId2), JSON.stringify(dir3.json).slice(0, 120));
+    const detExp = await API("GET", `/ao-vivo/${liveId2}`, j2.cookie);
+    t("P9b detalhe de expirada → 404", detExp.status === 404, `status=${detExp.status}`);
+    // P9c/P9d (TG #402 P1): live expirada por TTL não pode travar a
+    // conta — POST /ao-vivo lazy-closes as expiradas na mesma tx
+    // (antes: UNIQUE parcial → 409 eterno, /sair exigia id oculto).
+    const reLive3 = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ5, titulo: "Live três" });
+    t("P9c entrar após expirar → 201", reLive3.status === 201, `status=${reLive3.status} ${JSON.stringify(reLive3.json).slice(0,120)}`);
+    const encErrada = (() => { const db = abrirDb(BANCO); const r = db.prepare("select encerrado_em from internet_ao_vivo where id=?").get(liveId2); db.close(); return r?.encerrado_em; })();
+    t("P9d expirada lazy-closed (encerrado_em preenchido)", !!encErrada, `encerrado_em=${encErrada}`);
+
+    // P10: seguidores — aresta idempotente, contador derivado
+    const seg = await API("POST", "/contas/live.foca/seguir", j2.cookie);
+    t("P10 seguir → 200 seguidores=1", seg.status === 200 && seg.json?.seguidores === 1, `status=${seg.status} body=${JSON.stringify(seg.json).slice(0,120)}`);
+    const seg2 = await API("POST", "/contas/live.foca/seguir", j2.cookie);
+    t("P10b seguir de novo → idempotente", seg2.status === 200 && seg2.json?.seguidores === 1, `status=${seg2.status}`);
+    const nSeg = (() => { const db = abrirDb(BANCO); const r = db.prepare("select count(*) n from internet_seguidores where alvo_conta_id=(select id from internet_accounts where handle='live.foca')").get(); db.close(); return r?.n; })();
+    t("P10c uma única aresta", nSeg === 1, `arestas=${nSeg}`);
+    // P11: auto-seguir → 400 — j2 controla duas contas (bia.semaresta
+    // e duda.foca); a aresta conta→ela mesma é inválida. origemContaId
+    // explícito (mesmo padrão /contatar) torna o alvo determinístico.
+    const contaDuda = (() => { const db = abrirDb(BANCO); const r = db.prepare("select id from internet_accounts where campaign_id=? and handle='duda.foca'").get(campId); db.close(); return r?.id; })();
+    const segSelf = await API("POST", "/contas/duda.foca/seguir", j2.cookie, { origemContaId: contaDuda });
+    t("P11 auto-seguir → 400", segSelf.status === 400, `status=${segSelf.status}`);
+    // P12: perfil público expõe contador derivado
+    const perfilLive = await API("GET", "/perfis/live.foca", j2.cookie);
+    t("P12 perfil mostra seguidores=1", perfilLive.status === 200 && perfilLive.json?.perfil?.seguidores === 1, `status=${perfilLive.status} body=${JSON.stringify(perfilLive.json?.perfil).slice(0,160)}`);
+    // P13: deixar de seguir → contador zera
+    const desf = await API("POST", "/contas/live.foca/deixar-de-seguir", j2.cookie);
+    t("P13 deixar de seguir → seguidores=0", desf.status === 200 && desf.json?.seguidores === 0, `status=${desf.status}`);
+    // P14: views — incremento atômico só em matéria publicada vigente
+    const idViews = semearPublicacao(BANCO, { campId, titulo: "Matéria views", corpo: "x", autorContaId: null, autorModo: "anonimo" });
+    const v1 = await API("GET", `/publicacoes/${idViews}`, j2.cookie);
+    const v2 = await API("GET", `/publicacoes/${idViews}`, j2.cookie);
+    t("P14 views incrementa por leitura", v1.json?.publicacao?.views === 1 && v2.json?.publicacao?.views === 2,
+      `v1=${v1.json?.publicacao?.views} v2=${v2.json?.publicacao?.views}`);
+    const idExp = semearPublicacao(BANCO, { campId, titulo: "Expirada", corpo: "x", autorContaId: null, autorModo: "anonimo", publicadoEm: Date.now() - 100000 });
+    const dbV = abrirDb(BANCO);
+    dbV.prepare("update internet_publicacoes set expires_at=? where id=?").run(Date.now() - 1000, idExp);
+    dbV.close();
+    const vExp = await API("GET", `/publicacoes/${idExp}`, j2.cookie);
+    t("P15 expirada não incrementa views", vExp.json?.publicacao?.views === 0 && vExp.json?.publicacao?.expirado === true,
+      `views=${vExp.json?.publicacao?.views} expirado=${vExp.json?.publicacao?.expirado}`);
+    // P16 (INTERMEDIÁRIO P2 #402): arquivado não entra ao vivo —
+    // conta criada com personagem ativo, arquiva via SQL, entrar →
+    // rejeitado (somente leitura).
+    const charJ6 = C.novoPersonagem(C.jogadores.j1.membershipId, "Live Arquivada", { comp: 1, prof: "streamer" });
+    darDispositivo(BANCO, charJ6);
+    const c6 = await API("POST", "/account", j1.cookie, { characterId: charJ6, handle: "live.arquivo" });
+    t("P16a conta Internet do arquivado → 201", c6.status === 201, `status=${c6.status}`);
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update characters set status='arquivado' where id=?").run(charJ6);
+      db.close();
+    }
+    const rArq = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ6, titulo: "Live arquivada" });
+    t("P16b arquivado não entra ao vivo → 403/404", rArq.status === 403 || rArq.status === 404,
+      `status=${rArq.status} ${JSON.stringify(rArq.json).slice(0, 120)}`);
+
+    // P17 (INTERMEDIÁRIO P2 #402): morte DURANTE a transmissão — a
+    // "Live três" do charJ5 segue aberta; forçar __morte → some do
+    // diretório e detalhe → 404 (revalidação derivada na leitura,
+    // sem job — a linha morre pelo TTL).
+    const live3Id = reLive3.json?.live?.id;
+    {
+      const db = abrirDb(BANCO);
+      const row = db.prepare("select data from characters where id=?").get(charJ5);
+      const dados = JSON.parse(row.data);
+      dados.__morte = [{ em: new Date().toISOString(), causa: "teste P17" }];
+      db.prepare("update characters set data=? where id=?").run(JSON.stringify(dados), charJ5);
+      db.close();
+    }
+    const dirMorto = await API("GET", "/ao-vivo", j2.cookie);
+    t("P17 live de morto some do diretório", !(dirMorto.json?.lives ?? []).some((l) => l.id === live3Id),
+      JSON.stringify((dirMorto.json?.lives ?? []).map((l) => l.id)));
+    const detMorto = await API("GET", `/ao-vivo/${live3Id}`, j2.cookie);
+    t("P17b detalhe de live de morto → 404", detMorto.status === 404, `status=${detMorto.status}`);
+
+    // P18 (Dono #402 P1): live aberta → personagem ARQUIVADO durante
+    // a transmissão — some do diretório, detalhe 404 e a linha é
+    // ENCERRADA de fato (encerrado_em preenchido pela varredura
+    // derivada na leitura — não é só filtro visual).
+    const charJ7 = C.novoPersonagem(C.jogadores.j1.membershipId, "Live Sete", { comp: 1, prof: "streamer" });
+    darDispositivo(BANCO, charJ7);
+    await API("POST", "/account", j1.cookie, { characterId: charJ7, handle: "live.sete" });
+    const lv7 = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ7, titulo: "Live sete" });
+    t("P18a live aberta antes do arquivamento", lv7.status === 201, `status=${lv7.status}`);
+    const live7Id = lv7.json?.live?.id;
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update characters set status='arquivado' where id=?").run(charJ7);
+      db.close();
+    }
+    const dirArq = await API("GET", "/ao-vivo", j2.cookie);
+    t("P18b live de arquivado some do diretório", !(dirArq.json?.lives ?? []).some((l) => l.id === live7Id),
+      JSON.stringify((dirArq.json?.lives ?? []).map((l) => l.id)));
+    const detArq = await API("GET", `/ao-vivo/${live7Id}`, j2.cookie);
+    t("P18c detalhe de live de arquivado → 404", detArq.status === 404, `status=${detArq.status}`);
+    const encArq = (() => { const db = abrirDb(BANCO); const r = db.prepare("select encerrado_em from internet_ao_vivo where id=?").get(live7Id); db.close(); return r?.encerrado_em; })();
+    t("P18d live de arquivado encerrada de fato", encArq !== null && encArq !== undefined, `encerrado_em=${encArq}`);
+
+    // P19 (Dono #402 P1): live aberta → CONTA desativada durante a
+    // transmissão — mesmo tratamento: some, 404, encerrada.
+    const charJ8 = C.novoPersonagem(C.jogadores.j1.membershipId, "Live Oito", { comp: 1, prof: "streamer" });
+    darDispositivo(BANCO, charJ8);
+    await API("POST", "/account", j1.cookie, { characterId: charJ8, handle: "live.oito" });
+    const lv8 = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ8, titulo: "Live oito" });
+    t("P19a live aberta antes da desativação", lv8.status === 201, `status=${lv8.status}`);
+    const live8Id = lv8.json?.live?.id;
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update internet_accounts set status='inativa' where handle='live.oito'").run();
+      db.close();
+    }
+    const dirInat = await API("GET", "/ao-vivo", j2.cookie);
+    t("P19b live de conta inativa some do diretório", !(dirInat.json?.lives ?? []).some((l) => l.id === live8Id),
+      JSON.stringify((dirInat.json?.lives ?? []).map((l) => l.id)));
+    const detInat = await API("GET", `/ao-vivo/${live8Id}`, j2.cookie);
+    t("P19c detalhe de live de conta inativa → 404", detInat.status === 404, `status=${detInat.status}`);
+    const encInat = (() => { const db = abrirDb(BANCO); const r = db.prepare("select encerrado_em from internet_ao_vivo where id=?").get(live8Id); db.close(); return r?.encerrado_em; })();
+    t("P19d live de conta inativa encerrada de fato", encInat !== null && encInat !== undefined, `encerrado_em=${encInat}`);
+
+    // P20 (Dono #402 / adjudicação TG 7233180172): gate aceita
+    // pericia:influencer — ruleset v10 canônico tem a perícia sem
+    // profissão. Personagem com SÓ infl=1 (sem prof streamer) entra.
+    const charJ9 = C.novoPersonagem(C.jogadores.j1.membershipId, "Live Influencer", { comp: 1, infl: 1 });
+    darDispositivo(BANCO, charJ9);
+    await API("POST", "/account", j1.cookie, { characterId: charJ9, handle: "live.infl" });
+    const lv9 = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ9, titulo: "Live influencer" });
+    t("P20 pericia:influencer entra ao vivo → 201", lv9.status === 201, `status=${lv9.status} ${JSON.stringify(lv9.json).slice(0, 140)}`);
+    // P20b: sem nenhum dos três → 403 (fail-closed mantido)
+    const charJ10 = C.novoPersonagem(C.jogadores.j1.membershipId, "Sem Gate", { comp: 1 });
+    darDispositivo(BANCO, charJ10);
+    await API("POST", "/account", j1.cookie, { characterId: charJ10, handle: "live.sem" });
+    const lv10 = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ10, titulo: "Sem gate" });
+    t("P20b sem streamer/influencer → 403", lv10.status === 403, `status=${lv10.status}`);
+
+    // P21/P22 (TG #402 TOCTOU — adjudicado P2): titularidade/morte
+    // relidos DENTRO da tx do /ao-vivo. A janela exata não é
+    // reproduzível deterministicamente neste harness (tx síncrona,
+    // servidor em processo separado) — a cobertura prova o invariante
+    // de estado final: quem perdeu titularidade/conta não transmite.
+    // charJ5 segue streamer; "transferência" = membership_id direto.
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update characters set membership_id=? where id=?").run(C.jogadores.j2.membershipId, charJ5);
+      db.close();
+    }
+    const lvT = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ5, titulo: "Live ex-titular" });
+    t("P21 ex-titular não entra ao vivo → 404", lvT.status === 404, `status=${lvT.status}`);
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update characters set membership_id=? where id=?").run(C.jogadores.j1.membershipId, charJ5);
+      const conta5 = db.prepare("select id from internet_accounts where character_id=?").get(charJ5);
+      db.prepare("update internet_accounts set status='inativa' where id=?").run(conta5.id);
+      db.close();
+    }
+    const lvI = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ5, titulo: "Live conta inativa" });
+    t("P22 conta inativa não entra ao vivo → 404", lvI.status === 404, `status=${lvI.status}`);
+    {
+      const db = abrirDb(BANCO);
+      const conta5 = db.prepare("select id from internet_accounts where character_id=?").get(charJ5);
+      db.prepare("update internet_accounts set status='ativa' where id=?").run(conta5.id);
+      db.close();
     }
   }
   // ================= W2/timeline — correções Dono+TG (#400) =================

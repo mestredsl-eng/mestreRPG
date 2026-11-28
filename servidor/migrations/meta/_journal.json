@@ -344,6 +344,13 @@
       "when": 1795832627280,
       "tag": "0048_patrocinio",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "6",
+      "when": 1795833882435,
+      "tag": "0049_live_metricas",
+      "breakpoints": true
     }
   ]
 }

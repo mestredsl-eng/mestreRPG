@@ -303,12 +303,19 @@ export function PerfilPublicoView({ adaptador, campaignId, handle, aoVoltar }: {
   const [perfil, setPerfil] = useState<PerfilPublico | null>(null);
   const [fase, setFase] = useState<"carregando" | "ok" | "erro" | "indisponivel">("carregando");
   const [tentativa, setTentativa] = useState(0);
+  const [seguindo, setSeguindo] = useState<boolean | null>(null);
+  const [totalSeguidores, setTotalSeguidores] = useState(0);
+  const [msgFollow, setMsgFollow] = useState<string | null>(null);
 
   useEffect(() => {
     let vivo = true;
     setFase("carregando");
     adaptador.obterPerfil(handle)
-      .then((p) => { if (vivo) { setPerfil(p); setFase("ok"); } })
+      .then((p) => {
+        if (!vivo) return;
+        setPerfil(p); setFase("ok");
+        setSeguindo(!!p.seguindoVoce); setTotalSeguidores(p.seguidores ?? 0);
+      })
       .catch((e) => { if (vivo) setFase(e instanceof ApiError && e.status === 404 ? "indisponivel" : "erro"); });
     return () => { vivo = false; };
   }, [adaptador, handle, tentativa]);
@@ -335,6 +342,27 @@ export function PerfilPublicoView({ adaptador, campaignId, handle, aoVoltar }: {
           </div>
           {perfil.personagemFalecido && <p className="meta"><em>Personagem falecido</em></p>}
           {perfil.descricao && <p className="internet-perfil-descricao">{perfil.descricao}</p>}
+          <p className="meta">
+            {totalSeguidores} {totalSeguidores === 1 ? "seguidor" : "seguidores"}
+            {" · "}
+            <button
+              type="button"
+              className="secundario"
+              onClick={async () => {
+                setMsgFollow(null);
+                try {
+                  const r = seguindo
+                    ? await adaptador.deixarDeSeguirConta(perfil.handle)
+                    : await adaptador.seguirConta(perfil.handle);
+                  setSeguindo(!seguindo);
+                  setTotalSeguidores(r.seguidores);
+                } catch (e) {
+                  setMsgFollow(e instanceof ApiError ? e.message : "Não foi possível atualizar.");
+                }
+              }}
+            >{seguindo ? "Deixar de seguir" : "Seguir"}</button>
+            {msgFollow && <span className="meta"> {msgFollow}</span>}
+          </p>
           <h3>Publicações</h3>
           {perfil.publicacoes.length === 0 ? (
             <p className="meta">Nenhuma publicação visível.</p>

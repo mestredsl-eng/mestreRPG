@@ -19,7 +19,7 @@ import { ApiError } from "../../api";
 import { criarAdaptadorInternetPublica, type AdaptadorInternetPublica } from "./adaptador-publica";
 import Publicacoes from "./Publicacoes";
 import Perfis, { PerfilPublicoView } from "./Perfis";
-import type { PaginaPublica, PaginaPublicaResumo, SitePublico, SitePublicoResumo } from "./tipos-publica";
+import type { LiveResumo, PaginaPublica, PaginaPublicaResumo, SitePublico, SitePublicoResumo } from "./tipos-publica";
 import { Carregando, ErroRetry, Vazio } from "./estados";
 
 type Visao =
@@ -109,7 +109,7 @@ function InicioPublico({ adaptador, campaignId, characterId, aoAbrirSite, aoAbri
   aoAbrirSite: (slug: string) => void;
   aoAbrirPerfil: (handle: string) => void;
 }) {
-  const [secao, setSecao] = useState<"sites" | "publicacoes" | "perfis">("sites");
+  const [secao, setSecao] = useState<"sites" | "publicacoes" | "perfis" | "ao-vivo">("sites");
   const [busca, setBusca] = useState("");
   const [qAplicada, setQAplicada] = useState("");
   const [sites, setSites] = useState<SitePublicoResumo[] | null>(null);
@@ -173,9 +173,18 @@ function InicioPublico({ adaptador, campaignId, characterId, aoAbrirSite, aoAbri
           className={secao === "perfis" ? "secundario ativo" : "secundario"}
           onClick={() => setSecao("perfis")}
         >Perfis</button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={secao === "ao-vivo"}
+          className={secao === "ao-vivo" ? "secundario ativo" : "secundario"}
+          onClick={() => setSecao("ao-vivo")}
+        >Ao vivo</button>
       </div>
       {secao === "perfis" ? (
         <Perfis adaptador={adaptador} campaignId={campaignId} characterId={characterId} aoAbrirPerfil={aoAbrirPerfil} />
+      ) : secao === "ao-vivo" ? (
+        <AosVivo adaptador={adaptador} characterId={characterId} />
       ) : secao === "publicacoes" ? (
         <Publicacoes adaptador={adaptador} />
       ) : (
@@ -392,5 +401,115 @@ function PaginaPublicaView({ adaptador, siteSlug, pageSlug, aoAbrirSite, aoAbrir
         </nav>
       )}
     </article>
+  );
+}
+
+/** Ao vivo (ordem 7232090197 item 3 — Streamer simulado): diretório de
+ *  lives vigentes + entrada pelo personagem atual. O gate
+ *  pericia/profissão streamer e a titularidade são do servidor — a UI
+ *  apenas reflete o 403/409 honestos. */
+function AosVivo({ adaptador, characterId }: {
+  adaptador: AdaptadorInternetPublica;
+  characterId?: string;
+}) {
+  const [lives, setLives] = useState<LiveResumo[] | null>(null);
+  const [fase, setFase] = useState<"carregando" | "ok" | "erro" | "sem-acesso">("carregando");
+  const [tentativa, setTentativa] = useState(0);
+  const [titulo, setTitulo] = useState("");
+  const [descricao, setDescricao] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [entrando, setEntrando] = useState(false);
+
+  const carregar = useCallback(async () => {
+    try {
+      setLives(await adaptador.listarLives());
+      setFase("ok");
+    } catch (e) {
+      setFase(e instanceof ApiError && e.status === 403 ? "sem-acesso" : "erro");
+    }
+  }, [adaptador]);
+
+  useEffect(() => { void carregar(); }, [carregar, tentativa]);
+
+  const entrar = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!characterId || !titulo.trim()) return;
+    setEntrando(true); setMsg(null);
+    try {
+      await adaptador.entrarAoVivo(characterId, titulo.trim(), descricao.trim() || undefined);
+      setTitulo(""); setDescricao("");
+      await carregar();
+    } catch (err) {
+      setMsg(err instanceof ApiError ? err.message : "Não foi possível entrar ao vivo.");
+    } finally {
+      setEntrando(false);
+    }
+  };
+
+  const sair = async (id: string) => {
+    try {
+      await adaptador.sairAoVivo(id);
+      await carregar();
+    } catch (err) {
+      setMsg(err instanceof ApiError ? err.message : "Não foi possível sair.");
+    }
+  };
+
+  return (
+    <div className="internet-ao-vivo">
+      {characterId && (
+        <form className="internet-rede-form" onSubmit={entrar}>
+          <label className="internet-sr-only" htmlFor="live-titulo">Título da live</label>
+          <input
+            id="live-titulo"
+            type="text"
+            value={titulo}
+            onChange={(e) => setTitulo(e.target.value)}
+            placeholder="Entrar ao vivo — título…"
+            maxLength={120}
+            autoComplete="off"
+          />
+          <button type="submit" className="secundario" disabled={entrando || !titulo.trim()}>
+            {entrando ? "Entrando…" : "Entrar ao vivo"}
+          </button>
+        </form>
+      )}
+      {msg && <p className="meta" role="alert">{msg}</p>}
+      {fase === "carregando" && <Carregando rotulo="Carregando lives…" />}
+      {fase === "sem-acesso" && (
+        <ErroRetry
+          mensagem="Sem acesso à camada pública da Internet — é preciso uma conta de Internet autorizada (ou ser o mestre da campanha)."
+          aoTentar={() => setTentativa((n) => n + 1)}
+        />
+      )}
+      {fase === "erro" && (
+        <ErroRetry mensagem="Não foi possível carregar as lives agora." aoTentar={() => setTentativa((n) => n + 1)} />
+      )}
+      {fase === "ok" && lives !== null && lives.length === 0 && (
+        <Vazio titulo="Nenhuma live agora" dica="Streamers com a profissão/períciaStreamer podem transmitir aqui." />
+      )}
+      {fase === "ok" && lives !== null && lives.length > 0 && (
+        <ul className="internet-inbox" aria-label="Lives ao vivo">
+          {lives.map((l) => (
+            <li key={l.id} className="cartao">
+              <strong>{l.titulo}</strong>
+              <span className="badge">ao vivo</span>
+              {l.descricao && <p>{l.descricao}</p>}
+              <p className="meta">
+                {l.nomePublico ?? l.handle ?? "desconhecido"}
+                {l.handle ? ` · @${l.handle}` : ""}
+                {l.minha ? " · sua live" : ""}
+                {" · até "}{new Date(l.expiraEm).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+              </p>
+              {l.minha && (
+                <button type="button" className="secundario" onClick={() => void sair(l.id)}>
+                  Encerrar live
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

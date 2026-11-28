@@ -89,6 +89,9 @@ export interface PublicacaoDetalhe {
   expiresAt?: string | null;
   /** D11: estado derivado na leitura — nunca persistido. */
   expirado?: boolean;
+  /** Métricas (ordem 7232090197): views brutas de leitura — só em
+   *  matéria publicada vigente; incrementa por GET do detalhe. */
+  views?: number;
   /** D9: o leitor pode iniciar o fluxo Contatar (anúncio/classificado
    *  vigente, sem bloqueio). Anônimo ⇒ sempre false. */
   podeContatar?: boolean;
@@ -148,7 +151,29 @@ export interface PerfilPublico {
   descricao: string | null;
   avatar: { arquivoId: string } | null;
   personagemFalecido: boolean;
+  /** Métricas (ordem 7232090197; M7): COUNT derivado da aresta —
+   *  o grafo (quem segue quem) nunca é exposto. */
+  seguidores: number;
+  /** Só para o próprio leitor autenticado — o grafo nunca é exposto. */
+  seguindoVoce?: boolean;
   publicacoes: PublicacaoTimeline[];
+}
+
+/** Live simulada (Streamer — ordem 7232090197 item 3): presença
+ *  efêmera com TTL; sem ids internos de conta/personagem. */
+export interface LiveResumo {
+  id: string;
+  titulo: string;
+  descricao: string | null;
+  handle: string | null;
+  nomePublico: string | null;
+  iniciadoEm: string;
+  expiraEm: string;
+  vigente: boolean;
+  /** Live de conta autorizada do próprio leitor — única marca de
+   *  titularidade exposta. */
+  minha?: boolean;
+  criadoEm: string;
 }
 
 export interface PerfilResumoBusca {

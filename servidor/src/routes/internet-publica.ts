@@ -439,6 +439,17 @@ internetPublicaRouter.get("/publicacoes/:id", requirePapel("mestre", "jogador"),
   // D11: estado derivado na leitura — nunca persistido nem job.
   const expirado = !!pub.expiresAt && pub.expiresAt.getTime() <= Date.now();
 
+  // Métricas (ordem 7232090197 item 3; M10): views brutas — incremento
+  // atômico só em matéria publicada vigente efetivamente servida; nunca
+  // em rascunho/removido/expirado nem em leitura que caiu no 404 acima.
+  let views = pub.viewsCount;
+  if (pub.status === "publicado" && !expirado) {
+    await db.update(internetPublicacoes)
+      .set({ viewsCount: sql`${internetPublicacoes.viewsCount} + 1` })
+      .where(eq(internetPublicacoes.id, pub.id)).run();
+    views += 1;
+  }
+
   // DP-1/AD-10: publicação anônima não expõe NENHUMA aresta de
   // identidade — sem chave autor*/personagemId/autorContaId em nenhuma
   // superfície, nem para o próprio autor ou mestre (a desanonimização
@@ -450,7 +461,7 @@ internetPublicaRouter.get("/publicacoes/:id", requirePapel("mestre", "jogador"),
         formato: pub.formato, status: pub.status, visibilidade: pub.visibilidade,
         anonimo: true, origem: pub.origem,
         publicadoEm: pub.publicadoEm, expiresAt: pub.expiresAt,
-        expirado, criadoEm: pub.createdAt, atualizadoEm: pub.updatedAt,
+        expirado, views, criadoEm: pub.createdAt, atualizadoEm: pub.updatedAt,
         podeContatar: false,
         ...(privilegiado ? { version: pub.version, retiradoMotivo: pub.retiradoMotivo } : {}),
       },
@@ -478,7 +489,7 @@ internetPublicaRouter.get("/publicacoes/:id", requirePapel("mestre", "jogador"),
       autorModo: pub.autorModo, origem: pub.origem,
       autor: autorPublico(pub, conta),
       personagemId: pub.personagemId,
-      publicadoEm: pub.publicadoEm, expiresAt: pub.expiresAt, expirado,
+      publicadoEm: pub.publicadoEm, expiresAt: pub.expiresAt, expirado, views,
       podeContatar,
       criadoEm: pub.createdAt, atualizadoEm: pub.updatedAt,
       // UUID interno e estado de moderação só para privilegiados
