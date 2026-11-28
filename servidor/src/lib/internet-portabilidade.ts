@@ -22,7 +22,7 @@
 //  - Denúncias: denunciante_ref opaca por pacote, resolvido_por
 //    nunca viaja; contadores denuncia_aberta/denuncia_grave são
 //    SEMPRE rederivados das linhas importadas (A16).
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "node:crypto";
 import { getDb } from "../db/index.js";
@@ -446,9 +446,12 @@ export async function importarDominioPublico(
       }
     }
 
-    // 5) contadores server-derived (A16): abertas = total de denúncias
-    //    da publicação; graves = as com denuncia_grave=1. Só toca em
-    //    publicações do pacote (ids locais).
+    // 5) contadores server-derived (A16): abertas = denúncias ATIVAS
+    //    — status IN ('aberta','em_analise') conforme adjudicação TG
+    //    7233323948 (mesma semântica do POST /denunciar: terminais
+    //    não podem disparar o limiar de remoção); graves = as graves
+    //    DENTRO das ativas. INTERMEDIÁRIO O1 #399.
+    //    Só toca em publicações do pacote (ids locais).
     const pubsAfetadas = new Set([...pubMap.values(), ...pubIdsAfetadas]);
     if (pubsAfetadas.size) {
       const todas = tx.select({
@@ -456,7 +459,10 @@ export async function importarDominioPublico(
         n: sql<number>`count(*)`,
         graves: sql<number>`sum(${internetDenuncias.denunciaGrave})`,
       }).from(internetDenuncias)
-        .where(eq(internetDenuncias.campaignId, campaignId))
+        .where(and(
+          eq(internetDenuncias.campaignId, campaignId),
+          inArray(internetDenuncias.status, ["aberta", "em_analise"]),
+        ))
         .groupBy(internetDenuncias.publicacaoId).all();
       const porPub = new Map(todas.map((r) => [r.publicacaoId, r]));
       for (const pid of pubsAfetadas) {
