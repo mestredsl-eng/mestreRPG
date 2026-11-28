@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, ne, and, asc, sql } from "drizzle-orm";
+import { eq, ne, and, asc, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import {
@@ -298,18 +298,14 @@ adminRouter.post("/internet-denuncias/:id/resolver", async (req, res) => {
       resolvidoPor: req.usuario!.id,
       updatedAt: agora,
     }).where(eq(internetDenuncias.id, den.id)).run();
-    // Demais denúncias pendentes da mesma publicação encerram.
+    // Demais denúncias pendentes da mesma publicação encerram —
+    // INTERMEDIÁRIO O2 #399: pacote importado pode trazer 'aberta'/
+    // 'em_analise' congeladas; sem isto ficariam na fila para sempre.
     tx.update(internetDenuncias).set({ status: "encerrada", updatedAt: agora })
       .where(and(
         eq(internetDenuncias.publicacaoId, den.publicacaoId),
         ne(internetDenuncias.id, den.id),
-        eq(internetDenuncias.status, "contestada"),
-      )).run();
-    tx.update(internetDenuncias).set({ status: "encerrada", updatedAt: agora })
-      .where(and(
-        eq(internetDenuncias.publicacaoId, den.publicacaoId),
-        ne(internetDenuncias.id, den.id),
-        eq(internetDenuncias.status, "auto_removida"),
+        inArray(internetDenuncias.status, ["contestada", "auto_removida", "aberta", "em_analise"]),
       )).run();
     if (body.data.decisao === "restaurar") {
       const r = tx.update(internetPublicacoes).set({

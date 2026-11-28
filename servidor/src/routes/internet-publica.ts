@@ -115,7 +115,7 @@ internetPublicaRouter.get("/sites", requirePapel("mestre", "jogador"), limiteLei
   const siteIds = pagina.map((s) => s.id);
   const [contas, contagens] = await Promise.all([
     siteIds.length
-      ? db.select().from(internetAccounts).where(inArray(internetAccounts.id, [...new Set(pagina.map((s) => s.ownerContaId))]))
+      ? db.select().from(internetAccounts).where(inArray(internetAccounts.id, [...new Set(pagina.map((s) => s.ownerContaId).filter((x): x is string => !!x))]))
       : Promise.resolve([] as (typeof internetAccounts.$inferSelect)[]),
     siteIds.length
       ? db.select({ siteId: internetPages.siteId, n: sql<number>`count(*)` }).from(internetPages)
@@ -132,7 +132,7 @@ internetPublicaRouter.get("/sites", requirePapel("mestre", "jogador"), limiteLei
       slug: s.slug,
       nome: s.nome,
       descricao: s.descricao,
-      owner: contaPorId.get(s.ownerContaId) ?? null,
+      owner: s.ownerContaId ? (contaPorId.get(s.ownerContaId) ?? null) : null,
       paginasPublicadas: contagemPorSite.get(s.id) ?? 0,
       criadoEm: s.createdAt,
     })),
@@ -160,8 +160,9 @@ internetPublicaRouter.get("/sites/:slug", requirePapel("mestre", "jogador"), lim
     .where(and(eq(internetPages.siteId, site.id), eq(internetPages.status, "publicado")))
     .orderBy(internetPages.titulo, internetPages.id);
 
-  const [owner] = await db.select().from(internetAccounts)
-    .where(eq(internetAccounts.id, site.ownerContaId)).limit(1);
+  const [owner] = site.ownerContaId
+    ? await db.select().from(internetAccounts).where(eq(internetAccounts.id, site.ownerContaId)).limit(1)
+    : [undefined];
 
   res.json({
     site: {
@@ -221,8 +222,9 @@ internetPublicaRouter.get("/sites/:slug/paginas/:pageSlug", requirePapel("mestre
     return;
   }
 
-  const [autor] = await db.select().from(internetAccounts)
-    .where(eq(internetAccounts.id, pagina.autorContaId)).limit(1);
+  const [autor] = pagina.autorContaId
+    ? await db.select().from(internetAccounts).where(eq(internetAccounts.id, pagina.autorContaId)).limit(1)
+    : [undefined];
 
   if (!privilegiado) {
     res.json({

@@ -923,7 +923,8 @@ export const internetSites = sqliteTable("internet_sites", {
   slug: text("slug").notNull(),
   nome: text("nome").notNull(),
   descricao: text("descricao"),
-  ownerContaId: text("owner_conta_id").notNull().references(() => internetAccounts.id, { onDelete: "cascade" }),
+  // D6: nullable — sites importados sem conta local ficam read-only
+  ownerContaId: text("owner_conta_id").references(() => internetAccounts.id, { onDelete: "cascade" }),
   status: text("status").notNull().default("ativo"), // ativo|arquivado
   createdAt: createdAt(),
   updatedAt: updatedAt(),
@@ -942,7 +943,8 @@ export const internetPages = sqliteTable("internet_pages", {
   formato: text("formato").notNull().default("texto"), // texto|markdown-subset
   status: text("status").notNull().default("publicado"), // rascunho|publicado|retirado|arquivado
   version: integer("version").notNull().default(1),
-  autorContaId: text("autor_conta_id").notNull().references(() => internetAccounts.id, { onDelete: "cascade" }),
+  // D6: nullable — páginas importadas sem conta local ficam read-only
+  autorContaId: text("autor_conta_id").references(() => internetAccounts.id, { onDelete: "cascade" }),
   publishedAt: integer("published_at", { mode: "timestamp_ms" }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
@@ -972,7 +974,10 @@ export const internetPublicacoes = sqliteTable("internet_publicacoes", {
   autorModo: text("autor_modo").notNull().default("identificado"), // identificado|pseudonimo|anonimo
   pseudoNome: text("pseudo_nome"),
   autorContaId: text("autor_conta_id").references(() => internetAccounts.id),
-  origem: text("origem").notNull().default("usuario"), // usuario|sistema
+  // D6: ref opaca do pacote de origem p/ anon importado — agrupa o
+  // "mesmo anônimo" num reexport sem reidentificar (A3/A18).
+  autorAnonRef: text("autor_anon_ref"),
+  origem: text("origem").notNull().default("usuario"), // usuario|sistema|importado
   fonteRef: text("fonte_ref"),
   personagemId: text("personagem_id").references(() => characters.id),
   publicadoEm: integer("publicado_em", { mode: "timestamp_ms" }),
@@ -1001,7 +1006,10 @@ export const internetDenuncias = sqliteTable("internet_denuncias", {
   id: id(),
   campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
   publicacaoId: text("publicacao_id").notNull().references(() => internetPublicacoes.id, { onDelete: "cascade" }),
-  denuncianteContaId: text("denunciante_conta_id").notNull().references(() => internetAccounts.id),
+  // D6: nullable + denunciante_ref opaca — denunciante importado não
+  // tem conta local; a ref preserva dedupe sem reidentificar (A10).
+  denuncianteContaId: text("denunciante_conta_id").references(() => internetAccounts.id),
+  denuncianteRef: text("denunciante_ref").notNull(),
   motivo: text("motivo").notNull(),
   denunciaGrave: integer("denuncia_grave").notNull().default(0),
   status: text("status").notNull().default("aberta"), // aberta|contestada|em_analise|auto_removida|resolvida_admin|encerrada
@@ -1011,7 +1019,7 @@ export const internetDenuncias = sqliteTable("internet_denuncias", {
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (t) => [
-  uniqueIndex("internet_denuncias_par_idx").on(t.publicacaoId, t.denuncianteContaId),
+  uniqueIndex("internet_denuncias_par_idx").on(t.publicacaoId, t.denuncianteRef),
   index("internet_denuncias_pub_idx").on(t.publicacaoId, t.status),
   index("internet_denuncias_campaign_idx").on(t.campaignId),
 ]);

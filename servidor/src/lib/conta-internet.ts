@@ -34,9 +34,12 @@ export interface ContaAutorizada {
  *     (gateInternetDoPersonagem — mesmo cálculo da Internet 1.1.0).
  */
 export async function contaAutorizadaPara(
-  contaId: string,
+  contaId: string | null,
   userId: string,
 ): Promise<ContaAutorizada | null> {
+  // D6: conta NULL (conteúdo importado sem titular local) → sem
+  // autorização possível — read-only para todos, inclusive mestre.
+  if (!contaId) return null;
   const [conta] = await db.select().from(internetAccounts).where(eq(internetAccounts.id, contaId)).limit(1);
   if (!conta || conta.status !== "ativa") return null;
 
@@ -74,7 +77,8 @@ export async function contaAutorizadaPara(
  *  mas não exige gateInternetDoPersonagem. Uso: distinguir "titular
  *  cujo gate foi revogado" (negação honesta → 403) de "não-titular"
  *  (anti-oráculo → 404) nas rotas de escrita da Internet pública. */
-export async function titularAtualDaConta(contaId: string, userId: string): Promise<boolean> {
+export async function titularAtualDaConta(contaId: string | null, userId: string): Promise<boolean> {
+  if (!contaId) return false;
   const [conta] = await db.select({
     characterId: internetAccounts.characterId,
     campaignId: internetAccounts.campaignId,
