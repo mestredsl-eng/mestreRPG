@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   api,
   type Equipamento, type ItemInventario, type Veiculo,
@@ -110,6 +110,24 @@ export default function EquipamentoArmazem({ characterId, campaignId, aoVenderIt
     ["veiculos", "Veículos"],
   ];
 
+  // Issue #132 A2 — tablist ARIA de verdade, mesmo padrão de
+  // Campanha.tsx: setas ←/→ e Home/End movem foco+seleção; roving
+  // tabindex deixa uma única aba no Tab order.
+  const aoTeclarAbas = (e: ReactKeyboardEvent) => {
+    const ids = abas.map(([id]) => id);
+    const i = ids.indexOf(aba);
+    let j = -1;
+    if (e.key === "ArrowRight") j = (i + 1) % ids.length;
+    else if (e.key === "ArrowLeft") j = (i - 1 + ids.length) % ids.length;
+    else if (e.key === "Home") j = 0;
+    else if (e.key === "End") j = ids.length - 1;
+    else return;
+    e.preventDefault();
+    const alvo = ids[j];
+    setAba(alvo);
+    requestAnimationFrame(() => document.getElementById(`aba-${alvo}`)?.focus());
+  };
+
   // Resolve o nome do item de inventário referenciado por um equipamento
   // (vínculo real via data.inventoryEntryId — nunca inferido por nome).
   const nomeItemVinculado = (equip: Equipamento) => {
@@ -124,12 +142,15 @@ export default function EquipamentoArmazem({ characterId, campaignId, aoVenderIt
       <p className="meta">
         Consulta do patrimônio físico do personagem. Edição de itens, equipamentos e veículos segue no painel Patrimônio. A venda de um item para uma loja (LOJA-B) é operação financeira e acontece na Internet — o botão encaminha o item pré-selecionado para lá.
       </p>
-      <div className="abas" role="tablist">
+      <div className="abas" role="tablist" aria-label="Seções do equipamento e armazém" onKeyDown={aoTeclarAbas}>
         {abas.map(([id, label]) => (
           <button
             key={id}
+            id={`aba-${id}`}
             role="tab"
             aria-selected={aba === id}
+            aria-controls={`painel-${id}`}
+            tabIndex={aba === id ? 0 : -1}
             className={aba === id ? "ativo" : "secundario"}
             onClick={() => setAba(id)}
           >{label}</button>
@@ -139,7 +160,8 @@ export default function EquipamentoArmazem({ characterId, campaignId, aoVenderIt
       {carregando && <p className="meta">Carregando…</p>}
 
       {!carregando && aba === "inventario" && (
-        itens.length === 0 ? (
+        <div role="tabpanel" id="painel-inventario" aria-labelledby="aba-inventario">
+        {itens.length === 0 ? (
           <p className="meta">Inventário vazio.</p>
         ) : (
           <>
@@ -183,11 +205,13 @@ export default function EquipamentoArmazem({ characterId, campaignId, aoVenderIt
               </tbody>
             </table>
           </>
-        )
+        )}
+        </div>
       )}
 
       {!carregando && aba === "equipamentos" && (
-        equipamentos.length === 0 ? (
+        <div role="tabpanel" id="painel-equipamentos" aria-labelledby="aba-equipamentos">
+        {equipamentos.length === 0 ? (
           <p className="meta">Nenhum equipamento registrado.</p>
         ) : (
           <table className="tabela">
@@ -206,11 +230,13 @@ export default function EquipamentoArmazem({ characterId, campaignId, aoVenderIt
               ))}
             </tbody>
           </table>
-        )
+        )}
+        </div>
       )}
 
       {!carregando && aba === "veiculos" && (
-        veiculos.length === 0 ? (
+        <div role="tabpanel" id="painel-veiculos" aria-labelledby="aba-veiculos">
+        {veiculos.length === 0 ? (
           <p className="meta">Nenhum veículo registrado.</p>
         ) : (
           <table className="tabela">
@@ -231,7 +257,8 @@ export default function EquipamentoArmazem({ characterId, campaignId, aoVenderIt
               ))}
             </tbody>
           </table>
-        )
+        )}
+        </div>
       )}
     </section>
   );
