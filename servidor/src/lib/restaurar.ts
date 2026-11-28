@@ -201,9 +201,9 @@ function capturarDominioInternet(tx: Tx, campaignId: string): DominioInternetPre
  *  qualquer inconsistência lança erro e provoca rollback integral da
  *  transação; nunca filtrar, apagar ou reparar silenciosamente. */
 function validarIntegridadeDominioInternet(d: DominioInternetPreservado, campaignId: string) {
-  const falha = (aresta: string, id: string) => {
+  function falha(aresta: string, id: string): never {
     throw new Error(`restore: aresta Internet inconsistente — ${aresta} → ${id} fora do conjunto da campanha ${campaignId}`);
-  };
+  }
   const contaIds = new Set(d.contas.map((c) => c.id));
   const charIds = new Set(d.personagens.map((c) => c.id));
   const memIds = new Set(d.memberships.map((m) => m.id));
