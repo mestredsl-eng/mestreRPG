@@ -21,18 +21,18 @@
 //    marcadas `anonima`; `contatos` só com aresta aceita vigente.
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { and, desc, eq, like } from "drizzle-orm";
+import { and, desc, eq, like, lt, or } from "drizzle-orm";
 import { existsSync, createReadStream } from "node:fs";
 import { getDb } from "../db/index.js";
 import {
-  characters, files, internetAccounts, internetPerfis,
-  internetPublicacoes, memberships,
+  characters, files, internetAccounts, internetPages, internetPerfis,
+  internetPublicacoes, internetSites, memberships,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
 import {
-  contaAutorizadaPara, contasDoUsuario, contatoAceitoEntre,
-  mestreLeitorDaCampanha,
+  codificarCursor, contaAutorizadaPara, contasDoUsuario,
+  contatoAceitoEntre, decodificarCursor, mestreLeitorDaCampanha,
 } from "../lib/conta-internet.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
 import { audit } from "../lib/audit.js";
@@ -483,21 +483,121 @@ internetPerfisRouter.get("/perfis/:handle/avatar", requirePapel("mestre", "jogad
   createReadStream(caminho).pipe(res);
 });
 
-/** GET /busca?q= — D12: perfil localizado por HANDLE somente;
- *  displayName/nome público NÃO indexam (SEARCH-06). Escopo perfis
- *  nesta fatia; demais escopos chegam na fatia W2. */
+// ---------- W2 — pesquisa multi-escopo (D12/SEARCH-01..10) ----------
+
+interface ItemBusca {
+  escopo: "site" | "pagina" | "publicacao" | "perfil";
+  id: string;
+  titulo: string;
+  trecho: string | null;
+  /** Referência de navegação — slug do site, siteSlug/pageSlug,
+   *  id da publicação ou handle do perfil. Nunca ids internos de
+   *  conta/personagem (V-08). */
+  ref: string;
+  ref2?: string;
+  criadoEmMs: number;
+}
+
+const TRECHO_BUSCA = 240;
+const LIMITE_BUSCA = 20;
+const LIKE_MAX = 80;
+
+function trechoDe(texto: string | null | undefined): string | null {
+  if (!texto) return null;
+  const limpo = texto.replace(/\s+/g, " ").trim();
+  return limpo.length > TRECHO_BUSCA ? limpo.slice(0, TRECHO_BUSCA) + "…" : limpo || null;
+}
+
+/** GET /busca?q=&cursor=&limit= — D12: visibilidade aplicada ANTES de
+ *  resultados/ordenação/paginação; conteúdo invisível não influencia
+ *  contagens nem cursores. Escopos: sites (nome/slug/descrição),
+ *  páginas (só publicadas de sites ativos), publicações (só
+ *  publicadas, não expiradas, `contatos` só com aresta aceita),
+ *  perfis (SÓ handle — displayName/nome público fora do índice,
+ *  SEARCH-06). Paginação keyset (criadoEm,id) DESC unificada. */
 internetPerfisRouter.get("/busca", requirePapel("mestre", "jogador"), limitePerfis, async (req, res) => {
   const cid = campanhaId(req);
   const leitor = await resolverLeitor(req, res, cid);
   if (!leitor) return;
 
-  const q = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 80) : "";
+  const q = typeof req.query.q === "string" ? req.query.q.trim().slice(0, LIKE_MAX) : "";
   if (!q) { erroHttp(res, 400, "Consulta vazia"); return; }
+  const limit = Math.min(Math.max(Number(req.query.limit) || LIMITE_BUSCA, 1), 50);
+  const cursorRaw = typeof req.query.cursor === "string" ? req.query.cursor : null;
+  const cursor = cursorRaw ? decodificarCursor(cursorRaw) : null;
+  if (cursorRaw && !cursor) { erroHttp(res, 400, "Cursor inválido"); return; }
 
-  const rows = await db.select({
+  const padrao = `%${q}%`;
+
+  // ---- sites: ativos da campanha, nome/slug/descrição ----
+  const sitesRows = await db.select({
+    id: internetSites.id, slug: internetSites.slug, nome: internetSites.nome,
+    descricao: internetSites.descricao, createdAt: internetSites.createdAt,
+  }).from(internetSites)
+    .where(and(
+      eq(internetSites.campaignId, cid),
+      eq(internetSites.status, "ativo"),
+      or(like(internetSites.nome, padrao), like(internetSites.slug, padrao), like(internetSites.descricao, padrao)),
+    ))
+    .limit(50);
+
+  // ---- páginas: só publicadas de sites ativos ----
+  const paginasRows = await db.select({
+    id: internetPages.id, slug: internetPages.slug, titulo: internetPages.titulo,
+    corpo: internetPages.corpo, siteSlug: internetSites.slug,
+    createdAt: internetPages.createdAt,
+  }).from(internetPages)
+    .innerJoin(internetSites, and(
+      eq(internetSites.id, internetPages.siteId),
+      eq(internetSites.status, "ativo"),
+    ))
+    .where(and(
+      eq(internetPages.campaignId, cid),
+      eq(internetPages.status, "publicado"),
+      or(like(internetPages.titulo, padrao), like(internetPages.corpo, padrao), like(internetPages.slug, padrao)),
+    ))
+    .limit(50);
+
+  // ---- publicações: só publicadas, não expiradas; contatos só com aresta
+  const pubsRows = await db.select({
+    id: internetPublicacoes.id, tipo: internetPublicacoes.tipo,
+    titulo: internetPublicacoes.titulo, corpo: internetPublicacoes.corpo,
+    visibilidade: internetPublicacoes.visibilidade,
+    autorContaId: internetPublicacoes.autorContaId,
+    publicadoEm: internetPublicacoes.publicadoEm,
+    expiresAt: internetPublicacoes.expiresAt,
+    createdAt: internetPublicacoes.createdAt,
+  }).from(internetPublicacoes)
+    .where(and(
+      eq(internetPublicacoes.campaignId, cid),
+      eq(internetPublicacoes.status, "publicado"),
+      or(like(internetPublicacoes.titulo, padrao), like(internetPublicacoes.corpo, padrao)),
+    ))
+    .limit(100);
+
+  const agora = Date.now();
+  const pubsVisiveis = [];
+  for (const p of pubsRows) {
+    if (p.expiresAt && p.expiresAt.getTime() < agora) continue; // expirado derivado
+    if (p.visibilidade === "contatos") {
+      // aresta aceita vigente entre o autor e alguma conta do leitor
+      let ok = false;
+      if (p.autorContaId) {
+        for (const lc of leitor.contas) {
+          if (await contatoAceitoEntre(db, cid, p.autorContaId, lc.id)) { ok = true; break; }
+        }
+      }
+      if (!ok) continue; // invisível — não influencia resultado
+    }
+    pubsVisiveis.push(p);
+  }
+
+  // ---- perfis: SÓ handle indexa (SEARCH-06) ----
+  const perfisRows = await db.select({
     handle: internetAccounts.handle,
     nomePublico: internetPerfis.nomePublico,
     nomePersonagem: characters.name,
+    ativadoEm: internetPerfis.ativadoEm,
   }).from(internetPerfis)
     .innerJoin(internetAccounts, and(
       eq(internetAccounts.characterId, internetPerfis.characterId),
@@ -510,16 +610,46 @@ internetPerfisRouter.get("/busca", requirePapel("mestre", "jogador"), limitePerf
     ))
     .where(and(
       eq(internetPerfis.campaignId, cid),
-      like(internetAccounts.handle, `%${q}%`),
+      like(internetAccounts.handle, padrao),
     ))
-    .orderBy(internetAccounts.handle)
     .limit(20);
 
-  res.json({
-    consulta: q,
-    perfis: rows.map((r) => ({
-      handle: r.handle,
-      nomePublico: r.nomePublico ?? r.nomePersonagem,
+  // ---- merge + ordenação estável + paginação keyset ----
+  const itens: ItemBusca[] = [
+    ...sitesRows.map((s) => ({
+      escopo: "site" as const, id: s.id, titulo: s.nome,
+      trecho: trechoDe(s.descricao), ref: s.slug,
+      criadoEmMs: s.createdAt.getTime(),
     })),
+    ...paginasRows.map((p) => ({
+      escopo: "pagina" as const, id: p.id, titulo: p.titulo,
+      trecho: trechoDe(p.corpo), ref: p.siteSlug, ref2: p.slug,
+      criadoEmMs: p.createdAt.getTime(),
+    })),
+    ...pubsVisiveis.map((p) => ({
+      escopo: "publicacao" as const, id: p.id,
+      titulo: `[${p.tipo}] ${p.titulo}`, trecho: trechoDe(p.corpo), ref: p.id,
+      criadoEmMs: (p.publicadoEm ?? p.createdAt).getTime(),
+    })),
+    ...perfisRows.map((p) => ({
+      escopo: "perfil" as const, id: p.handle, titulo: `@${p.handle}`,
+      trecho: p.nomePublico ?? p.nomePersonagem, ref: p.handle,
+      criadoEmMs: p.ativadoEm.getTime(),
+    })),
+  ].sort((a, b) => b.criadoEmMs - a.criadoEmMs || (a.id < b.id ? 1 : -1));
+
+  const filtrados = cursor
+    ? itens.filter((i) => i.criadoEmMs < cursor.createdAt.getTime()
+        || (i.criadoEmMs === cursor.createdAt.getTime() && i.id < cursor.messageId))
+    : itens;
+  const pagina = filtrados.slice(0, limit);
+  const ultimo = pagina[pagina.length - 1];
+  const proximoCursor = filtrados.length > limit && ultimo
+    ? codificarCursor(new Date(ultimo.criadoEmMs), ultimo.id)
+    : null;
+
+  res.json({
+    resultados: pagina,
+    nextCursor: proximoCursor,
   });
 });
