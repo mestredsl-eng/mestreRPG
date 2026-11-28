@@ -952,12 +952,15 @@ try {
           { id: crypto.randomUUID(), publicacaoId: pubM5.id, denuncianteRef: crypto.randomUUID(), motivo: "spam", denunciaGrave: 0, status: "resolvida_admin", resolucao: "ok", prazoContestacaoEm: null, criadoEm: agM5, atualizadoEm: agM5 },
           { id: crypto.randomUUID(), publicacaoId: pubM5.id, denuncianteRef: crypto.randomUUID(), motivo: "spam", denunciaGrave: 0, status: "aberta", resolucao: null, prazoContestacaoEm: null, criadoEm: agM5, atualizadoEm: agM5 },
           { id: crypto.randomUUID(), publicacaoId: pubM5.id, denuncianteRef: crypto.randomUUID(), motivo: "grave", denunciaGrave: 1, status: "aberta", resolucao: null, prazoContestacaoEm: null, criadoEm: agM5, atualizadoEm: agM5 },
+          // TG 7233323948: em_analise é status ATIVO — conta nos
+          // contadores (e a grave em_analise conta em denuncia_grave).
+          { id: crypto.randomUUID(), publicacaoId: pubM5.id, denuncianteRef: crypto.randomUUID(), motivo: "grave", denunciaGrave: 1, status: "em_analise", resolucao: null, prazoContestacaoEm: null, criadoEm: agM5, atualizadoEm: agM5 },
         ];
         const rImpM5 = await req(BASE, "POST", `/campaigns/${campMId}/internet/importar`, { cookie: C.cookieMestre, body: { pacote: pkgM5, confirmacao: "IMPORTAR" } });
         t("M5 import com denuncias mistas → 200", rImpM5.status === 200, `status=${rImpM5.status}`);
         const ctrM5 = (() => { const db = abrirDb(BANCO); const r = db.prepare("select denuncia_aberta, denuncia_grave from internet_publicacoes where id=?").get(pubM5.id); db.close(); return r; })();
-        t("M5b denuncia_aberta=2 (só 'aberta')", ctrM5?.denuncia_aberta === 2, JSON.stringify(ctrM5));
-        t("M5c denuncia_grave=1 (grave só entre abertas)", ctrM5?.denuncia_grave === 1, JSON.stringify(ctrM5));
+        t("M5b denuncia_aberta=3 (aberta+em_analise; terminais fora)", ctrM5?.denuncia_aberta === 3, JSON.stringify(ctrM5));
+        t("M5c denuncia_grave=2 (graves ativas; grave terminal fora)", ctrM5?.denuncia_grave === 2, JSON.stringify(ctrM5));
 
         // M6 (INTERMEDIÁRIO O2 #399): resolver admin encerra irmãs
         // 'aberta'/'em_analise' trazidas pelo pacote — não ficam

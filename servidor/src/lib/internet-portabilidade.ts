@@ -22,7 +22,7 @@
 //  - Denúncias: denunciante_ref opaca por pacote, resolvido_por
 //    nunca viaja; contadores denuncia_aberta/denuncia_grave são
 //    SEMPRE rederivados das linhas importadas (A16).
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "node:crypto";
 import { getDb } from "../db/index.js";
@@ -446,10 +446,11 @@ export async function importarDominioPublico(
       }
     }
 
-    // 5) contadores server-derived (A16): abertas = denúncias com
-    //    status='aberta' (mesma semântica do POST /denunciar —
-    //    terminais não podem disparar o limiar de remoção); graves =
-    //    as graves DENTRO das abertas. INTERMEDIÁRIO O1 #399.
+    // 5) contadores server-derived (A16): abertas = denúncias ATIVAS
+    //    — status IN ('aberta','em_analise') conforme adjudicação TG
+    //    7233323948 (mesma semântica do POST /denunciar: terminais
+    //    não podem disparar o limiar de remoção); graves = as graves
+    //    DENTRO das ativas. INTERMEDIÁRIO O1 #399.
     //    Só toca em publicações do pacote (ids locais).
     const pubsAfetadas = new Set([...pubMap.values(), ...pubIdsAfetadas]);
     if (pubsAfetadas.size) {
@@ -460,7 +461,7 @@ export async function importarDominioPublico(
       }).from(internetDenuncias)
         .where(and(
           eq(internetDenuncias.campaignId, campaignId),
-          eq(internetDenuncias.status, "aberta"),
+          inArray(internetDenuncias.status, ["aberta", "em_analise"]),
         ))
         .groupBy(internetDenuncias.publicacaoId).all();
       const porPub = new Map(todas.map((r) => [r.publicacaoId, r]));
