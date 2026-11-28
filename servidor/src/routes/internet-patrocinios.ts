@@ -25,10 +25,12 @@
 //    prováveis pelo servidor hoje. `metrica_publicacao` fica
 //    reservada no schema mas rejeitada na API até a fatia de
 //    métricas existir (M35b — nada de condição não-verificável).
-//  - Liquidação é lazy: sem worker/cron no produto — tenta na tx do
-//    aceite (`imediato`) e em leituras dos próprios acordos
-//    (`aceito` + condição satisfeita + não expirado). O gancho por
-//    evento entra junto com a fatia de métricas.
+//  - Liquidação: gatilho primário = sweep server-side de 60s
+//    (`processarLiquidacoesPendentes`, index.ts — decisão TG #401);
+//    belt-and-suspenders = tentativa lazy na tx do aceite
+//    (`imediato`) e em leituras dos próprios acordos (`aceito` +
+//    condição satisfeita + não expirado). O gancho por evento entra
+//    junto com a fatia de métricas.
 //  - Visibilidade: contrato privado entre as partes — nunca entra
 //    em feed/busca pública; detalhe só para titular de qualquer lado.
 import { Router, type Request, type Response } from "express";
@@ -279,6 +281,36 @@ function liquidarAcordoTx(tx: Tx, acordo: Acordo, userId: string | undefined, ci
     requestId: baseReq,
   });
   return true;
+}
+
+/** TG adjudicação #401: sweeper server-side — gatilho PRIMÁRIO de
+ *  liquidação `data_alvo` (lazy-on-read não cumpre a letra do
+ *  veredito Dono). Seleciona acordos `aceito` e, para cada um com
+ *  condição satisfeita, abre tx própria RELENDO o acordo (nunca
+ *  objeto stale) e delega a `liquidarAcordoTx` — CAS
+ *  `aceito→liquidado` + requestId por perna tornam a corrida com
+ *  aceite/GET serializável e idempotente. Erros por acordo são
+ *  engolidos (transitórios retentam no próximo sweep); o evento
+ *  `patrimonio:atualizado` sai uma vez por campanha liquidada. */
+export async function processarLiquidacoesPendentes(): Promise<number> {
+  const agora = new Date();
+  const pendentes = await db.select().from(internetPatrocinios)
+    .where(eq(internetPatrocinios.estado, "aceito"));
+  const campanhas = new Set<string>();
+  for (const a of pendentes) {
+    if (!condicaoSatisfeita(a, agora)) continue;
+    try {
+      const resultado = db.transaction((tx): boolean => {
+        const [fresco] = tx.select().from(internetPatrocinios)
+          .where(eq(internetPatrocinios.id, a.id)).limit(1).all();
+        if (!fresco) return false;
+        return liquidarAcordoTx(tx, fresco, undefined, a.campaignId, new Date());
+      });
+      if (resultado) campanhas.add(a.campaignId);
+    } catch { /* falha transitória/corrida — próximo sweep retenta */ }
+  }
+  for (const cid of campanhas) emitirCampanha(cid, "patrimonio:atualizado", {});
+  return campanhas.size;
 }
 
 /** POST /patrocinios — propor acordo (só o titular do pagador). */

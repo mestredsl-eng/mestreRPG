@@ -32,7 +32,7 @@ import { internetPublicaRouter } from "./routes/internet-publica.js";
 import { internetEscritaRouter } from "./routes/internet-escrita.js";
 import { internetPortabilidadeRouter } from "./routes/internet-portabilidade.js";
 import { internetPerfisRouter } from "./routes/internet-perfis.js";
-import { internetPatrociniosRouter } from "./routes/internet-patrocinios.js";
+import { internetPatrociniosRouter, processarLiquidacoesPendentes } from "./routes/internet-patrocinios.js";
 import { configurarSockets } from "./sockets/index.js";
 import { errorHandler } from "./middleware/error.js";
 import { headersSeguranca } from "./middleware/headers.js";
@@ -349,6 +349,16 @@ async function concluirBootstrapSePossivel() {
 const timerBackup = setInterval(() => void verificarBackupAgendado(), 60_000);
 timerBackup.unref();
 
+// ---------- liquidação de patrocínios (TG #401 — gatilho primário) ----------
+// Sweep de 60s: acordos `aceito` com `data_alvo` vencida liquidam sem
+// depender de GET — CAS+requestId mantêm idempotência contra aceite
+// e leituras lazy concorrentes. Mesmo padrão do timerBackup.
+const timerPatrocinios = setInterval(() => {
+  void processarLiquidacoesPendentes().catch((e) =>
+    log("erro", "sweep de patrocínios falhou", { erro: String(e) }));
+}, 60_000);
+timerPatrocinios.unref();
+
 // ---------- encerramento controlado ----------
 let encerrando = false;
 async function desligar(sinal: string) {
@@ -357,6 +367,7 @@ async function desligar(sinal: string) {
   log("info", "encerramento solicitado", { sinal });
   console.log(`\n[${sinal}] Encerrando Mestre RPG…`);
   clearInterval(timerBackup);
+  clearInterval(timerPatrocinios);
   // para de aceitar novas conexões e desconecta sockets existentes
   try { ioServer?.close(); } catch { }
   try { httpServer.closeIdleConnections?.(); } catch { }
