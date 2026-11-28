@@ -110,6 +110,24 @@ async function titularDoPersonagem(cid: string, characterId: string, userId: str
   return { conta, personagem };
 }
 
+/** P2 (INTERMEDIÁRIO #402): streamer morto ou arquivado DURANTE a
+ *  transmissão — revalidado na leitura, mesmo padrão derivado do
+ *  TTL (sem job, sem escrita). Devolve os ids que não podem seguir
+ *  ao vivo: status='arquivado' ou morteVigente no data. */
+async function personagensForaDoAr(cid: string, personagemIds: string[]): Promise<Set<string>> {
+  if (!personagemIds.length) return new Set();
+  const rows = await db.select({
+    id: characters.id, status: characters.status, data: characters.data,
+  }).from(characters)
+    .where(and(eq(characters.campaignId, cid), inArray(characters.id, personagemIds)));
+  const fora = new Set<string>();
+  for (const p of rows) {
+    if (p.status === "arquivado"
+      || morteVigente((p.data ?? {}) as Record<string, unknown>)) fora.add(p.id);
+  }
+  return fora;
+}
+
 function liveSerializada(l: typeof internetAoVivo.$inferSelect, agora = new Date()) {
   const vigente = !l.encerradoEm && l.expiraEm.getTime() > agora.getTime();
   return {
@@ -134,6 +152,9 @@ internetLiveRouter.post("/ao-vivo", limiteLive, async (req, res) => {
 
   const titular = await titularDoPersonagem(cid, b.characterId, req.usuario!.id);
   if (!titular) { erroHttp(res, 404, "Personagem não elegível"); return; }
+  // P2 (INTERMEDIÁRIO #402): arquivado é somente leitura — não
+  // transmite (mesma regra do perfilPorHandle/perfil ativar).
+  if (titular.personagem.status === "arquivado") { erroHttp(res, 403, "personagem_arquivado"); return; }
   // M2: morto não transmite — presença de morto é fraude diegética.
   if (morteVigente((titular.personagem.data ?? {}) as Record<string, unknown>)) { erroHttp(res, 403, "personagem_falecido"); return; }
   if (!(await ehStreamer(cid, b.characterId))) {
@@ -224,8 +245,16 @@ internetLiveRouter.get("/ao-vivo", async (req, res) => {
     ? await db.select().from(internetPerfis).where(inArray(internetPerfis.characterId, charIds))
     : [];
   const perfilPorChar = new Map(perfis.map((p) => [p.characterId, p] as const));
+  // P2: lives de streamer morto/arquivado somem do diretório —
+  // revalidação derivada na leitura (a linha segue até o TTL).
+  const charVivoPorConta = new Map(contas.map((c) => [c.id, c.characterId] as const));
+  const foraDoAr = await personagensForaDoAr(cid, [...new Set(contas.map((c) => c.characterId))]);
+  const livesVigentes = lives.filter((l) => {
+    const charId = charVivoPorConta.get(l.contaId);
+    return !charId || !foraDoAr.has(charId);
+  });
   res.json({
-    lives: lives.map((l) => {
+    lives: livesVigentes.map((l) => {
       const conta = contaPorId.get(l.contaId);
       const perfil = conta ? perfilPorChar.get(conta.characterId) : undefined;
       return {
@@ -253,6 +282,12 @@ internetLiveRouter.get("/ao-vivo/:id", async (req, res) => {
     erroHttp(res, 404, "Live não encontrada"); return;
   }
   const [conta] = await db.select().from(internetAccounts).where(eq(internetAccounts.id, live.contaId)).limit(1);
+  // P2: detalhe de live de streamer morto/arquivado → 404 (mesmo
+  // tratamento de expirada — não vaza que existiu).
+  if (conta) {
+    const fora = await personagensForaDoAr(cid, [conta.characterId]);
+    if (fora.has(conta.characterId)) { erroHttp(res, 404, "Live não encontrada"); return; }
+  }
   const [perfil] = conta
     ? await db.select().from(internetPerfis).where(eq(internetPerfis.characterId, conta.characterId)).limit(1)
     : [undefined];
