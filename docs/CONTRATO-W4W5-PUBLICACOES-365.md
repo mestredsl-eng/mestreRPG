@@ -146,15 +146,22 @@ Moderação (DP-2 — **admin da plataforma**, nunca o mestre da campanha; `requ
 - `__morte` sobrevive a importação (sanear como chave reservada; dedup `(characterId, em)`).
   Cobertura de escritores de `__hp`: rota `/hp` (tx), criação de personagem (HP inicial
   patológico ≤0) e init legado no PATCH — todos passam por `avaliarMorte`.
-- **Restauração "substituir"** (`restaurarEstado`): zera o domínio Internet da
-  campanha — `internet_denuncias`, `internet_publicacoes`, `internet_messages`,
-  `internet_conversations`/`participantes`, `internet_contacts`, `internet_pages`,
-  `internet_sites` e `internet_accounts` são removidos antes de reimportar o pacote
-  (comportamento vigente desde 1.1.1/1.1.2, estendido às tabelas 0044). `__morte`
-  volta a ser derivado do `__hp` saneado — epoch preservada para dedup, **sem**
-  notícia retroativa. Questão **D6** (preservar vs. zerar o domínio Internet no
-  restore) permanece aberta para deliberação do Dono — o contrato registra o
-  comportamento atual, não o decide.
+- **Restauração "substituir"** (`restaurarEstado`): o domínio Internet **não**
+  viaja no pacote (P9) e é **preservado localmente** — captura integral das 9
+  tabelas por `campaignId` antes de qualquer delete e recriação em ordem FK
+  após `inserirEstado`, na mesma tx (ordem do Dono; implementado em #395
+  `9f23448`). Conta cujo personagem não veio no pacote ganha **âncora**
+  (`characters.status='arquivado'`, dados vazios, sem template, mesmo
+  `characterId`) e a conta fica `status='inativa'` — sem acesso/escrita
+  residual; membership alvo resolve por `userId` (importada do pacote ou
+  reintroduzida `removido`). FK não resolvida aborta a tx inteira. Efeitos
+  registrados: o `handle` da conta ancorada permanece **reservado**
+  (UNIQUE campaignId+handle — não reciclável nesta fatia) e não há caminho
+  de reativação/migração da conta para novo personagem (decisão de produto
+  pendente). `__morte` volta a ser derivado do `__hp` saneado — epoch
+  preservada para dedup, **sem** notícia retroativa. Questão **D6**
+  remanescente: se/quando o pacote poderá carregar domínio público
+  explícito — o restore hoje sempre preserva o local.
 
 ## 6. Decisões registradas (deliberação Dono `7229555079` — fechadas)
 
