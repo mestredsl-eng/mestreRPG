@@ -976,6 +976,9 @@ export const internetPublicacoes = sqliteTable("internet_publicacoes", {
   fonteRef: text("fonte_ref"),
   personagemId: text("personagem_id").references(() => characters.id),
   publicadoEm: integer("publicado_em", { mode: "timestamp_ms" }),
+  // D11 (W6/W7): validade opcional de anuncio/classificado — estado
+  // expirado é derivado na leitura, nunca por job/cron.
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
   retiradoEm: integer("retirado_em", { mode: "timestamp_ms" }),
   retiradoMotivo: text("retirado_motivo"),
   denunciaAberta: integer("denuncia_aberta").notNull().default(0),

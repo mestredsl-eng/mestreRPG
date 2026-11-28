@@ -17,11 +17,12 @@
 // Detalhe nunca carrega corpo/snapshot (sem rollback oculto).
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import {
-  auditLogs, characters, internetAccounts, internetDenuncias,
-  internetPages, internetPublicacoes, internetSites, memberships,
+  auditLogs, characters, internetAccounts, internetContacts,
+  internetConversations, internetDenuncias, internetPages,
+  internetParticipantes, internetPublicacoes, internetSites, memberships,
   sheetVersions,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -32,6 +33,7 @@ import {
   titularAtualDaConta, type ContaAutorizada,
 } from "../lib/conta-internet.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
+import { emitirUsuario } from "../lib/io.js";
 import { estruturaFichaSchema } from "../lib/ficha.js";
 import { carregarRegrasSincrono, extrairEscolhas } from "../lib/regras.js";
 
@@ -866,16 +868,21 @@ internetEscritaRouter.get("/sites/:slug/paginas", requirePapel("mestre", "jogado
 // (notícia de morte) é somente-leitura para todos.
 
 const publicacaoCriarSchema = z.object({
-  tipo: z.enum(["noticia", "post_perfil"]),
+  tipo: z.enum(["noticia", "post_perfil", "anuncio", "classificado"]),
   titulo: z.string().trim().min(1).max(200),
   corpo: z.string().max(50_000),
   formato: z.enum(["texto", "markdown-subset"]).optional(),
   // W8: declaração de visibilidade é OBRIGATÓRIA já na criação.
   visibilidade: z.enum(["campanha", "contatos"]),
-  autorModo: z.enum(["identificado", "pseudonimo"]).optional(),
+  // DP-6: 'anonimo' só é aceito para anuncio|classificado — os demais
+  // tipos rejeitam com 400 (o enum aceita; a regra de tipo é abaixo).
+  autorModo: z.enum(["identificado", "pseudonimo", "anonimo"]).optional(),
   // Charset do handle (internet.ts): letras/dígitos/._- — sem espaços
   // nem pontuação livre; caixa preservada para exibição do pseudônimo.
   pseudoNome: z.string().trim().min(2).max(60).regex(/^[A-Za-z0-9._-]+$/, "pseudoNome inválido").optional(),
+  // D11: validade opcional — só anuncio|classificado; estado expirado
+  // é derivado na leitura (nunca job).
+  expiresAt: z.string().datetime({ offset: true }).optional(),
   contaId: z.string().min(1).optional(),
   // statusInicial removido: POST sempre cria 'rascunho' — publicar é
   // transição posterior via PATCH + expectedVersion (D3).
@@ -886,8 +893,9 @@ const publicacaoPatchSchema = z.object({
   corpo: z.string().max(50_000).optional(),
   formato: z.enum(["texto", "markdown-subset"]).optional(),
   visibilidade: z.enum(["campanha", "contatos"]).optional(),
-  autorModo: z.enum(["identificado", "pseudonimo"]).optional(),
+  autorModo: z.enum(["identificado", "pseudonimo", "anonimo"]).optional(),
   pseudoNome: z.string().trim().min(2).max(60).regex(/^[A-Za-z0-9._-]+$/, "pseudoNome inválido").nullable().optional(),
+  expiresAt: z.string().datetime({ offset: true }).nullable().optional(),
   status: z.enum(["rascunho", "publicado"]).optional(),
   expectedVersion: z.number().int().min(1),
 }).strict();
@@ -940,7 +948,8 @@ function publicacaoSerializada(p: typeof internetPublicacoes.$inferSelect) {
     autorModo: p.autorModo, pseudoNome: p.pseudoNome,
     autorContaId: p.autorContaId, origem: p.origem,
     fonteRef: p.fonteRef, personagemId: p.personagemId,
-    publicadoEm: p.publicadoEm, retiradoEm: p.retiradoEm,
+    publicadoEm: p.publicadoEm, expiresAt: p.expiresAt,
+    retiradoEm: p.retiradoEm,
     retiradoMotivo: p.retiradoMotivo, version: p.version,
     criadoEm: p.createdAt, atualizadoEm: p.updatedAt,
   };
@@ -961,8 +970,17 @@ internetEscritaRouter.post("/publicacoes", requirePapel("mestre", "jogador"), as
   const invalido = formato === "markdown-subset" ? formatoInvalido(d.corpo) : null;
   if (invalido) { erroHttp(res, 400, "formato_invalido", { motivo: invalido }); return; }
   const autorModo = d.autorModo ?? "identificado";
+  // DP-6: anonimato só existe em anuncio|classificado — nos demais
+  // tipos o servidor rejeita (a UI nem renderiza a opção).
+  if (autorModo === "anonimo" && d.tipo !== "anuncio" && d.tipo !== "classificado") {
+    erroHttp(res, 400, "anonimo_apenas_anuncio_ou_classificado"); return;
+  }
   if (autorModo === "pseudonimo" && !d.pseudoNome) {
     erroHttp(res, 400, "pseudo_nome_obrigatorio"); return;
+  }
+  // D11: expiresAt só se aplica a anuncio|classificado.
+  if (d.expiresAt && d.tipo !== "anuncio" && d.tipo !== "classificado") {
+    erroHttp(res, 400, "expiresAt_apenas_anuncio_ou_classificado"); return;
   }
 
   const ehMestre = await mestreLeitorDaCampanha(cid, req.usuario!.id);
@@ -992,6 +1010,7 @@ internetEscritaRouter.post("/publicacoes", requirePapel("mestre", "jogador"), as
       autorModo, pseudoNome: autorModo === "pseudonimo" ? d.pseudoNome! : null,
       autorContaId: auth?.conta.id ?? null, origem: "usuario",
       publicadoEm: null,
+      expiresAt: d.expiresAt ? new Date(d.expiresAt) : null,
       createdAt: agora, updatedAt: agora,
     }).run();
     auditTx(tx, req, cid, "publicacao.criada", {
@@ -1030,6 +1049,12 @@ internetEscritaRouter.patch("/publicacoes/:id", requirePapel("mestre", "jogador"
     : null;
   const atorMestreSemConta = !pub.autorContaId && ehMestre;
   if (!auth && !atorMestreSemConta) { erroHttp(res, 404, "Publicação não encontrada"); return; }
+  // AD-08/DP-1: anúncio/classificado anônimo PUBLICADO é imutável —
+  // nenhuma edição, troca de identidade ou transição de status.
+  // (Rascunho anônimo continua editável até a publicação.)
+  if (pub.autorModo === "anonimo" && pub.status === "publicado") {
+    erroHttp(res, 403, "publicacao_anonima_imutavel"); return;
+  }
 
   const body = publicacaoPatchSchema.safeParse(req.body);
   if (!body.success) { erroHttp(res, 400, "Dados inválidos", { detalhes: body.error.issues }); return; }
@@ -1044,6 +1069,17 @@ internetEscritaRouter.patch("/publicacoes/:id", requirePapel("mestre", "jogador"
   const pseudoFinal = d.pseudoNome === undefined ? pub.pseudoNome : d.pseudoNome;
   if (modoFinal === "pseudonimo" && !pseudoFinal) {
     erroHttp(res, 400, "pseudo_nome_obrigatorio"); return;
+  }
+  // DP-6/D11: anonimo e expiresAt só valem para anuncio|classificado
+  // (tipo é imutável — a checagem é sempre contra pub.tipo).
+  if (modoFinal === "anonimo" && pub.tipo !== "anuncio" && pub.tipo !== "classificado") {
+    erroHttp(res, 400, "anonimo_apenas_anuncio_ou_classificado"); return;
+  }
+  const expiresFinal = d.expiresAt === undefined
+    ? pub.expiresAt
+    : d.expiresAt === null ? null : new Date(d.expiresAt);
+  if (expiresFinal && pub.tipo !== "anuncio" && pub.tipo !== "classificado") {
+    erroHttp(res, 400, "expiresAt_apenas_anuncio_ou_classificado"); return;
   }
   const statusFinal = d.status ?? pub.status;
   if (statusFinal !== "rascunho" && statusFinal !== "publicado") {
@@ -1070,6 +1106,7 @@ internetEscritaRouter.patch("/publicacoes/:id", requirePapel("mestre", "jogador"
     (d.visibilidade !== undefined && d.visibilidade !== pub.visibilidade) ||
     (d.autorModo !== undefined && d.autorModo !== pub.autorModo) ||
     (d.pseudoNome !== undefined && pseudoFinal !== pub.pseudoNome) ||
+    (d.expiresAt !== undefined && expiresFinal?.getTime() !== pub.expiresAt?.getTime()) ||
     (d.status !== undefined && d.status !== pub.status);
   if (!mudou) {
     res.json({ ok: true, publicacao: publicacaoSerializada(pub) });
@@ -1090,6 +1127,7 @@ internetEscritaRouter.patch("/publicacoes/:id", requirePapel("mestre", "jogador"
       visibilidade: d.visibilidade ?? pub.visibilidade,
       autorModo: modoFinal,
       pseudoNome: modoFinal === "pseudonimo" ? pseudoFinal : null,
+      expiresAt: expiresFinal,
       status: statusFinal,
       // publicadoEm = PRIMEIRA publicação (não reescreve ao republicar)
       publicadoEm: statusFinal === "publicado" && !pub.publicadoEm ? agora : pub.publicadoEm,
@@ -1255,3 +1293,156 @@ internetEscritaRouter.post("/publicacoes/:id/contestar", requirePapel("mestre", 
   res.json({ ok: true, contestadas: nContestadas });
 });
 
+
+/** POST /publicacoes/:id/contatar — D9 (W6/W7): a ação "Contatar" do
+ *  anúncio/classificado REUSA o fluxo de contatos existente — nunca
+ *  cria chat paralelo (AD-11). Regras:
+ *  - só anuncio|classificado publicado, não expirado (D11), com conta
+ *    autora ativa e autorModo != 'anonimo' (DP-1: anônimo não tem
+ *    identidade para contatar — 404 uniforme, sem oráculo);
+ *  - aresta aceita vigente → devolve/cria a conversa direta existente
+ *    por parKey (no máximo +1, nunca segunda thread);
+ *  - aresta pendente → replay do pedido; sem aresta → pedido pendente
+ *    origem→autor (mesma máquina de /contacts: bloqueio bilateral P3,
+ *    aceite do destinatário antes de qualquer conversa).
+ *  origemContaId opcional quando o requisitante tem >1 conta. */
+const contatarSchema = z.object({
+  origemContaId: z.string().min(1).optional(),
+}).strict();
+
+internetEscritaRouter.post("/publicacoes/:id/contatar", requirePapel("mestre", "jogador"), async (req, res) => {
+  const cid = campanhaId(req);
+  const body = contatarSchema.safeParse(req.body ?? {});
+  if (!body.success) { erroHttp(res, 400, "Dados inválidos", { detalhes: body.error.issues }); return; }
+
+  const pub = await publicacaoPorId(cid, req.params.id);
+  const tipoOk = pub && (pub.tipo === "anuncio" || pub.tipo === "classificado");
+  const expirado = !!pub?.expiresAt && pub.expiresAt.getTime() <= Date.now();
+  if (!pub || pub.status !== "publicado" || !tipoOk || pub.origem === "sistema"
+    || !pub.autorContaId || pub.autorModo === "anonimo" || expirado) {
+    erroHttp(res, 404, "Publicação não encontrada"); return;
+  }
+  const [destino] = await db.select().from(internetAccounts)
+    .where(and(eq(internetAccounts.id, pub.autorContaId), eq(internetAccounts.campaignId, cid), eq(internetAccounts.status, "ativa")))
+    .limit(1);
+  if (!destino) { erroHttp(res, 404, "Publicação não encontrada"); return; }
+
+  // origem do requisitante — mesma regra de resolverOrigem (internet.ts)
+  const minhas = await contasDoUsuario(cid, req.usuario!.id);
+  const origem = body.data.origemContaId
+    ? minhas.find((c) => c.id === body.data.origemContaId)
+    : minhas.length === 1 ? minhas[0] : undefined;
+  if (!origem) {
+    erroHttp(res, 400, minhas.length > 1 ? "origemContaId obrigatório" : "Sem conta elegível"); return;
+  }
+  const auth = await contaAutorizadaPara(origem.id, req.usuario!.id);
+  if (!auth) { erroHttp(res, 403, "Conta não autorizada"); return; }
+  // DP-2/visibilidade: só se contata o que se pode ler — 'contatos'
+  // exige aresta aceita vigente com o autor, sem bloqueio P3 (mesmo
+  // gate do /denunciar; sem ele haveria oráculo de existência).
+  if (pub.visibilidade === "contatos") {
+    const aceito = await contatoAceitoEntre(db, cid, origem.id, destino.id);
+    const bloqueado = aceito ? await contatoBloqueadoEntre(db, cid, origem.id, destino.id) : false;
+    if (!aceito || bloqueado) { erroHttp(res, 404, "Publicação não encontrada"); return; }
+  }
+  if (origem.id === destino.id) { erroHttp(res, 400, "Não é possível contatar a si mesmo"); return; }
+  if (await contatoBloqueadoEntre(db, cid, origem.id, destino.id)) {
+    erroHttp(res, 403, "Contato bloqueado"); return;
+  }
+
+  // arestas em qualquer direção entre o par
+  const arestas = await db.select().from(internetContacts)
+    .where(and(
+      eq(internetContacts.campaignId, cid),
+      or(
+        and(eq(internetContacts.contaOrigemId, origem.id), eq(internetContacts.contaDestinoId, destino.id)),
+        and(eq(internetContacts.contaOrigemId, destino.id), eq(internetContacts.contaDestinoId, origem.id)),
+      ),
+    ));
+  const pendente = arestas.find((a) => a.status === "pendente");
+  if (pendente) {
+    res.json({ ok: true, contato: { id: pendente.id, status: "pendente" }, replay: true }); return;
+  }
+  const aceita = arestas.find((a) => a.status === "aceito");
+
+  if (aceita) {
+    // aresta aceita → conversa direta por parKey (cria só se ainda não
+    // existir — mesmo predicado de POST /conversations)
+    const parKey = [origem.id, destino.id].sort().join("|");
+    const [existente] = await db.select().from(internetConversations)
+      .where(and(eq(internetConversations.campaignId, cid), eq(internetConversations.parKey, parKey)))
+      .limit(1);
+    if (existente) {
+      res.json({ ok: true, conversa: existente.id, contato: { status: "aceito" } }); return;
+    }
+    const agora = new Date();
+    const cidConv = crypto.randomUUID();
+    if (negaSemCota(req, res)) return;
+    let criado = false;
+    db.transaction((tx) => {
+      if (!titularNaTx(tx, origem.id, req.usuario!.id, cid)) return;
+      tx.insert(internetConversations).values({
+        id: cidConv, campaignId: cid, tipo: "direta", parKey,
+        status: "ativa", createdByContaId: origem.id, createdAt: agora, updatedAt: agora,
+      }).run();
+      tx.insert(internetParticipantes).values([
+        { id: crypto.randomUUID(), conversaId: cidConv, contaId: origem.id, papel: "dono", status: "ativo", convidadoEm: agora, decididoEm: agora, createdAt: agora, updatedAt: agora },
+        { id: crypto.randomUUID(), conversaId: cidConv, contaId: destino.id, papel: "membro", status: "ativo", convidadoPorContaId: origem.id, convidadoEm: agora, decididoEm: agora, createdAt: agora, updatedAt: agora },
+      ]).run();
+      auditTx(tx, req, cid, "internet.conversa_criada", { conversaId: cidConv, tipo: "direta", origem: "contatar" });
+      criado = true;
+    });
+    if (!criado) { erroHttp(res, 403, "Titularidade da conta não confirmada"); return; }
+    consumirMutacao(req);
+    res.status(201).json({ ok: true, conversa: cidConv, contato: { status: "aceito" } });
+    return;
+  }
+
+  // sem aresta → pedido de contato pendente (mesma máquina de /contacts)
+  const agora = new Date();
+  const id = crypto.randomUUID();
+  if (negaSemCota(req, res)) return;
+  let commitado = false;
+  let falhaTitular = false;
+  let conflito: "bloqueado" | "aresta" | null = null;
+  await db.transaction((tx) => {
+    if (!titularNaTx(tx, origem.id, req.usuario!.id, cid)) { falhaTitular = true; return; }
+    // re-check dentro da tx (corrida com aceite/bloqueio) — select
+    // síncrono: a tx do better-sqlite3 não aceita callback async
+    const arestasTx = tx.select({ status: internetContacts.status }).from(internetContacts)
+      .where(and(
+        eq(internetContacts.campaignId, cid),
+        or(
+          and(eq(internetContacts.contaOrigemId, origem.id), eq(internetContacts.contaDestinoId, destino.id)),
+          and(eq(internetContacts.contaOrigemId, destino.id), eq(internetContacts.contaDestinoId, origem.id)),
+        ),
+      )).all();
+    if (arestasTx.some((a) => a.status === "bloqueado")) { conflito = "bloqueado"; return; }
+    if (arestasTx.some((a) => a.status !== "pendente")) { conflito = "aresta"; return; }
+    tx.insert(internetContacts).values({
+      id, campaignId: cid, contaOrigemId: origem.id, contaDestinoId: destino.id,
+      status: "pendente", createdAt: agora, updatedAt: agora,
+    }).run();
+    auditTx(tx, req, cid, "internet.contato_pedido", {
+      contatoId: id, origem: origem.id, destino: destino.id, origemAcao: "contatar",
+    });
+    commitado = true;
+  });
+  if (falhaTitular) { erroHttp(res, 403, "Titularidade da conta não confirmada"); return; }
+  if (conflito === "bloqueado") { erroHttp(res, 403, "Contato bloqueado"); return; }
+  if (conflito === "aresta") { erroHttp(res, 409, "aresta_existente"); return; }
+  if (!commitado) { erroHttp(res, 500, "Falha ao registrar contato"); return; }
+  consumirMutacao(req);
+  // notifica o destinatário pela sala privada (mesmo evento de /contacts)
+  const [destUser] = await db.select({ userId: memberships.userId }).from(internetAccounts)
+    .innerJoin(characters, eq(internetAccounts.characterId, characters.id))
+    .innerJoin(memberships, eq(characters.membershipId, memberships.id))
+    .where(and(eq(internetAccounts.id, destino.id), eq(memberships.status, "ativo"))).limit(1);
+  if (destUser) {
+    emitirUsuario(destUser.userId, "internet:contato", {
+      campanhaId: cid, contatoId: id, status: "pendente",
+      de: { id: origem.id, handle: origem.handle, displayName: origem.displayName },
+    });
+  }
+  res.status(201).json({ ok: true, contato: { id, status: "pendente" } });
+});

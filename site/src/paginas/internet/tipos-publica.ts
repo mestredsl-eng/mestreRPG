@@ -49,11 +49,12 @@ export interface PaginaPagina<T> {
 
 // ---------- Publicações (W4 feed / W5 matéria / W8-subset escrita) ----------
 
-export type TipoPublicacao = "noticia" | "post_perfil";
+export type TipoPublicacao = "noticia" | "post_perfil" | "anuncio" | "classificado";
 export type VisibilidadePublicacao = "campanha" | "contatos";
 export type AutorPublicacao =
   | { modo: "identificado"; id: string; handle: string; displayName: string }
   | { modo: "pseudonimo"; nome: string }
+  | { modo: "anonimo" }
   | null;
 
 export interface PublicacaoResumo {
@@ -64,6 +65,7 @@ export interface PublicacaoResumo {
   origem: "usuario" | "sistema";
   visibilidade: VisibilidadePublicacao;
   publicadoEm: string | null;
+  expiresAt?: string | null;
   atualizadoEm: string;
 }
 
@@ -75,12 +77,21 @@ export interface PublicacaoDetalhe {
   formato: string;
   status: "rascunho" | "publicado" | "removido";
   visibilidade: VisibilidadePublicacao;
-  autorModo: "identificado" | "pseudonimo";
-  pseudoNome: string | null;
+  autorModo?: "identificado" | "pseudonimo" | "anonimo";
+  pseudoNome?: string | null;
+  /** DP-1: presente (true) quando a publicação é anônima — a resposta
+   *  sanitizada não carrega nenhuma chave de identidade do autor. */
+  anonimo?: boolean;
   origem: "usuario" | "sistema";
-  autor: AutorPublicacao;
-  personagemId: string | null;
+  autor?: AutorPublicacao;
+  personagemId?: string | null;
   publicadoEm: string | null;
+  expiresAt?: string | null;
+  /** D11: estado derivado na leitura — nunca persistido. */
+  expirado?: boolean;
+  /** D9: o leitor pode iniciar o fluxo Contatar (anúncio/classificado
+   *  vigente, sem bloqueio). Anônimo ⇒ sempre false. */
+  podeContatar?: boolean;
   criadoEm: string;
   atualizadoEm: string;
   // Só presentes para autor/mestre (prévia privilegiada)
@@ -99,6 +110,7 @@ export interface MinhaPublicacao {
   pseudoNome: string | null;
   origem: string;
   publicadoEm: string | null;
+  expiresAt?: string | null;
   version: number;
   criadoEm: string;
   atualizadoEm: string;
@@ -109,7 +121,8 @@ export interface PublicacaoNova {
   titulo: string;
   corpo: string;
   visibilidade: VisibilidadePublicacao;
-  autorModo?: "identificado" | "pseudonimo";
+  autorModo?: "identificado" | "pseudonimo" | "anonimo";
   pseudoNome?: string;
+  expiresAt?: string;
   contaId?: string;
 }

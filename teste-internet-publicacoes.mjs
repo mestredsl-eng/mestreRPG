@@ -131,7 +131,7 @@ try {
 
   const semVis = await API("POST", "/publicacoes", j1.cookie, { tipo: "noticia", titulo: "X", corpo: "y" });
   t("visibilidade obrigatória → 400", semVis.status === 400, `status=${semVis.status}`);
-  const invalido = await API("POST", "/publicacoes", j1.cookie, { tipo: "anuncio", titulo: "X", corpo: "y", visibilidade: "campanha" });
+  const invalido = await API("POST", "/publicacoes", j1.cookie, { tipo: "propaganda", titulo: "X", corpo: "y", visibilidade: "campanha" });
   t("tipo fora do subset → 400", invalido.status === 400);
   const html = await API("POST", "/publicacoes", j1.cookie, { tipo: "noticia", titulo: "X", corpo: "<script>x</script>", visibilidade: "campanha" });
   t("HTML cru no corpo → 400 formato_invalido", html.status === 400);
@@ -601,6 +601,137 @@ try {
     const db = abrirDb(BANCO);
     db.prepare("update internet_accounts set character_id=? where id=?").run(charJ1, contaJ1);
     db.close();
+  }
+
+  // ---------- K. W6/W7/W8 — anúncios/classificados (D9/D11/DP-1/DP-6) ----------
+  sec("K. Anúncios/classificados — tipos, anonimato, expiração, contatar");
+  const criarAnuncioK = async (cookie, dados) => {
+    const r = await API("POST", "/publicacoes", cookie, { tipo: "anuncio", visibilidade: "campanha", ...dados });
+    return { status: r.status, json: r.json, id: r.json?.publicacao?.id, version: r.json?.publicacao?.version ?? 1 };
+  };
+  const pubK = async (id) => {
+    const db = abrirDb(BANCO);
+    const r = db.prepare("select * from internet_publicacoes where id=?").get(id);
+    db.close(); return r;
+  };
+  let idAnK = null, idAnonK = null, idExpK = null;
+  {
+    const rAn = await criarAnuncioK(j1.cookie, { titulo: "ANUNC_K_Vendo", corpo: "aro 26" });
+    t("K1 anuncio criado", rAn.status === 201, `status=${rAn.status}`);
+    idAnK = rAn.id;
+    const rCl = await API("POST", "/publicacoes", j1.cookie, { tipo: "classificado", titulo: "ALUGO_K", corpo: "quarto", visibilidade: "campanha" });
+    t("K1b classificado criado", rCl.status === 201, `status=${rCl.status}`);
+    const idClK = rCl.json?.publicacao?.id;
+    const vClK = rCl.json?.publicacao?.version ?? 1;
+    const rAnon = await criarAnuncioK(j1.cookie, { titulo: "ANON_K_Gato", corpo: "siamês perdido", autorModo: "anonimo" });
+    t("K2 anuncio anonimo aceito", rAnon.status === 201, `status=${rAnon.status}`);
+    idAnonK = rAnon.id;
+    const rAnonNot = await API("POST", "/publicacoes", j1.cookie, { tipo: "noticia", titulo: "x", corpo: "y", visibilidade: "campanha", autorModo: "anonimo" });
+    t("K2b DP-6: noticia anonimo → 400", rAnonNot.status === 400, `status=${rAnonNot.status}`);
+    const rAnonPerfil = await API("POST", "/publicacoes", j1.cookie, { tipo: "post_perfil", titulo: "x", corpo: "y", visibilidade: "campanha", autorModo: "anonimo" });
+    t("K2c DP-6: post_perfil anonimo → 400", rAnonPerfil.status === 400, `status=${rAnonPerfil.status}`);
+    // expiração derivada
+    const rExp = await criarAnuncioK(j1.cookie, { titulo: "ANUNC_K_EXP", corpo: "vence", expiresAt: new Date(Date.now() - 1000).toISOString() });
+    t("K3 expiresAt passado aceito na criação", rExp.status === 201, `status=${rExp.status}`);
+    idExpK = rExp.id;
+    const rFut = await criarAnuncioK(j1.cookie, { titulo: "ANUNC_K_FUT", corpo: "vigente", expiresAt: new Date(Date.now() + 3600e3).toISOString() });
+    const rSem = await criarAnuncioK(j1.cookie, { titulo: "ANUNC_K_PERM", corpo: "permanente" });
+    const aPublicar = [
+      [rAn.id, rAn.version], [idClK, vClK], [rAnon.id, rAnon.version],
+      [rExp.id, rExp.version], [rFut.id, rFut.version], [rSem.id, rSem.version],
+    ];
+    for (const [pid, ver] of aPublicar) {
+      if (pid) await API("PATCH", `/publicacoes/${pid}`, j1.cookie, { status: "publicado", expectedVersion: ver ?? 1 });
+    }
+    const feedAn = await API("GET", "/publicacoes?tipo=anuncio&limit=50", j2.cookie);
+    const blobFeed = JSON.stringify(feedAn.json);
+    t("K4 feed anuncio exclui expirado", !blobFeed.includes("ANUNC_K_EXP"), blobFeed.slice(0, 160));
+    t("K4b feed anuncio tem permanente e futuro", blobFeed.includes("ANUNC_K_PERM") && blobFeed.includes("ANUNC_K_FUT"));
+    const feedCl = await API("GET", "/publicacoes?tipo=classificado&limit=50", j2.cookie);
+    const blobCl = JSON.stringify(feedCl.json);
+    t("K4d feed classificado filtra tipo", blobCl.includes("ALUGO_K") && !blobCl.includes("ANUNC_K_PERM"));
+    // detalhe do expirado deriva estado
+    const detExp = await API("GET", `/publicacoes/${idExpK}`, j2.cookie);
+    t("K5 detalhe expirado deriva estado", detExp.status === 200 && /expirado|expiresAt/i.test(JSON.stringify(detExp.json)), `status=${detExp.status}`);
+  }
+  {
+    // anônimo: detalhe sanitizado + imutável + feed sem identidade
+    await API("PATCH", `/publicacoes/${idAnonK}`, j1.cookie, { status: "publicado", expectedVersion: 1 });
+    const detAnon = await API("GET", `/publicacoes/${idAnonK}`, j2.cookie);
+    const blobAnon = JSON.stringify(detAnon.json);
+    t("K6 detalhe anon sem identidade", detAnon.status === 200 && !blobAnon.includes("ada.foca") && !blobAnon.includes("autorContaId") && !blobAnon.includes("w678") , blobAnon.slice(0, 200));
+    const feedAnon = await API("GET", "/publicacoes?tipo=anuncio&limit=50", j2.cookie);
+    const itemAnon = (feedAnon.json?.publicacoes ?? []).find((p) => p.id === idAnonK);
+    t("K6b feed anon autor.modo=anonimo sem handle", itemAnon && itemAnon.autor?.modo === "anonimo" && !JSON.stringify(itemAnon).includes("ada.foca"), JSON.stringify(itemAnon).slice(0, 160));
+    const rEdit = await API("PATCH", `/publicacoes/${idAnonK}`, j1.cookie, { titulo: "edit", expectedVersion: 2 });
+    t("K7 anon publicado imutável → 403", rEdit.status === 403, `status=${rEdit.status}`);
+    const rDesc = await API("PATCH", `/publicacoes/${idAnonK}`, j1.cookie, { status: "rascunho", expectedVersion: 2 });
+    t("K7b anon não despublica", rDesc.status === 403, `status=${rDesc.status}`);
+  }
+  {
+    // D9 contatar — aresta aceita j2→j1 existe → conversa direta ou replay
+    const contarConv = () => { const db = abrirDb(BANCO); const n = db.prepare("select count(*) n from internet_conversations").get().n; db.close(); return n; };
+    const convAntes = contarConv();
+    const rCont = await API("POST", `/publicacoes/${idAnK}/contatar`, j2.cookie, {});
+    t("K8 contatar anuncio → 200/201", rCont.status === 200 || rCont.status === 201, `status=${rCont.status} ${JSON.stringify(rCont.json).slice(0, 140)}`);
+    const convDepois = contarConv();
+    t("K8b no máximo +1 conversa (nunca chat paralelo)", convDepois === convAntes || convDepois === convAntes + 1, `${convAntes}→${convDepois}`);
+    // replay: segunda chamada não cria nada novo
+    const convAntes2 = contarConv();
+    const rCont2 = await API("POST", `/publicacoes/${idAnK}/contatar`, j2.cookie, {});
+    const convDepois2 = contarConv();
+    t("K8c contatar idempotente", convDepois2 === convAntes2, `${convAntes2}→${convDepois2} status=${rCont2.status}`);
+    // j3 sem aresta → pedido pendente (201) ou 4xx controlado
+    const rContJ3 = await API("POST", `/publicacoes/${idAnK}/contatar`, j3.cookie, {});
+    t("K9 terceiro sem aresta → pedido/4xx", [200, 201, 400, 403, 404, 409].includes(rContJ3.status), `status=${rContJ3.status}`);
+    // anônimo → negado
+    const rContAnon = await API("POST", `/publicacoes/${idAnonK}/contatar`, j2.cookie, {});
+    t("K10 contatar anon → 4xx", rContAnon.status >= 400 && rContAnon.status < 500, `status=${rContAnon.status}`);
+    // mensagem paralela não existe
+    const rMsgParalela = await API("POST", `/publicacoes/${idAnK}/mensagem`, j2.cookie, { texto: "oi" });
+    t("K11 sem endpoint de chat paralelo", rMsgParalela.status === 404, `status=${rMsgParalela.status}`);
+  }
+  {
+    // INTERMEDIÁRIO #398: /contatar deve respeitar visibilidade='contatos'
+    // (mesmo gate do /denunciar) — sem aresta aceita → 404, sem oráculo.
+    const rCt = await API("POST", "/publicacoes", j1.cookie, { tipo: "anuncio", titulo: "ANUNC_K_CONT", corpo: "só contatos", visibilidade: "contatos" });
+    t("K12 anuncio visibilidade=contatos criado", rCt.status === 201, `status=${rCt.status}`);
+    const idCtK = rCt.json?.publicacao?.id;
+    if (idCtK) {
+      await API("PATCH", `/publicacoes/${idCtK}`, j1.cookie, { status: "publicado", expectedVersion: rCt.json?.publicacao?.version ?? 1 });
+      // j2 ganha 2ª conta ativa sem arestas (a de j3 está inativa
+      // pós-restore J4) — seed SQL no padrão das fixtures da suíte
+      const charJ2b = crypto.randomUUID(), contaJ2b = crypto.randomUUID();
+      {
+        const db = abrirDb(BANCO); const agora = Date.now();
+        // clona data/overrides do charJ2 p/ passar o gate de elegibilidade
+        const j2char = db.prepare("select * from characters where campaign_id=? and membership_id=? limit 1")
+          .get(campId, C.jogadores.j2.membershipId);
+        db.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,is_npc,template_version_id,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
+          .run(charJ2b, campId, C.jogadores.j2.membershipId, "Bia Sem Aresta", j2char?.data ?? "{}", j2char?.overrides ?? "{}", "aprovada", 0, j2char?.template_version_id ?? null, agora, agora);
+        // patrimônio do gate (inventário+equipamento) — sem isso o
+        // personagem clonado não tem o dispositivo físico reconhecido
+        for (const t of ["inventory_entries", "equipment_entries"]) {
+          const cols = db.prepare(`select * from ${t} where character_id=?`).all(j2char?.id);
+          for (const e of cols) {
+            const { id: _id, character_id: _cid, ...rest } = e;
+            const chaves = Object.keys(rest);
+            db.prepare(`insert into ${t} (id,character_id,${chaves.join(",")}) values (?,?${chaves.map(() => ",?").join("")})`)
+              .run(crypto.randomUUID(), charJ2b, ...chaves.map((k) => rest[k]));
+          }
+        }
+        db.prepare("insert into internet_accounts (id,campaign_id,character_id,handle,display_name,status,mostrar_presenca,mostrar_digitando,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+          .run(contaJ2b, campId, charJ2b, "bia.semaresta", null, "ativa", 0, 0, agora, agora);
+        db.close();
+      }
+      // sem aresta aceita com j1 → 404 (antes: 201/200 = oráculo)
+      const rCtJ3 = await API("POST", `/publicacoes/${idCtK}/contatar`, j2.cookie, { origemContaId: contaJ2b });
+      t("K12b contatos sem aresta → 404 uniforme", rCtJ3.status === 404, `status=${rCtJ3.status}`);
+      // j2 tem aresta aceita com j1 → caminho normal (origem explícita:
+      // j2 agora tem 2 contas — a seeded sem arestas + a original)
+      const rCtJ2 = await API("POST", `/publicacoes/${idCtK}/contatar`, j2.cookie, { origemContaId: contaJ2 });
+      t("K12c contatos com aresta aceita → 200/201", rCtJ2.status === 200 || rCtJ2.status === 201, `status=${rCtJ2.status}`);
+    }
   }
 } finally {
   if (proc) await encerrarServidor(proc);

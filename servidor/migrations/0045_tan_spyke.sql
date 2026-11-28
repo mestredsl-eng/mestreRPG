@@ -1,0 +1,1 @@
+ALTER TABLE `internet_publicacoes` ADD `expires_at` integer;
