@@ -209,7 +209,8 @@ try {
   {
     const charsJ1 = await apiFetch(pg1, "GET", `/campaigns/${campanhaId}/characters`);
     const idExistente = (charsJ1.json?.personagens ?? []).find((p) => p.name === J1.nome)?.id;
-    t("personagem existente de J1 localizado p/ corrida", !!idExistente, `id=${idExistente}`);
+    if (!idExistente) throw new Error("personagem existente de J1 não localizado para o teste de interleaving");
+    t("personagem existente de J1 localizado p/ corrida", true, `id=${idExistente}`);
     // volta à lista (o detalhe da ficha enviada ainda está aberto)
     await pg1.getByRole("button", { name: "Voltar" }).last().click();
     await pg1.locator("tr.clicavel").first().waitFor({ timeout: 15000 });
@@ -238,6 +239,9 @@ try {
       t("corrida: 'Editar ficha' ausente na ficha criada",
         (await pg1.getByRole("button", { name: "Editar ficha" }).count()) === 0);
     } finally {
+      // Solta sempre a request interceptada, inclusive quando uma ação/assert falha.
+      // Promise.resolve é idempotente; repetir a liberação no caminho feliz é seguro.
+      liberarGetAntigo();
       await pg1.unroute(padraoGet).catch(() => { });
     }
   }
