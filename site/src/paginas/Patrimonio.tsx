@@ -123,7 +123,7 @@ export default function Patrimonio({ characterId, campaignId, souMestre, somente
   };
 
   return (
-    <section className="cartao">
+    <section className="cartao" id="secao-patrimonio" tabIndex={-1}>
       <h3>Patrimônio</h3>
       <div className="abas" role="tablist" aria-label="Seções do patrimônio" onKeyDown={aoTeclarAbas}>
         {abas.map(([id, label]) => (
