@@ -631,6 +631,7 @@ internetPerfisRouter.get("/busca", requirePapel("mestre", "jogador"), limitePerf
     .innerJoin(characters, and(
       eq(characters.id, internetPerfis.characterId),
       eq(characters.campaignId, cid),
+      ne(characters.status, "arquivado"),
     ))
     .where(and(
       eq(internetPerfis.campaignId, cid),

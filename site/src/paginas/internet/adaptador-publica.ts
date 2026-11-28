@@ -144,11 +144,15 @@ export function criarAdaptadorInternetPublica({ campaignId }: { campaignId: stri
     },
 
     /** D12: busca de perfis por HANDLE somente — displayName/nome
-     *  público não indexam (SEARCH-06). */
+     *  público não indexam (SEARCH-06). Consome o envelope unificado
+     *  W2 `{resultados}` filtrando escopo='perfil' (TG #400). */
     async buscarPerfis(q: string): Promise<PerfilResumoBusca[]> {
-      const r = await requisicao<{ perfis: PerfilResumoBusca[] }>(
-        `${base}/busca?q=${encodeURIComponent(q)}`);
-      return r.perfis;
+      const r = await requisicao<{
+        resultados: { escopo: string; ref: string; trecho: string | null }[];
+      }>(`${base}/busca?q=${encodeURIComponent(q)}`);
+      return (r.resultados ?? [])
+        .filter((i) => i.escopo === "perfil")
+        .map((i) => ({ handle: i.ref, nomePublico: i.trecho ?? "" }));
     },
 
     /** Visão do próprio titular (characterId vem da URL — escopo
