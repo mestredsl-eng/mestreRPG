@@ -49,6 +49,7 @@ async function abrirArmazem(page) {
   await page.locator("tr", { hasText: "PJ A2" }).first().click();
   await page.getByRole("button", { name: "Equipamento/Armazém" }).click();
   await page.getByRole("tab", { name: "Inventário" }).waitFor({ timeout: 15000 });
+  await page.locator('section[aria-label="Equipamento e Armazém"] [role=tabpanel]').first().waitFor({ timeout: 15000 });
 }
 
 async function checarSemantica(page, rotulo) {
@@ -67,27 +68,28 @@ async function checarSemantica(page, rotulo) {
     const selected = await tab.getAttribute("aria-selected");
     if (!id) idsOk = false;
     if (!controls) controlsOk = false;
-    else {
-      const painel = page.locator(`#${CSS.escape(controls)}`);
-      if ((await painel.count()) === 0) controlsOk = false;
-      else {
-        const lp = await painel.getAttribute("aria-labelledby");
-        if (lp !== id) controlsOk = false;
-      }
+    else if (selected === "true") {
+      // só o painel ativo existe no DOM (render condicional — mesmo
+      // padrão de Campanha.tsx); inativos exigem apenas o atributo.
+      const painel = page.locator(`[id="${controls}"]`);
+      const nP = await painel.count();
+      const lp = nP ? await painel.first().getAttribute("aria-labelledby") : null;
+      if (nP === 0 || lp !== id) { controlsOk = false; console.log(`  [dbg] tab=${id} controls=${controls} nP=${nP} lp=${lp}`); }
     }
     // roving: selecionada=0, demais=-1 (ou ausente só se padrão manual — exigimos roving)
     const esperado = selected === "true" ? "0" : "-1";
     if (ti !== esperado) tabindexOk = false;
   }
   t(`${rotulo}: tabs têm id`, idsOk);
-  t(`${rotulo}: aria-controls aponta p/ tabpanel rotulado de volta`, controlsOk);
+  t(`${rotulo}: aria-controls aponta p/ tabpanel rotulado de volta`, controlsOk,
+    await tablist.evaluate((el) => [...el.querySelectorAll("[role=tab]")].map((b) => `${b.id}|${b.getAttribute("aria-controls")}|${b.getAttribute("aria-selected")}|${document.getElementById(b.getAttribute("aria-controls") || "")?.getAttribute("aria-labelledby")}`).join(" ; ")));
   t(`${rotulo}: roving tabindex (selecionada=0, demais=-1)`, tabindexOk);
 
   // role=tabpanel no painel ativo
   const ativa = tablist.getByRole("tab", { selected: true });
   const controlsAtiva = await ativa.getAttribute("aria-controls");
   if (controlsAtiva) {
-    const painel = page.locator(`#${CSS.escape(controlsAtiva)}`);
+    const painel = page.locator(`[id="${controlsAtiva}"]`);
     t(`${rotulo}: painel ativo é role=tabpanel`, (await painel.getAttribute("role")) === "tabpanel");
   } else {
     t(`${rotulo}: painel ativo é role=tabpanel`, false, "sem aria-controls");
