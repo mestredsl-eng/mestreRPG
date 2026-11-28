@@ -17,12 +17,12 @@ import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { and, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { getDb } from "../db/index.js";
-import { internetAccounts, internetPages, internetSites } from "../db/schema.js";
+import { internetAccounts, internetPages, internetPublicacoes, internetSites } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
 import {
-  contaAutorizadaPara, contasDoUsuario, codificarCursor, decodificarCursor,
-  mestreLeitorDaCampanha,
+  contaAutorizadaPara, contasDoUsuario, codificarCursor, contatoAceitoEntre,
+  contatoBloqueadoEntre, decodificarCursor, mestreLeitorDaCampanha,
 } from "../lib/conta-internet.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
 
@@ -254,5 +254,192 @@ internetPublicaRouter.get("/sites/:slug/paginas/:pageSlug", requirePapel("mestre
       autor: autor ? contaPublica(autor) : null,
     },
     site: { slug: site.slug, nome: site.nome },
+  });
+});
+
+// ---------- Publicações (W4 lista / W5 matéria — contrato CONTRATO-W4W5) ----------
+//
+// visivel(pub, leitor): status='publicado' ∧ campanha do leitor ∧
+// (visibilidade='campanha' ∨ autor ∈ contas do leitor ∨ aresta aceita
+// vigente com o autor sem bloqueio P3). `contatos` nunca aparece em
+// busca/agregados — aqui só filtra linhas; agregados são fatias W2/W6.
+
+function contaIdsDoLeitor(leitor: LeitorPublico) {
+  return leitor.contas.map((c) => c.id);
+}
+
+/** aresta aceita vigente leitor→autor (qualquer direção de aresta,
+ *  mesmo predicado de contatoAceitoEntre) sem bloqueio bilateral. */
+async function visivelParaLeitor(
+  pub: typeof internetPublicacoes.$inferSelect,
+  leitor: LeitorPublico,
+  cid: string,
+): Promise<boolean> {
+  if (pub.status !== "publicado" || pub.campaignId !== cid) return false;
+  if (pub.visibilidade === "campanha") return true;
+  // 'contatos': autor precisa existir e haver aresta aceita sem bloqueio
+  if (!pub.autorContaId) return false;
+  const meusIds = contaIdsDoLeitor(leitor);
+  if (meusIds.includes(pub.autorContaId)) return true; // o próprio autor
+  for (const meuId of meusIds) {
+    const aceito = await contatoAceitoEntre(db, cid, meuId, pub.autorContaId);
+    if (!aceito) continue;
+    const bloqueado = await contatoBloqueadoEntre(db, cid, meuId, pub.autorContaId);
+    if (!bloqueado) return true;
+  }
+  return false;
+}
+
+const queryPublicacoesSchema = z.object({
+  tipo: z.enum(["noticia", "post_perfil"]).optional(),
+  origem: z.enum(["usuario", "sistema"]).optional(),
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+}).strict();
+
+function autorPublico(
+  pub: typeof internetPublicacoes.$inferSelect,
+  conta: typeof internetAccounts.$inferSelect | undefined,
+) {
+  // DP-6/anonimato: nesta fatia só identificado|pseudonimo.
+  // pseudonimo expõe pseudoNome, NUNCA o handle real; sistema → null.
+  if (pub.origem === "sistema") return null;
+  if (pub.autorModo === "pseudonimo") {
+    return pub.pseudoNome ? { modo: "pseudonimo" as const, nome: pub.pseudoNome } : null;
+  }
+  return conta ? { modo: "identificado" as const, ...contaPublica(conta) } : null;
+}
+
+/** GET /publicacoes — W4: feed de notícias/posts publicados. Keyset
+ *  (publicadoEm DESC, id DESC); `contatos` filtrado POR LINHA após a
+ *  página (documentado: página pode vir curta — nunca vaza contagem). */
+internetPublicaRouter.get("/publicacoes", requirePapel("mestre", "jogador"), limiteLeituraPublica, async (req, res) => {
+  const cid = campanhaId(req);
+  const leitor = await exigirLeitorPublico(req, res, cid);
+  if (!leitor) return;
+
+  const query = queryPublicacoesSchema.safeParse(req.query);
+  if (!query.success) { erroHttp(res, 400, "Parâmetros inválidos"); return; }
+  const { tipo, origem, cursor: cursorRaw, limit = 20 } = query.data;
+  const cursor = cursorRaw ? decodificarCursor(cursorRaw) : null;
+  if (cursorRaw && !cursor) { erroHttp(res, 400, "Cursor inválido"); return; }
+
+  const conds = [
+    eq(internetPublicacoes.campaignId, cid),
+    eq(internetPublicacoes.status, "publicado"),
+    sql`${internetPublicacoes.publicadoEm} IS NOT NULL`,
+  ];
+  if (tipo) conds.push(eq(internetPublicacoes.tipo, tipo));
+  if (origem) conds.push(eq(internetPublicacoes.origem, origem));
+  if (cursor) {
+    conds.push(or(
+      lt(internetPublicacoes.publicadoEm, cursor.createdAt),
+      and(
+        eq(internetPublicacoes.publicadoEm, cursor.createdAt),
+        lt(internetPublicacoes.id, cursor.messageId),
+      ),
+    )!);
+  }
+  // Over-fetch para compensar o filtro 'contatos' por linha.
+  const rows = await db.select().from(internetPublicacoes)
+    .where(and(...conds))
+    .orderBy(sql`${internetPublicacoes.publicadoEm} DESC`, sql`${internetPublicacoes.id} DESC`)
+    .limit(limit * 3 + 1);
+
+  const visiveis: typeof rows = [];
+  for (const pub of rows) {
+    if (visiveis.length >= limit) break;
+    if (await visivelParaLeitor(pub, leitor, cid)) visiveis.push(pub);
+  }
+  const proximoCursor = rows.length > limit * 3 && visiveis.length
+    ? codificarCursor(visiveis[visiveis.length - 1].publicadoEm!, visiveis[visiveis.length - 1].id)
+    : null;
+
+  const contaIds = [...new Set(visiveis.map((p) => p.autorContaId).filter((x): x is string => !!x))];
+  const contas = contaIds.length
+    ? await db.select().from(internetAccounts).where(inArray(internetAccounts.id, contaIds))
+    : [];
+  const contaPorId = new Map(contas.map((c) => [c.id, c]));
+
+  res.json({
+    publicacoes: visiveis.map((p) => ({
+      id: p.id, tipo: p.tipo, titulo: p.titulo,
+      autor: autorPublico(p, p.autorContaId ? contaPorId.get(p.autorContaId) : undefined),
+      origem: p.origem, visibilidade: p.visibilidade,
+      publicadoEm: p.publicadoEm, atualizadoEm: p.updatedAt,
+    })),
+    cursor: proximoCursor,
+  });
+});
+
+/** GET /publicacoes/minhas — publicações das contas do requisitante
+ *  em QUALQUER status (rascunho incluído — prévia do autor). Devolve
+ *  version/status para o PATCH esperado; nunca vaza publicações de
+ *  terceiros. Ordenação: atualizadaEm DESC. */
+internetPublicaRouter.get("/publicacoes/minhas", requirePapel("mestre", "jogador"), limiteLeituraPublica, async (req, res) => {
+  const cid = campanhaId(req);
+  const leitor = await exigirLeitorPublico(req, res, cid);
+  if (!leitor) return;
+  const meusIds = contaIdsDoLeitor(leitor);
+  if (!meusIds.length) { res.json({ publicacoes: [] }); return; }
+  const rows = await db.select().from(internetPublicacoes)
+    .where(and(
+      eq(internetPublicacoes.campaignId, cid),
+      inArray(internetPublicacoes.autorContaId, meusIds),
+    ))
+    .orderBy(sql`${internetPublicacoes.updatedAt} DESC`)
+    .limit(100);
+  res.json({
+    publicacoes: rows.map((p) => ({
+      id: p.id, tipo: p.tipo, titulo: p.titulo, status: p.status,
+      visibilidade: p.visibilidade, autorModo: p.autorModo,
+      pseudoNome: p.pseudoNome, origem: p.origem,
+      publicadoEm: p.publicadoEm, version: p.version,
+      criadoEm: p.createdAt, atualizadoEm: p.updatedAt,
+    })),
+  });
+});
+
+/** GET /publicacoes/:id — W5: matéria completa. Público: só
+ *  publicado+visivel (404 uniforme). Titular da conta autora vê a
+ *  própria em qualquer status (prévia do editor); mestre vê todas. */
+internetPublicaRouter.get("/publicacoes/:id", requirePapel("mestre", "jogador"), limiteLeituraPublica, async function (req, res) {
+  const cid = campanhaId(req);
+  const leitor = await exigirLeitorPublico(req, res, cid);
+  if (!leitor) return;
+
+  const [pub] = await db.select().from(internetPublicacoes)
+    .where(and(eq(internetPublicacoes.id, req.params.id), eq(internetPublicacoes.campaignId, cid)))
+    .limit(1);
+  if (!pub) { erroHttp(res, 404, "Publicação não encontrada"); return; }
+
+  const ehAutor = pub.autorContaId
+    ? contaIdsDoLeitor(leitor).includes(pub.autorContaId)
+    : false;
+  const ehMestre = await mestreLeitorDaCampanha(cid, req.usuario!.id);
+  const privilegiado = ehAutor || ehMestre;
+
+  if (!privilegiado && !(await visivelParaLeitor(pub, leitor, cid))) {
+    erroHttp(res, 404, "Publicação não encontrada"); return;
+  }
+
+  const [conta] = pub.autorContaId
+    ? await db.select().from(internetAccounts).where(eq(internetAccounts.id, pub.autorContaId)).limit(1)
+    : [undefined];
+
+  res.json({
+    publicacao: {
+      id: pub.id, tipo: pub.tipo, titulo: pub.titulo, corpo: pub.corpo,
+      formato: pub.formato, status: pub.status, visibilidade: pub.visibilidade,
+      autorModo: pub.autorModo, origem: pub.origem,
+      autor: autorPublico(pub, conta),
+      personagemId: pub.personagemId,
+      publicadoEm: pub.publicadoEm, criadoEm: pub.createdAt, atualizadoEm: pub.updatedAt,
+      // UUID interno e estado de moderação só para privilegiados
+      ...(privilegiado ? {
+        autorContaId: pub.autorContaId, version: pub.version,
+        status: pub.status, retiradoMotivo: pub.retiradoMotivo,
+      } : {}),
+    },
   });
 });

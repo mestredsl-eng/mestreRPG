@@ -10,13 +10,19 @@
 
 import { ApiError } from "../../api";
 import type {
-  PaginaPagina, PaginaPublica, SitePublico, SitePublicoResumo,
+  MinhaPublicacao, PaginaPagina, PaginaPublica, PublicacaoDetalhe,
+  PublicacaoNova, PublicacaoResumo, SitePublico, SitePublicoResumo,
+  TipoPublicacao,
 } from "./tipos-publica";
 
 const API = "/api";
 
-async function requisicao<T>(caminho: string): Promise<T> {
-  const res = await fetch(`${API}${caminho}`, { credentials: "same-origin" });
+async function requisicao<T>(caminho: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API}${caminho}`, {
+    credentials: "same-origin",
+    headers: init?.body ? { "content-type": "application/json" } : undefined,
+    ...init,
+  });
   const corpo = await res.json().catch(() => ({}));
   if (!res.ok) {
     const c = corpo as { erro?: string; mensagem?: string };
@@ -66,6 +72,55 @@ export function criarAdaptadorInternetPublica({ campaignId }: { campaignId: stri
           slug: p.slug, titulo: p.titulo, publicadoEm: p.publicadoEm,
         })),
       };
+    },
+
+    // ---------- Publicações (W4/W5 leitura + W8-subset escrita) ----------
+
+    async listarPublicacoes(opts?: {
+      tipo?: TipoPublicacao; cursor?: string | null; limite?: number;
+    }): Promise<PaginaPagina<PublicacaoResumo>> {
+      const params = new URLSearchParams({ limit: String(opts?.limite ?? 20) });
+      if (opts?.tipo) params.set("tipo", opts.tipo);
+      if (opts?.cursor) params.set("cursor", opts.cursor);
+      const r = await requisicao<{ publicacoes: PublicacaoResumo[]; cursor: string | null }>(
+        `${base}/publicacoes?${params}`);
+      return { itens: r.publicacoes, proximoCursor: r.cursor };
+    },
+
+    async obterPublicacao(id: string): Promise<PublicacaoDetalhe> {
+      const r = await requisicao<{ publicacao: PublicacaoDetalhe }>(
+        `${base}/publicacoes/${encodeURIComponent(id)}`);
+      return r.publicacao;
+    },
+
+    async minhasPublicacoes(): Promise<MinhaPublicacao[]> {
+      const r = await requisicao<{ publicacoes: MinhaPublicacao[] }>(
+        `${base}/publicacoes/minhas`);
+      return r.publicacoes;
+    },
+
+    async criarPublicacao(dados: PublicacaoNova): Promise<PublicacaoDetalhe> {
+      const r = await requisicao<{ publicacao: PublicacaoDetalhe }>(
+        `${base}/publicacoes`, { method: "POST", body: JSON.stringify(dados) });
+      return r.publicacao;
+    },
+
+    async atualizarPublicacao(id: string, dados: {
+      titulo?: string; corpo?: string; visibilidade?: string;
+      autorModo?: string; pseudoNome?: string | null;
+      status?: "rascunho" | "publicado";
+      expectedVersion: number;
+    }): Promise<PublicacaoDetalhe> {
+      const r = await requisicao<{ publicacao: PublicacaoDetalhe }>(
+        `${base}/publicacoes/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(dados) });
+      return r.publicacao;
+    },
+
+    async denunciarPublicacao(id: string, motivo: string, denunciaGrave?: boolean): Promise<{ removida: boolean }> {
+      const r = await requisicao<{ removida: boolean }>(
+        `${base}/publicacoes/${encodeURIComponent(id)}/denunciar`,
+        { method: "POST", body: JSON.stringify({ motivo, denunciaGrave }) });
+      return r;
     },
 
     async obterPagina(siteSlug: string, pageSlug: string): Promise<{ pagina: PaginaPublica; site: { slug: string; nome: string } }> {

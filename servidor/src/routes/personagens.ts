@@ -4,7 +4,38 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
-import { characters, sheetTemplates, sheetVersions, memberships, users, tests, moneyTransactions, financialAccounts, files, characterTransfers } from "../db/schema.js";
+import { characters, sheetTemplates, sheetVersions, memberships, users, tests, moneyTransactions, financialAccounts, files, characterTransfers, auditLogs, internetPublicacoes } from "../db/schema.js";
+import { avaliarMorte, noticiaMorteTexto, reverterMorte } from "../lib/morte.js";
+
+type TxPersonagem = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/** Notícia automática de morte + auditoria NA MESMA TX (DP-8):
+ *  template server-side, origem='sistema', visibilidade='campanha',
+ *  somente-leitura. Toda epoch nova de `__morte` gera UMA notícia —
+ *  mortes subsequentes após ressurreição também são notícia (DP-9:
+ *  correção de causa só por nova publicação do autor). */
+function registrarNoticiaMorteTx(
+  tx: TxPersonagem, cid: string, characterId: string, nome: string,
+  morte: { em: string; causa?: string | null }, actorId: string | null,
+) {
+  const { titulo, corpo } = noticiaMorteTexto(nome, morte.causa ?? null);
+  const pubId = crypto.randomUUID();
+  const agora = new Date();
+  tx.insert(internetPublicacoes).values({
+    id: pubId, campaignId: cid, tipo: "noticia",
+    titulo, corpo, formato: "texto", status: "publicado",
+    visibilidade: "campanha", autorModo: "identificado",
+    autorContaId: null, origem: "sistema",
+    fonteRef: `morte:${characterId}`, personagemId: characterId,
+    publicadoEm: agora, createdAt: agora, updatedAt: agora,
+  }).run();
+  tx.insert(auditLogs).values({
+    id: crypto.randomUUID(), actorId, campaignId: cid, guildId: null,
+    action: "personagem_morreu",
+    detail: { characterId, publicacaoId: pubId, morteEm: morte.em },
+    createdAt: agora,
+  }).run();
+}
 import { CHAVE_NPC_VISIVEL, npcFichaVisivel } from "../lib/npc-visibility.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, requireLeasePersonagem, getMembership, permissoesDe } from "../lib/permissoes.js";
@@ -488,11 +519,19 @@ personagensRouter.post("/", requirePapel("mestre", "jogador"), async (req, res) 
   // HP começa cheio na criação quando a campanha habilita Pontos de Vida.
   let dadosCriacao = { ...validacao.dados } as Record<string, unknown>;
   const hpMax = hpMaximo(regras.config.hp, carregada.estrutura, dadosCriacao);
+  let morteCriacao: { em: string; causa?: string | null } | null = null;
   if (hpMax !== null) {
     dadosCriacao[CHAVE_HP] = {
       atual: hpMax,
       historico: [{ em: new Date().toISOString(), tipo: "inicial", quantidade: hpMax, motivo: "HP inicial", autorId: req.usuario!.id, autorNome: null }],
     };
+    // Config patológica (base=0 e atributo=0) ⇒ HP inicial ≤ 0: o
+    // personagem nasce morto — avaliarMorte registra a epoch e a
+    // notícia sai após o insert (criação não é transacional).
+    const morteIni = avaliarMorte(dadosCriacao, {
+      hpAtual: hpMax, em: new Date().toISOString(), causa: "HP inicial zerado pela configuração",
+    });
+    if (morteIni.morteNova) { dadosCriacao = morteIni.dados; morteCriacao = morteIni.morteNova; }
   }
   // NPC nasce aprovado e com pontos selados (ninguém disputa aprovação).
   if (isNpc) {
@@ -523,6 +562,28 @@ personagensRouter.post("/", requirePapel("mestre", "jogador"), async (req, res) 
     createdAt: agora,
     updatedAt: agora,
   });
+  if (morteCriacao) {
+    // Nascimento com HP ≤ 0 (config patológica): mesma notícia de
+    // sistema + auditoria do caminho de HP — fora de tx porque a
+    // criação em si não é transacional.
+    const { titulo, corpo } = noticiaMorteTexto(body.data.name, morteCriacao.causa ?? null);
+    const pubId = crypto.randomUUID();
+    await db.insert(internetPublicacoes).values({
+      id: pubId, campaignId: req.params.campaignId, tipo: "noticia",
+      titulo, corpo, formato: "texto", status: "publicado",
+      visibilidade: "campanha", autorModo: "identificado",
+      autorContaId: null, origem: "sistema",
+      fonteRef: `morte:${id}`, personagemId: id,
+      publicadoEm: agora, createdAt: agora, updatedAt: agora,
+    });
+    await db.insert(auditLogs).values({
+      id: crypto.randomUUID(), actorId: req.usuario!.id,
+      campaignId: req.params.campaignId, guildId: null,
+      action: "personagem_morreu",
+      detail: { characterId: id, publicacaoId: pubId, morteEm: morteCriacao.em, origem: "criacao" },
+      createdAt: agora,
+    });
+  }
   await audit(req, "personagem.criado", { characterId: id, name: body.data.name });
   emitirCampanha(req.params.campaignId, "personagens:atualizados", { characterId: id });
 
@@ -864,16 +925,21 @@ personagensRouter.patch("/:characterId", requireLeasePersonagem(), async (req, r
   }
 
   // Personagens antigos sem estado de HP: inicializa cheio na primeira gravação.
+  // Se o máximo calculado for ≤ 0 (config patológica), o init já nasce
+  // morto — a epoch/notícia é avaliada DENTRO da tx de gravação abaixo.
+  let hpInicialZeradoEm: string | null = null;
   if (regras.config.hp.habilitado && dadosFinais[CHAVE_HP] === undefined) {
     const hpMax = hpMaximo(regras.config.hp, estrutura, dadosFinais);
     if (hpMax !== null) {
+      const emIni = new Date().toISOString();
       dadosFinais = {
         ...dadosFinais,
         [CHAVE_HP]: {
           atual: hpMax,
-          historico: [{ em: new Date().toISOString(), tipo: "inicial", quantidade: hpMax, motivo: "HP inicial", autorId: req.usuario!.id, autorNome: null }],
+          historico: [{ em: emIni, tipo: "inicial", quantidade: hpMax, motivo: "HP inicial", autorId: req.usuario!.id, autorNome: null }],
         },
       };
+      if (hpMax <= 0) hpInicialZeradoEm = emIni;
     }
   }
 
@@ -972,10 +1038,25 @@ personagensRouter.patch("/:characterId", requireLeasePersonagem(), async (req, r
     }
     const regrasTx = carregarRegrasSincrono(tx, p.campaignId);
     if (!regrasTx || impressaoDigitalRegras(regrasTx) !== regrasFp) return "conflito" as const;
+    let dadosFinaisTx = dadosFinais;
+    if (hpInicialZeradoEm) {
+      // Init de __hp com máximo ≤ 0 ⇒ morte na primeira gravação:
+      // epoch + notícia de sistema na mesma tx (cobre TODOS os
+      // escritores de __hp — aqui o init legado).
+      const m = avaliarMorte(dadosFinaisTx, {
+        hpAtual: lerHp(dadosFinaisTx)?.atual ?? null,
+        em: hpInicialZeradoEm,
+        causa: "HP inicial zerado pela configuração",
+      });
+      if (m.morteNova) {
+        dadosFinaisTx = m.dados;
+        registrarNoticiaMorteTx(tx, p.campaignId, p.id, atual.name, m.morteNova, req.usuario?.id ?? null);
+      }
+    }
     tx.update(characters)
       .set({
         name: body.data.name ?? atual.name,
-        data: dadosFinais,
+        data: dadosFinaisTx,
         overrides: ehMestre ? overrides : (atual.overrides ?? {}),
         status: novoStatus,
         updatedAt: new Date(),
@@ -1126,6 +1207,19 @@ personagensRouter.post("/:characterId/hp", requireLeasePersonagem(), async (req,
         }
       }
     }
+    // Morte (Internet pública v2.6 + DP-8/DP-9, #365): avaliador único
+    // sobre o HP resultante — cobre este caminho de escrita de __hp.
+    // Toda epoch nova ⇒ notícia automática de sistema NA MESMA TX
+    // (imutável, origem='sistema', visibilidade='campanha').
+    const morte = avaliarMorte(novosDados, {
+      hpAtual: lerHp(novosDados)?.atual ?? null,
+      em: agora.toISOString(),
+      causa: motivo?.trim() || null,
+    });
+    if (morte.morteNova) {
+      novosDados = morte.dados;
+      registrarNoticiaMorteTx(tx, p.campaignId, p.id, atual.name, morte.morteNova, req.usuario?.id ?? null);
+    }
     tx.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id)).run();
     resposta = { hp: resumoHp(cfg, estrutura, novosDados), deltaHp: deltaEfetivo, vitalidade: vitalidadeNova, ferimento };
   });
@@ -1138,6 +1232,60 @@ personagensRouter.post("/:characterId/hp", requireLeasePersonagem(), async (req,
   await audit(req, "personagem.hp", { characterId: p.id, acao, delta: resposta!.deltaHp, ferimento: resposta!.ferimento ?? null });
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
   res.json({ ok: true, hp: resposta!.hp, vitalidade: resposta!.vitalidade, ferimento: resposta!.ferimento });
+});
+
+const ressuscitarSchema = z.object({
+  motivo: z.string().trim().max(300).optional(),
+}).strict();
+
+/** POST /api/characters/:characterId/ressuscitar — ação mestre auditada
+ *  (DP-8, Internet pública v2.6): marca `revertidaEm` na epoch vigente
+ *  de `__morte`. NÃO apaga nem edita a notícia de sistema — ela
+ *  permanece publicada; correção de causa só por nova publicação
+ *  (DP-9). Exige morte vigente — personagem vivo → 409. */
+personagensRouter.post("/:characterId/ressuscitar", requireLeasePersonagem(), async (req, res) => {
+  const acesso = await carregarPersonagemComAcesso(req);
+  if ("erro" in acesso) {
+    res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
+    return;
+  }
+  const { personagem: p, ehMestre } = acesso;
+  if (!ehMestre) { res.status(403).json({ erro: "Somente o mestre pode registrar ressurreição" }); return; }
+  if (p.status === "arquivado") {
+    res.status(403).json({ erro: "Personagem arquivado — restaure-o antes de alterar" });
+    return;
+  }
+  const body = ressuscitarSchema.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
+    return;
+  }
+  const agora = new Date();
+  let semMorte = false;
+  await db.transaction((tx) => {
+    const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
+    if (!atual) { semMorte = true; return; }
+    const dadosTx = (atual.data ?? {}) as Record<string, unknown>;
+    const r = reverterMorte(dadosTx, agora.toISOString());
+    if (!r.revertida) { semMorte = true; return; }
+    tx.update(characters).set({ data: r.dados, updatedAt: agora }).where(eq(characters.id, p.id)).run();
+    tx.insert(auditLogs).values({
+      id: crypto.randomUUID(), actorId: req.usuario!.id,
+      campaignId: p.campaignId, guildId: null,
+      action: "personagem_ressuscitado",
+      detail: {
+        characterId: p.id, morteEm: r.revertida.em,
+        motivo: body.data.motivo?.trim() || null,
+      },
+      createdAt: agora,
+    }).run();
+  });
+  if (semMorte) { res.status(409).json({ erro: "sem_morte_vigente" }); return; }
+  // Auditoria única e atômica: gravada dentro da tx acima
+  // (action 'personagem_ressuscitado', com motivo) — sem audit() pós-tx
+  // para não duplicar a trilha.
+  emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
+  res.json({ ok: true });
 });
 
 const vitalidadeSchema = z.object({ nivel: z.number().int().min(0), motivo: z.string().max(300).optional() });

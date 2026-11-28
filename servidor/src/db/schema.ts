@@ -952,6 +952,67 @@ export const internetPages = sqliteTable("internet_pages", {
   index("internet_pages_campaign_idx").on(t.campaignId),
 ]);
 
+// Publicações da Internet pública 1.1.2 (#365, fatia W4/W5 — contrato
+// docs/CONTRATO-W4W5-PUBLICACOES-365.md): notícias e posts de perfil.
+// Autoria server-side (autorContaId/origem/publicadoEm nunca vêm do
+// body); `origem='sistema'` = notícia automática de morte (DP-8/9),
+// somente leitura para todos. `visibilidade='contatos'` restringe a
+// aresta aceita vigente — invisível em busca/agregados (Quiz 2).
+// `autorModo='anonimo'` existe no schema mas é rejeitado nesta fatia
+// (DP-6: só classificado/anuncio — fatias W6/W7).
+export const internetPublicacoes = sqliteTable("internet_publicacoes", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  tipo: text("tipo").notNull(), // noticia|post_perfil|anuncio|classificado
+  titulo: text("titulo").notNull(),
+  corpo: text("corpo").notNull(),
+  formato: text("formato").notNull().default("markdown-subset"),
+  status: text("status").notNull().default("rascunho"), // rascunho|publicado|retirado|removido
+  visibilidade: text("visibilidade").notNull().default("campanha"), // campanha|contatos
+  autorModo: text("autor_modo").notNull().default("identificado"), // identificado|pseudonimo|anonimo
+  pseudoNome: text("pseudo_nome"),
+  autorContaId: text("autor_conta_id").references(() => internetAccounts.id),
+  origem: text("origem").notNull().default("usuario"), // usuario|sistema
+  fonteRef: text("fonte_ref"),
+  personagemId: text("personagem_id").references(() => characters.id),
+  publicadoEm: integer("publicado_em", { mode: "timestamp_ms" }),
+  retiradoEm: integer("retirado_em", { mode: "timestamp_ms" }),
+  retiradoMotivo: text("retirado_motivo"),
+  denunciaAberta: integer("denuncia_aberta").notNull().default(0),
+  denunciaGrave: integer("denuncia_grave").notNull().default(0),
+  version: integer("version").notNull().default(1),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  index("internet_publicacoes_feed_idx").on(t.campaignId, t.tipo, t.status, t.publicadoEm),
+  index("internet_publicacoes_autor_idx").on(t.autorContaId, t.status),
+  index("internet_publicacoes_personagem_idx").on(t.personagemId),
+]);
+
+// Denúncias de publicações (DP-2/DP-3): máquina
+// aberta→contestada|em_analise→auto_removida|resolvida_admin|encerrada.
+// Limiar de auto-remoção: ≥2 denúncias distintas OU 1 denunciaGrave —
+// aplicado na mesma tx do registro. Contestações resolvem admin da
+// plataforma (não mestre). Uma denúncia por par (publicação, conta).
+export const internetDenuncias = sqliteTable("internet_denuncias", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  publicacaoId: text("publicacao_id").notNull().references(() => internetPublicacoes.id, { onDelete: "cascade" }),
+  denuncianteContaId: text("denunciante_conta_id").notNull().references(() => internetAccounts.id),
+  motivo: text("motivo").notNull(),
+  denunciaGrave: integer("denuncia_grave").notNull().default(0),
+  status: text("status").notNull().default("aberta"), // aberta|contestada|em_analise|auto_removida|resolvida_admin|encerrada
+  resolucao: text("resolucao"),
+  resolvidoPor: text("resolvido_por"),
+  prazoContestacaoEm: integer("prazo_contestacao_em", { mode: "timestamp_ms" }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex("internet_denuncias_par_idx").on(t.publicacaoId, t.denuncianteContaId),
+  index("internet_denuncias_pub_idx").on(t.publicacaoId, t.status),
+  index("internet_denuncias_campaign_idx").on(t.campaignId),
+]);
+
 // Transferência de personagem (P7, contrato #349): convite do titular
 // atual + aceite explícito do novo titular. No máximo 1 `pendente` por
 // personagem (índice parcial). Conta diegética e histórico acompanham

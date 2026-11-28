@@ -309,6 +309,13 @@
       "when": 1795787658241,
       "tag": "0043_demonic_zombie",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1795818277830,
+      "tag": "0044_skinny_lockjaw",
+      "breakpoints": true
     }
   ]
 }

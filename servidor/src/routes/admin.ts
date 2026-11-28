@@ -1,8 +1,11 @@
 import { Router } from "express";
-import { eq, ne, and, asc } from "drizzle-orm";
+import { eq, ne, and, asc, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
-import { users, authSessions } from "../db/schema.js";
+import {
+  users, authSessions, auditLogs, internetAccounts,
+  internetDenuncias, internetPublicacoes,
+} from "../db/schema.js";
 import { hashSenha, gerarToken, hashToken } from "../lib/password.js";
 import { requireAdmin } from "../middleware/auth.js";
 import { ehAdminPrincipal, idAdminPrincipal } from "../lib/adminPrincipal.js";
@@ -230,4 +233,101 @@ adminRouter.delete("/users/:id", async (req, res) => {
     throw e;
   }
   res.json({ ok: true });
+});
+
+// ---------- Moderação Internet pública — DP-2 (#365) ----------
+// Contestação de remoção automática por denúncias: o autor contesta em
+// 7 dias (rota da campanha); a decisão é EXCLUSIVA do admin da
+// plataforma — nunca do mestre da campanha.
+
+const resolverDenunciaSchema = z.object({
+  decisao: z.enum(["restaurar", "manter"]),
+  resolucao: z.string().trim().max(500).optional(),
+}).strict();
+
+/** GET /api/admin/internet-denuncias?campaignId=&status= — fila de
+ *  moderação: denúncias contestadas/em análise com contexto da
+ *  publicação. */
+adminRouter.get("/internet-denuncias", async (req, res) => {
+  const campaignId = typeof req.query.campaignId === "string" ? req.query.campaignId : undefined;
+  const status = typeof req.query.status === "string" ? req.query.status : undefined;
+  const conds = [];
+  if (campaignId) conds.push(eq(internetDenuncias.campaignId, campaignId));
+  if (status) conds.push(eq(internetDenuncias.status, status));
+  const rows = await db.select({
+    id: internetDenuncias.id,
+    campaignId: internetDenuncias.campaignId,
+    publicacaoId: internetDenuncias.publicacaoId,
+    motivo: internetDenuncias.motivo,
+    denunciaGrave: internetDenuncias.denunciaGrave,
+    status: internetDenuncias.status,
+    resolucao: internetDenuncias.resolucao,
+    prazoContestacaoEm: internetDenuncias.prazoContestacaoEm,
+    createdAt: internetDenuncias.createdAt,
+    titulo: internetPublicacoes.titulo,
+    pubStatus: internetPublicacoes.status,
+    autorHandle: internetAccounts.handle,
+  }).from(internetDenuncias)
+    .innerJoin(internetPublicacoes, eq(internetPublicacoes.id, internetDenuncias.publicacaoId))
+    .leftJoin(internetAccounts, eq(internetAccounts.id, internetPublicacoes.autorContaId))
+    .where(conds.length ? and(...conds) : undefined)
+    .orderBy(asc(internetDenuncias.createdAt))
+    .limit(200);
+  res.json({ denuncias: rows });
+});
+
+/** POST /api/admin/internet-denuncias/:id/resolver — decisão do admin:
+ *  'restaurar' devolve a publicação a 'publicado' (publicadoEm
+ *  original preservado); 'manter' deixa removida. As demais denúncias
+ *  abertas da mesma publicação são encerradas em ambos os casos. */
+adminRouter.post("/internet-denuncias/:id/resolver", async (req, res) => {
+  const body = resolverDenunciaSchema.safeParse(req.body);
+  if (!body.success) { res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues }); return; }
+  const [den] = await db.select().from(internetDenuncias)
+    .where(eq(internetDenuncias.id, req.params.id)).limit(1);
+  if (!den) { res.status(404).json({ erro: "Denúncia não encontrada" }); return; }
+  if (den.status === "resolvida_admin" || den.status === "encerrada") {
+    res.status(409).json({ erro: "Denúncia já resolvida" }); return;
+  }
+  const agora = new Date();
+  let restaurada = false;
+  await db.transaction((tx) => {
+    tx.update(internetDenuncias).set({
+      status: "resolvida_admin",
+      resolucao: body.data.resolucao ?? body.data.decisao,
+      resolvidoPor: req.usuario!.id,
+      updatedAt: agora,
+    }).where(eq(internetDenuncias.id, den.id)).run();
+    // Demais denúncias pendentes da mesma publicação encerram.
+    tx.update(internetDenuncias).set({ status: "encerrada", updatedAt: agora })
+      .where(and(
+        eq(internetDenuncias.publicacaoId, den.publicacaoId),
+        ne(internetDenuncias.id, den.id),
+        eq(internetDenuncias.status, "contestada"),
+      )).run();
+    tx.update(internetDenuncias).set({ status: "encerrada", updatedAt: agora })
+      .where(and(
+        eq(internetDenuncias.publicacaoId, den.publicacaoId),
+        ne(internetDenuncias.id, den.id),
+        eq(internetDenuncias.status, "auto_removida"),
+      )).run();
+    if (body.data.decisao === "restaurar") {
+      const r = tx.update(internetPublicacoes).set({
+        status: "publicado", retiradoEm: null, retiradoMotivo: null,
+        version: sql`${internetPublicacoes.version} + 1`, updatedAt: agora,
+      }).where(and(
+        eq(internetPublicacoes.id, den.publicacaoId),
+        eq(internetPublicacoes.status, "removido"),
+      )).run();
+      restaurada = r.changes > 0;
+    }
+    tx.insert(auditLogs).values({
+      id: crypto.randomUUID(), actorId: req.usuario!.id,
+      campaignId: den.campaignId, guildId: null,
+      action: "internet_denuncia_resolvida",
+      detail: { denunciaId: den.id, publicacaoId: den.publicacaoId, decisao: body.data.decisao, restaurada },
+      createdAt: agora,
+    }).run();
+  });
+  res.json({ ok: true, decisao: body.data.decisao, restaurada });
 });

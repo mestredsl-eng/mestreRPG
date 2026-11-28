@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { ApiError } from "../../api";
 import { criarAdaptadorInternetPublica, type AdaptadorInternetPublica } from "./adaptador-publica";
+import Publicacoes from "./Publicacoes";
 import type { PaginaPublica, PaginaPublicaResumo, SitePublico, SitePublicoResumo } from "./tipos-publica";
 import { Carregando, ErroRetry, Vazio } from "./estados";
 
@@ -82,11 +83,15 @@ export default function Explorar({ campaignId, adaptador }: Props) {
   );
 }
 
-/** W1 — diretório de sites + barra de pesquisa global (prefixo, ?q=). */
+/** W1 — diretório de sites + barra de pesquisa global (prefixo, ?q=).
+ *  W4/W5/W8-subset (#365): sub-abas "Sites" e "Publicações" — a
+ *  segunda hospeda o feed/matéria/publicar/minhas com navegação
+ *  interna própria (Publicacoes.tsx). */
 function InicioPublico({ adaptador, aoAbrirSite }: {
   adaptador: AdaptadorInternetPublica;
   aoAbrirSite: (slug: string) => void;
 }) {
+  const [secao, setSecao] = useState<"sites" | "publicacoes">("sites");
   const [busca, setBusca] = useState("");
   const [qAplicada, setQAplicada] = useState("");
   const [sites, setSites] = useState<SitePublicoResumo[] | null>(null);
@@ -128,6 +133,26 @@ function InicioPublico({ adaptador, aoAbrirSite }: {
 
   return (
     <div className="internet-explorar-inicio">
+      <div className="internet-contatos-subabas" role="tablist" aria-label="Seções do Explorar">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={secao === "sites"}
+          className={secao === "sites" ? "secundario ativo" : "secundario"}
+          onClick={() => setSecao("sites")}
+        >Sites</button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={secao === "publicacoes"}
+          className={secao === "publicacoes" ? "secundario ativo" : "secundario"}
+          onClick={() => setSecao("publicacoes")}
+        >Publicações</button>
+      </div>
+      {secao === "publicacoes" ? (
+        <Publicacoes adaptador={adaptador} />
+      ) : (
+      <>
       <form className="internet-rede-form" role="search" onSubmit={submeter}>
         <label className="internet-sr-only" htmlFor="internet-busca">Buscar sites da campanha</label>
         <input
@@ -191,6 +216,8 @@ function InicioPublico({ adaptador, aoAbrirSite }: {
         <button type="button" className="secundario" disabled={carregandoMais} onClick={carregarMais}>
           {carregandoMais ? "Carregando…" : "Carregar mais sites"}
         </button>
+      )}
+      </>
       )}
     </div>
   );

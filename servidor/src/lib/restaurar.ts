@@ -7,8 +7,13 @@ import {
   ruleSets, ruleDefinitions, itemTemplates, inventoryEntries, equipmentEntries, vehicles,
   financialAccounts, moneyTransactions, shops, shopManagers, shopOffers, shopOrders,
   sessions, turns, chatMessages, rolls, tests, notes, files, folders, noteAttachments,
-  users,
+  users, internetPublicacoes,
+  internetAccounts, internetContacts, internetConversations,
+  internetDenuncias, internetMessages, internetPages,
+  internetParticipantes, internetSites,
 } from "../db/schema.js";
+import { avaliarMorte, CHAVE_MORTE } from "./morte.js";
+import { lerHp } from "./vida.js";
 import type { EstadoCampanha } from "./estado.js";
 import { obterChaveAssinatura } from "./assinatura-xp.js";
 import {
@@ -132,6 +137,204 @@ function acumulou(r: SaneamentoPersonagem): boolean {
     r.sangueRemovido || r.sangueAutenticado || r.sangueInvalido || r.motivoSangue !== null;
 }
 
+// ---- Domínio Internet (1.1.1/1.1.2 + público 1.1.2) — preservação no
+// restore "substituir". O pacote EstadoCampanha NÃO carrega estas
+// tabelas (P9; D6 pendente): sem preservação, o limpar apagaria
+// mensageiro privado E conteúdo público fora do pacote. Captura
+// integral por campaignId antes de qualquer delete; recriação em
+// ordem FK após inserirEstado, com âncoras mínimas para contas cujo
+// personagem não veio no pacote.
+type ContaInternet = typeof internetAccounts.$inferSelect;
+type ContatoInternet = typeof internetContacts.$inferSelect;
+type ConversaInternet = typeof internetConversations.$inferSelect;
+type ParticipanteInternet = typeof internetParticipantes.$inferSelect;
+type MensagemInternet = typeof internetMessages.$inferSelect;
+type SiteInternet = typeof internetSites.$inferSelect;
+type PaginaInternet = typeof internetPages.$inferSelect;
+type PublicacaoInternet = typeof internetPublicacoes.$inferSelect;
+type DenunciaInternet = typeof internetDenuncias.$inferSelect;
+type PersonagemRef = { id: string; name: string; membershipId: string; isNpc: boolean | null; createdAt: Date | null; updatedAt: Date | null };
+type MembershipRow = typeof memberships.$inferSelect;
+
+interface DominioInternetPreservado {
+  contas: ContaInternet[];
+  contatos: ContatoInternet[];
+  conversas: ConversaInternet[];
+  participantes: ParticipanteInternet[];
+  mensagens: MensagemInternet[];
+  sites: SiteInternet[];
+  paginas: PaginaInternet[];
+  publicacoes: PublicacaoInternet[];
+  denuncias: DenunciaInternet[];
+  personagens: PersonagemRef[];
+  memberships: MembershipRow[];
+}
+
+function capturarDominioInternet(tx: Tx, campaignId: string): DominioInternetPreservado {
+  const conversas = tx.select().from(internetConversations)
+    .where(eq(internetConversations.campaignId, campaignId)).all();
+  const convIds = conversas.map((c) => c.id);
+  return {
+    contas: tx.select().from(internetAccounts).where(eq(internetAccounts.campaignId, campaignId)).all(),
+    contatos: tx.select().from(internetContacts).where(eq(internetContacts.campaignId, campaignId)).all(),
+    conversas,
+    // participantes não têm campaign_id — só das conversas capturadas
+    participantes: convIds.length
+      ? tx.select().from(internetParticipantes).where(inArray(internetParticipantes.conversaId, convIds)).all()
+      : [],
+    mensagens: tx.select().from(internetMessages).where(eq(internetMessages.campaignId, campaignId)).all(),
+    sites: tx.select().from(internetSites).where(eq(internetSites.campaignId, campaignId)).all(),
+    paginas: tx.select().from(internetPages).where(eq(internetPages.campaignId, campaignId)).all(),
+    publicacoes: tx.select().from(internetPublicacoes).where(eq(internetPublicacoes.campaignId, campaignId)).all(),
+    denuncias: tx.select().from(internetDenuncias).where(eq(internetDenuncias.campaignId, campaignId)).all(),
+    personagens: tx.select({
+      id: characters.id, name: characters.name, membershipId: characters.membershipId,
+      isNpc: characters.isNpc, createdAt: characters.createdAt, updatedAt: characters.updatedAt,
+    }).from(characters).where(eq(characters.campaignId, campaignId)).all(),
+    memberships: tx.select().from(memberships).where(eq(memberships.campaignId, campaignId)).all(),
+  };
+}
+
+/** P1 integridade cross-campaign: IDs globais existentes em OUTRA
+ *  campanha não são prova de pertencimento. Toda aresta do snapshot
+ *  capturado precisa resolver DENTRO dos conjuntos da campanha-alvo —
+ *  qualquer inconsistência lança erro e provoca rollback integral da
+ *  transação; nunca filtrar, apagar ou reparar silenciosamente. */
+function validarIntegridadeDominioInternet(d: DominioInternetPreservado, campaignId: string) {
+  function falha(aresta: string, id: string): never {
+    // detalhe rico só no log do servidor — a mensagem ao cliente é
+    // genérica para não confirmar existência de id estrangeiro
+    console.error(`restore: aresta Internet inconsistente — ${aresta} → ${id} fora do conjunto da campanha ${campaignId}`);
+    throw new Error("restore: domínio Internet inconsistente — restauração abortada");
+  }
+  const contaIds = new Set(d.contas.map((c) => c.id));
+  const charIds = new Set(d.personagens.map((c) => c.id));
+  const memIds = new Set(d.memberships.map((m) => m.id));
+  const convIds = new Set(d.conversas.map((c) => c.id));
+  const siteIds = new Set(d.sites.map((s) => s.id));
+  const pubIds = new Set(d.publicacoes.map((p) => p.id));
+  const memPorId = new Map(d.memberships.map((m) => [m.id, m] as const));
+  const charPorId = new Map(d.personagens.map((c) => [c.id, c] as const));
+
+  for (const c of d.contas) {
+    // personagem precisa ser DA campanha (characterId é global — um id
+    // de outra campanha passaria no FK mas é corrupção de dados)
+    const char = charPorId.get(c.characterId);
+    if (!char) falha("internet_accounts.characterId", c.characterId);
+    // membership do personagem precisa existir e ser da mesma campanha
+    const mem = memPorId.get(char.membershipId);
+    if (!mem || mem.campaignId !== campaignId) falha("characters.membershipId", char.membershipId);
+  }
+  for (const c of d.contatos) {
+    if (!contaIds.has(c.contaOrigemId)) falha("internet_contacts.conta_origem_id", c.contaOrigemId);
+    if (!contaIds.has(c.contaDestinoId)) falha("internet_contacts.conta_destino_id", c.contaDestinoId);
+    if (c.bloqueadoPorContaId && !contaIds.has(c.bloqueadoPorContaId)) falha("internet_contacts.bloqueado_por_conta_id", c.bloqueadoPorContaId);
+  }
+  for (const c of d.conversas) {
+    if (c.createdByContaId && !contaIds.has(c.createdByContaId)) falha("internet_conversations.created_by_conta_id", c.createdByContaId);
+  }
+  for (const p of d.participantes) {
+    if (!contaIds.has(p.contaId)) falha("internet_participantes.conta_id", p.contaId);
+    if (p.convidadoPorContaId && !contaIds.has(p.convidadoPorContaId)) falha("internet_participantes.convidado_por_conta_id", p.convidadoPorContaId);
+  }
+  for (const m of d.mensagens) {
+    if (m.campaignId !== campaignId) falha("internet_messages.campaign_id", m.campaignId);
+    if (!convIds.has(m.conversaId)) falha("internet_messages.conversa_id", m.conversaId);
+    if (!contaIds.has(m.autorContaId)) falha("internet_messages.autor_conta_id", m.autorContaId);
+  }
+  for (const s of d.sites) {
+    if (!contaIds.has(s.ownerContaId)) falha("internet_sites.owner_conta_id", s.ownerContaId);
+  }
+  for (const p of d.paginas) {
+    if (p.campaignId !== campaignId) falha("internet_pages.campaign_id", p.campaignId);
+    if (!siteIds.has(p.siteId)) falha("internet_pages.site_id", p.siteId);
+    if (!contaIds.has(p.autorContaId)) falha("internet_pages.autor_conta_id", p.autorContaId);
+  }
+  for (const p of d.publicacoes) {
+    if (p.campaignId !== campaignId) falha("internet_publicacoes.campaign_id", p.campaignId);
+    if (p.autorContaId && !contaIds.has(p.autorContaId)) falha("internet_publicacoes.autor_conta_id", p.autorContaId);
+    if (p.personagemId && !charIds.has(p.personagemId)) falha("internet_publicacoes.personagem_id", p.personagemId);
+  }
+  for (const n of d.denuncias) {
+    if (n.campaignId !== campaignId) falha("internet_denuncias.campaign_id", n.campaignId);
+    if (!pubIds.has(n.publicacaoId)) falha("internet_denuncias.publicacao_id", n.publicacaoId);
+    if (!contaIds.has(n.denuncianteContaId)) falha("internet_denuncias.denunciante_conta_id", n.denuncianteContaId);
+  }
+}
+
+/** Recria o domínio Internet preservado, em ordem FK. Personagens
+ *  referenciados que não vieram no pacote ganham âncora mínima
+ *  (status='arquivado', dados vazios, sem template) com o MESMO id —
+ *  contas mantêm characterId e a titularidade resolve pelo novo
+ *  membership via P7. Conta de âncora fica 'inativa' (gate
+ *  contaAutorizadaPara já rejeita inativa/arquivado). Qualquer FK
+ *  não resolvida aborta a transação inteira — nunca descarte
+ *  silencioso de conversa. */
+function restaurarDominioInternet(tx: Tx, campaignId: string, d: DominioInternetPreservado) {
+  const vazio = !d.contas.length && !d.contatos.length && !d.conversas.length &&
+    !d.mensagens.length && !d.sites.length && !d.paginas.length &&
+    !d.publicacoes.length && !d.denuncias.length;
+  if (vazio) return;
+
+  const charsPresentes = new Set(
+    tx.select({ id: characters.id }).from(characters)
+      .where(eq(characters.campaignId, campaignId)).all().map((r) => r.id),
+  );
+  const memPorUser = new Map(
+    tx.select().from(memberships).where(eq(memberships.campaignId, campaignId)).all()
+      .map((m) => [m.userId, m] as const),
+  );
+  const memAntigaPorId = new Map(d.memberships.map((m) => [m.id, m] as const));
+  const charAntigoPorId = new Map(d.personagens.map((c) => [c.id, c] as const));
+  const agora = new Date();
+
+  // ids de personagem referenciados pelo domínio: contas + notícias de
+  // sistema (publicacoes.personagemId). Qualquer ausência vira âncora.
+  const idsReferenciados = new Set<string>();
+  for (const c of d.contas) idsReferenciados.add(c.characterId);
+  for (const p of d.publicacoes) if (p.personagemId) idsReferenciados.add(p.personagemId);
+
+  const contas = d.contas.map((c) => ({ ...c }));
+  for (const charId of idsReferenciados) {
+    if (charsPresentes.has(charId)) continue;
+    const antigo = charAntigoPorId.get(charId);
+    const memAntiga = antigo ? memAntigaPorId.get(antigo.membershipId) : undefined;
+    const userId = memAntiga?.userId;
+    if (!antigo || !memAntiga || !userId) {
+      console.error(`restore: personagem ${charId} referenciado pela Internet sem membership resolvível — abortando`);
+      throw new Error("restore: personagem referenciado sem vínculo resolvível — restauração abortada");
+    }
+    // membership alvo: a importada para o mesmo usuário, se houver;
+    // senão reintroduz a antiga com status='removido' (nunca duplicata
+    // — UNIQUE(campaignId,userId) já garantida pelo mapa acima).
+    let memAlvo = memPorUser.get(userId);
+    if (!memAlvo) {
+      const reintro: MembershipRow = { ...memAntiga, status: "removido", updatedAt: agora };
+      inserir(tx, memberships, [reintro]);
+      memAlvo = reintro;
+      memPorUser.set(userId, reintro);
+    }
+    inserir(tx, characters, [{
+      id: charId, campaignId, membershipId: memAlvo.id,
+      templateVersionId: null, name: antigo.name || "(personagem arquivado)",
+      data: {}, overrides: {}, status: "arquivado", isNpc: antigo.isNpc ?? false,
+      createdAt: antigo.createdAt ?? agora, updatedAt: agora,
+    }]);
+    charsPresentes.add(charId);
+    for (const conta of contas) if (conta.characterId === charId) conta.status = "inativa";
+  }
+
+  inserir(tx, internetAccounts, contas);
+  inserir(tx, internetContacts, d.contatos);
+  inserir(tx, internetConversations, d.conversas);
+  inserir(tx, internetParticipantes, d.participantes);
+  inserir(tx, internetMessages, d.mensagens);
+  inserir(tx, internetSites, d.sites);
+  inserir(tx, internetPages, d.paginas);
+  inserir(tx, internetPublicacoes, d.publicacoes);
+  inserir(tx, internetDenuncias, d.denuncias);
+}
+
 /**
  * Insere todas as entidades do estado na ordem de dependência
  * (restauração e importação). `origem` é explícita e o padrão é
@@ -140,6 +343,20 @@ function acumulou(r: SaneamentoPersonagem): boolean {
  * passam "interna" e preservam os metadados reservados integralmente.
  * Retorna o RelatorioSaneamento (vazio quando origem="interna").
  */
+/** Último evento de HP negativo do histórico saneado — aproximação do
+ *  evento letal para datar a epoch de morte importada (em/causa). */
+function eventoLetalHp(d: Record<string, unknown>): { em: string; causa: string | null } | null {
+  const hp = lerHp(d);
+  if (!hp) return null;
+  for (let i = hp.historico.length - 1; i >= 0; i--) {
+    const e = hp.historico[i];
+    if (typeof e.quantidade === "number" && e.quantidade < 0 && typeof e.em === "string") {
+      return { em: e.em, causa: typeof e.motivo === "string" ? e.motivo : null };
+    }
+  }
+  return null;
+}
+
 export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: OrigemEstado; chaveAssinatura?: Buffer | null; campanhaIdOrigem?: string | null } = {}): RelatorioSaneamento {
   const origem: OrigemEstado = opts.origem ?? "externa";
   const rel = relatorioSaneamentoVazio(origem);
@@ -152,6 +369,11 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: Or
     for (const r of chars) removerCredenciaisTransporte(r);
   }
 
+  // __morte é server-managed (Internet pública v2.6 + DP-8/9): pacote
+  // externo não forja epochs — descartadas e re-derivadas do __hp
+  // saneado. HP≤0 ⇒ epoch + notícia de sistema na mesma tx (apenas
+  // primeira morte da ficha). Snapshots internos (origem='interna')
+  // não passam por aqui — estado confiável preservado integralmente.
   if (origem === "externa" && chars.length) {
     // autoria: autorId precisa existir nesta instalação para manter o nome
     const autores = new Map<string, string | null>();
@@ -169,6 +391,24 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: Or
       rep.personagemId = String(row.id ?? "");
       rep.nome = typeof row.name === "string" ? row.name : null;
       sanearPersonagemImportado(row, ctx, rep);
+      const dadosRow = row.data;
+      if (dadosRow && typeof dadosRow === "object" && !Array.isArray(dadosRow)) {
+        const d = dadosRow as Record<string, unknown>;
+        delete d[CHAVE_MORTE];
+        const hpAtual = lerHp(d)?.atual ?? null;
+        if (hpAtual !== null && hpAtual <= 0) {
+          const letal = eventoLetalHp(d);
+          const r = avaliarMorte(d, {
+            hpAtual,
+            em: letal?.em ?? new Date().toISOString(),
+            causa: letal?.causa ?? null,
+          });
+          // DP-8/9: a epoch é re-derivada para dedup futuro, mas a
+          // importação NÃO gera notícia retroativa — mortes do
+          // histórico já foram (ou não foram) notícia na origem.
+          if (r.morteNova) row.data = r.dados;
+        }
+      }
       if (!acumulou(rep)) continue;
       rel.personagens.push(rep);
       const t = rel.totais as TotaisSaneamento;
@@ -259,6 +499,13 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
   db.transaction((tx) => {
     const limpar = (tabela: Parameters<typeof tx.delete>[0], where: unknown) =>
       tx.delete(tabela).where(where as never).run();
+    // Domínio Internet ANTES de qualquer delete: o pacote não o carrega
+    // (P9/D6) — captura integral para recriação preservada ao final.
+    const dominioInternet = capturarDominioInternet(tx, campaignId);
+    // P1: arestas precisam resolver DENTRO da campanha — id global de
+    // outra campanha não é prova de pertencimento. Inconsistência
+    // lança erro → rollback integral, sem filtro/reparo silencioso.
+    validarIntegridadeDominioInternet(dominioInternet, campaignId);
     // filhos primeiro
     limpar(tests, eq(tests.campaignId, campaignId));
     limpar(rolls, eq(rolls.campaignId, campaignId));
@@ -282,6 +529,25 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
     limpar(notes, eq(notes.campaignId, campaignId));
     limpar(files, eq(files.campaignId, campaignId));
     limpar(folders, eq(folders.campaignId, campaignId));
+    // Domínio Internet diegética/pública (1.1.1/1.1.2): o pacote de
+    // exportação NÃO carrega estas tabelas (P9; export do domínio
+    // público é decisão D6 pendente). As linhas foram capturadas no
+    // início da tx e serão recriadas preservadas após inserirEstado —
+    // a limpeza existe só para a reinserção com os mesmos IDs e para
+    // o delete em cascata de characters não perder a ordem FK.
+    // Ordem filhas→pais.
+    limpar(internetDenuncias, eq(internetDenuncias.campaignId, campaignId));
+    limpar(internetPublicacoes, eq(internetPublicacoes.campaignId, campaignId));
+    limpar(internetMessages, eq(internetMessages.campaignId, campaignId));
+    // participantes não têm campaign_id — resolve via conversas da campanha
+    const convIds = tx.select({ id: internetConversations.id }).from(internetConversations)
+      .where(eq(internetConversations.campaignId, campaignId)).all().map((r) => r.id);
+    if (convIds.length) limpar(internetParticipantes, inArray(internetParticipantes.conversaId, convIds));
+    limpar(internetConversations, eq(internetConversations.campaignId, campaignId));
+    limpar(internetContacts, eq(internetContacts.campaignId, campaignId));
+    limpar(internetPages, eq(internetPages.campaignId, campaignId));
+    limpar(internetSites, eq(internetSites.campaignId, campaignId));
+    limpar(internetAccounts, eq(internetAccounts.campaignId, campaignId));
     limpar(characters, eq(characters.campaignId, campaignId));
     if (tplIds.length) limpar(sheetVersions, inArray(sheetVersions.templateId, tplIds));
     limpar(sheetTemplates, eq(sheetTemplates.campaignId, campaignId));
@@ -303,6 +569,10 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
       chaveAssinatura,
       campanhaIdOrigem: opts.campanhaIdOrigem ?? null,
     });
+    // Domínio Internet preservado: recriado por último, já com
+    // memberships/characters do pacote no lugar — âncoras cobrem os
+    // personagens ausentes e contas ancoradas ficam inativas.
+    restaurarDominioInternet(tx, campaignId, dominioInternet);
   });
 
   // ---- arquivos físicos: lixeira dos substituídos + gravação dos importados ----
