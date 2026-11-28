@@ -318,6 +318,63 @@ const domDb = (camp) => comDb((db) => ({
     }
   }
 
+  // ---------- E8. Trilha interna × trilha pública (QC-0 / ordem #364) ----------
+  sec("E8. Separação backup interno (full-fidelity) × export público (anonimizado)");
+  {
+    // (i) pacote público NÃO pode conter coleções privadas — verificação
+    // ESTRUTURAL de chaves, não só scan de strings (ordem FILHO #364)
+    if (pacote) {
+      const chaves = [...keysDeep(pacote)];
+      const colecoesProibidas = chaves.filter((k) =>
+        /(^|\.)(internet_)?(accounts?|contacts?|conversations?|participants?|messages?|mensagens?)($|\.|\[)/i.test(k));
+      t("E8: pacote público sem coleções privadas (accounts/contacts/conversations/participants/messages)", colecoesProibidas.length === 0, colecoesProibidas.slice(0, 10).join(","));
+      const estado = pacote.estado ?? pacote;
+      const blocosSuspeitos = Object.keys(estado).filter((k) => /internet|conta|conversa|mensagem|contato/i.test(k));
+      t("E8: nenhum bloco de domínio privado no estado do pacote", blocosSuspeitos.length === 0, blocosSuspeitos.join(","));
+    } else {
+      t("E8: pacote público sem coleções privadas", false, "sem pacote — endpoint ausente");
+      t("E8: nenhum bloco de domínio privado no estado", false, "sem pacote");
+    }
+    // (ii) trilha INTERNA: exportarCampanha (backup/snapshot) NÃO carrega
+    // o domínio Internet (P9) — o restore é quem preserva. Documenta a
+    // separação: backup interno ≠ pacote público D6.
+    const expInt = await req(BASE, "GET", `/campaigns/${campId}/exportar`, { cookie: M });
+    t("E8: export interno da campanha existe", expInt.status === 200, `status=${expInt.status}`);
+    if (expInt.status === 200 && expInt.json) {
+      const blobInt = JSON.stringify(expInt.json);
+      t("E8: export interno NÃO contém domínio Internet (P9 — restore preserva)",
+        !blobInt.includes("internet_sites") && !blobInt.includes("internet_publicacoes") && !blobInt.includes("d6-site"),
+        "domínio vazou no pacote interno");
+      t("E8: export interno segue full-fidelity do restante (characters/memberships)",
+        blobInt.includes("membership") || blobInt.includes("characters"), "pacote interno pobre");
+    }
+    // (iii) export público é READ-ONLY: não muta o domínio local
+    const domAntes = domDb(campId);
+    await req(BASE, "GET", EXP(campId), { cookie: M });
+    const domDepois = domDb(campId);
+    t("E8: export público não altera contagens do domínio", JSON.stringify(domAntes) === JSON.stringify(domDepois));
+    // (iv) anonRef novo por pacote — reforço explícito da ordem: dois
+    // exports consecutivos NÃO podem compartilhar ref para o mesmo autor
+    const e1 = await req(BASE, "GET", EXP(campId), { cookie: M });
+    const e2 = await req(BASE, "GET", EXP(campId), { cookie: M });
+    if (e1.status === 200 && e2.status === 200) {
+      const refsDe = (p) => {
+        const out = new Set();
+        const walk = (v) => {
+          if (Array.isArray(v)) v.forEach(walk);
+          else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) {
+            if (/anon_?ref/i.test(k) && typeof x === "string") out.add(x); else walk(x);
+          }
+        };
+        walk(p); return out;
+      };
+      const inter = [...refsDe(e1.json)].filter((r) => refsDe(e2.json).has(r));
+      t("E8/A3: anonRef 100% novo por pacote (zero interseção entre exports)", inter.length === 0, `interseção=${inter.length}`);
+    } else {
+      t("E8/A3: anonRef 100% novo por pacote", false, `status e1=${e1.status} e2=${e2.status}`);
+    }
+  }
+
   console.log(`\n===== D6 export/import público TDD: ${pass} ok / ${fail} falhas / ${skip} skips =====`);
 } catch (e) {
   console.error("ERRO FATAL", e);
