@@ -10,6 +10,32 @@
 
 - **Gate do leitor público fail-closed:** toda leitura exige conta Internet autorizada (titularidade + perícia/dispositivo revalidados a cada chamada) ou papel mestre na campanha; sites/páginas de outra campanha e conteúdo não publicado respondem 404 idêntico a inexistente (anti-enumeração).
 
+## [1.1.2] - 2026-11-28
+
+### Novidades
+
+- **Internet pública — Explorar (W1/W3, #365):** diretório somente-leitura dos sites da campanha dentro da camada diegética (Internet → Rede → Explorar), com busca por prefixo, paginação keyset, detalhe de site com menu derivado das páginas publicadas e leitura de página — estados de carregamento, erro, vazio e "indisponível" honestos (migração 0043: `internet_sites` + `internet_pages`).
+- **Internet pública — Publicações (W4/W5, #365):** sites e páginas publicáveis por personagens elegíveis, com postagem, edição e ciclo de vida; leituras públicas respeitam a visibilidade por audiência.
+- **Anúncios e classificados (W6/W7/W8, #365):** publicação de anúncios e classificados com expiração derivada na leitura (sem job), anonimato restrito aos tipos previstos e contato via fluxo de contatos existente.
+- **Perfis públicos e pesquisa (W9/W10 + W2, #365):** perfis de internet por personagem com ativação irreversível, avatar próprio, busca por handle com paginação keyset e timeline com visibilidade correta (contatos nunca vazam em busca/agregado).
+- **Patrocínio automático (#365):** acordos bilaterais de patrocínio com liquidação no ledger existente (`money_transactions`), sweeper de `data_alvo` vencida e idempotência por `requestId`.
+- **Live simulado + métricas (#365):** streamer/influencer podem abrir live simulada com métricas; ciclo de vida com lazy-close de TTL e live única por conta.
+- **Export/import público D6 (#365):** exportação e importação do conteúdo público da campanha com refs opacas, dedupe por linhagem e restore validado.
+- **Criação de personagem → ficha (#132):** fluxo criação de personagem abre direto a ficha em edição.
+- **Acessibilidade (#132):** tablists ARIA completas em EquipamentoArmazém e Patrimônio (setas/Home/End, roving tabindex), filtro de eventos socket por ficha (A1) e âncora semântica até o painel Patrimônio (A4).
+
+### Integridade e segurança
+
+- **TOCTOU fechados:** titularidade/arquivado/morte revalidados dentro da transação em patrocínio e live (`lib/titularidade.ts` compartilhado); ativação de perfil e edição com mesma proteção.
+- **Visibilidade fail-closed:** `contatos` nunca aparece em busca, timeline ou agregado — só leitura direta; paginação por keyset após filtro de visibilidade (50/100 visíveis reais, não linhas brutas). Gate do leitor público fail-closed mantido: leituras exigem conta autorizada ou papel mestre; conteúdo fora do escopo responde 404 idêntico a inexistente.
+- **Restore:** `internet_perfis` e `patrocinios` capturados e validados no backup/restore com descarte explícito de personagem ausente.
+
+### Validação
+
+- Suítes FILHO por lote: publicações W4/W5, anúncios W6-W8, perfis W9/W10, pesquisa W2, D6, patrocínio, live — todas verdes no head final.
+- E2E TDD #132: criação→ficha 15/0, filtro eventos 11/0, tablists 15/0 e 22/0, âncora 12/0.
+- CI main verde em `c2af9c27` (4/4 jobs).
+
 ## [1.1.1] - 2026-11-26
 
 ### Novidades
