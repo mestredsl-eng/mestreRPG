@@ -39,7 +39,7 @@ import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import {
   auditLogs, characters, financialAccounts, internetAccounts,
-  internetPatrocinios, memberships, moneyTransactions,
+  internetPatrocinios, moneyTransactions,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { carregarRegras, carregarRegrasSincrono } from "../lib/regras.js";
@@ -49,6 +49,7 @@ import {
 import { limiteUsuario } from "../lib/ratelimit.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
+import { titularDePersonagemNaTx, type Tx } from "../lib/titularidade.js";
 
 const db = getDb();
 export const internetPatrociniosRouter = Router({ mergeParams: true });
@@ -63,7 +64,6 @@ function erroHttp(res: Response, status: number, erro: string) {
 const limitePatrocinios = limiteUsuario({ nome: "internet-patrocinios", janelaMs: 60_000, max: 60 });
 
 type Acordo = typeof internetPatrocinios.$inferSelect;
-type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 const condicaoSchema = z.discriminatedUnion("tipo", [
   z.object({ tipo: z.literal("imediato") }),
@@ -129,49 +129,6 @@ async function personagemIdsDoUsuario(cid: string, userId: string): Promise<Set<
     if (auth?.conta.characterId) ids.add(auth.conta.characterId);
   }
   return ids;
-}
-
-/** Revalidação TOCTOU dentro da tx da mutação (TG #401 — mesmo
- *  padrão `titularNaTx` de internet-perfis.ts/DP-5): a checagem
- *  assíncrona de titularDoPersonagem corre ANTES da tx; entre ela e
- *  o commit uma transferência de personagem/conta passaria
- *  despercebida. Aqui a titularidade é relida de forma síncrona:
- *  conta Internet ativa do personagem + personagem não arquivado +
- *  membership ativa do requisitante + personagem pertencente ao
- *  requisitante. Gate de elegibilidade não entra — o invariante é
- *  autorização, não device. */
-function titularDePersonagemNaTx(
-  tx: Tx, cid: string, characterId: string, userId: string,
-): boolean {
-  const [conta] = tx.select({ characterId: internetAccounts.characterId })
-    .from(internetAccounts)
-    .where(and(
-      eq(internetAccounts.campaignId, cid),
-      eq(internetAccounts.characterId, characterId),
-      eq(internetAccounts.status, "ativa"),
-    )).limit(1).all();
-  if (!conta) return false;
-  const [pers] = tx.select({
-    membershipId: characters.membershipId,
-    status: characters.status,
-  }).from(characters)
-    .where(and(eq(characters.id, conta.characterId), eq(characters.campaignId, cid)))
-    .limit(1).all();
-  if (!pers || pers.status === "arquivado") return false;
-  const [mu] = tx.select({ role: memberships.role }).from(memberships)
-    .where(and(
-      eq(memberships.campaignId, cid),
-      eq(memberships.userId, userId),
-      eq(memberships.status, "ativo"),
-    )).limit(1).all();
-  if (!mu || (mu.role !== "mestre" && mu.role !== "jogador")) return false;
-  const [dono] = tx.select({ userId: memberships.userId, status: memberships.status })
-    .from(memberships)
-    .where(and(
-      eq(memberships.id, pers.membershipId),
-      eq(memberships.campaignId, cid),
-    )).limit(1).all();
-  return !!dono && dono.status === "ativo" && dono.userId === userId;
 }
 
 function serializar(acordo: Acordo, agora = new Date()) {

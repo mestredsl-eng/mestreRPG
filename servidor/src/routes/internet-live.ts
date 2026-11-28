@@ -38,6 +38,7 @@ import {
 import { limiteUsuario } from "../lib/ratelimit.js";
 import { morteVigente } from "../lib/morte.js";
 import { audit } from "../lib/audit.js";
+import { titularDePersonagemNaTx } from "../lib/titularidade.js";
 
 const db = getDb();
 export const internetLiveRouter = Router({ mergeParams: true });
@@ -224,6 +225,23 @@ internetLiveRouter.post("/ao-vivo", limiteLive, async (req, res) => {
   const id = crypto.randomUUID();
   try {
     db.transaction((tx) => {
+      // TOCTOU (TG #402 — adjudicado P2, remédio padrão DP-5):
+      // titularidade + arquivado + morte relidos DENTRO da tx antes
+      // do insert — transferência/morte entre a checagem externa e
+      // o commit não cria live de inelegível. `ehStreamer` fica fora
+      // de propósito (decisão TG): elegibilidade ruleset muda por
+      // ação administrativa, não por corrida de usuário — recarregar
+      // ruleset por request dentro da tx não se paga.
+      if (!titularDePersonagemNaTx(tx, cid, b.characterId, req.usuario!.id)) {
+        throw new Error("titular");
+      }
+      const [persTx] = tx.select({ data: characters.data }).from(characters)
+        .where(and(eq(characters.id, b.characterId), eq(characters.campaignId, cid)))
+        .limit(1).all();
+      const dadosTx = (typeof persTx?.data === "string"
+        ? JSON.parse(persTx.data)
+        : persTx?.data) as Record<string, unknown> | undefined;
+      if (dadosTx && morteVigente(dadosTx)) throw new Error("morto");
       // TG #402 P1 — lazy-close D11: live expirada por TTL fica com
       // encerrado_em NULL para sempre e o índice parcial UNIQUE
       // travaria a conta (409 eterno — /sair exige id que o
@@ -248,7 +266,10 @@ internetLiveRouter.post("/ao-vivo", limiteLive, async (req, res) => {
       }).run();
     });
   } catch (e) {
-    if (String(e).includes("UNIQUE")) { erroHttp(res, 409, "Já existe live aberta para esta conta"); return; }
+    const msg = String(e);
+    if (msg.includes("UNIQUE")) { erroHttp(res, 409, "Já existe live aberta para esta conta"); return; }
+    if (msg.includes("titular")) { erroHttp(res, 404, "Personagem não elegível"); return; }
+    if (msg.includes("morto")) { erroHttp(res, 403, "personagem_falecido"); return; }
     throw e;
   }
   await audit(req, "internet.ao_vivo.entrar", { liveId: id }, { campaignId: cid });

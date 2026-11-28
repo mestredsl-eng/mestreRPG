@@ -1526,6 +1526,35 @@ try {
     await API("POST", "/account", j1.cookie, { characterId: charJ10, handle: "live.sem" });
     const lv10 = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ10, titulo: "Sem gate" });
     t("P20b sem streamer/influencer → 403", lv10.status === 403, `status=${lv10.status}`);
+
+    // P21/P22 (TG #402 TOCTOU — adjudicado P2): titularidade/morte
+    // relidos DENTRO da tx do /ao-vivo. A janela exata não é
+    // reproduzível deterministicamente neste harness (tx síncrona,
+    // servidor em processo separado) — a cobertura prova o invariante
+    // de estado final: quem perdeu titularidade/conta não transmite.
+    // charJ5 segue streamer; "transferência" = membership_id direto.
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update characters set membership_id=? where id=?").run(C.jogadores.j2.membershipId, charJ5);
+      db.close();
+    }
+    const lvT = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ5, titulo: "Live ex-titular" });
+    t("P21 ex-titular não entra ao vivo → 404", lvT.status === 404, `status=${lvT.status}`);
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update characters set membership_id=? where id=?").run(C.jogadores.j1.membershipId, charJ5);
+      const conta5 = db.prepare("select id from internet_accounts where character_id=?").get(charJ5);
+      db.prepare("update internet_accounts set status='inativa' where id=?").run(conta5.id);
+      db.close();
+    }
+    const lvI = await API("POST", "/ao-vivo", j1.cookie, { characterId: charJ5, titulo: "Live conta inativa" });
+    t("P22 conta inativa não entra ao vivo → 404", lvI.status === 404, `status=${lvI.status}`);
+    {
+      const db = abrirDb(BANCO);
+      const conta5 = db.prepare("select id from internet_accounts where character_id=?").get(charJ5);
+      db.prepare("update internet_accounts set status='ativa' where id=?").run(conta5.id);
+      db.close();
+    }
   }
   // ================= W2/timeline — correções Dono+TG (#400) =================
   // Pacote adjudicado: `contatos` NUNCA em busca/timeline (mesmo com
