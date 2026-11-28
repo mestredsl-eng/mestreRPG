@@ -39,7 +39,7 @@ import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import {
   auditLogs, characters, financialAccounts, internetAccounts,
-  internetPatrocinios, moneyTransactions,
+  internetPatrocinios, memberships, moneyTransactions,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { carregarRegras, carregarRegrasSincrono } from "../lib/regras.js";
@@ -129,6 +129,49 @@ async function personagemIdsDoUsuario(cid: string, userId: string): Promise<Set<
     if (auth?.conta.characterId) ids.add(auth.conta.characterId);
   }
   return ids;
+}
+
+/** Revalidação TOCTOU dentro da tx da mutação (TG #401 — mesmo
+ *  padrão `titularNaTx` de internet-perfis.ts/DP-5): a checagem
+ *  assíncrona de titularDoPersonagem corre ANTES da tx; entre ela e
+ *  o commit uma transferência de personagem/conta passaria
+ *  despercebida. Aqui a titularidade é relida de forma síncrona:
+ *  conta Internet ativa do personagem + personagem não arquivado +
+ *  membership ativa do requisitante + personagem pertencente ao
+ *  requisitante. Gate de elegibilidade não entra — o invariante é
+ *  autorização, não device. */
+function titularDePersonagemNaTx(
+  tx: Tx, cid: string, characterId: string, userId: string,
+): boolean {
+  const [conta] = tx.select({ characterId: internetAccounts.characterId })
+    .from(internetAccounts)
+    .where(and(
+      eq(internetAccounts.campaignId, cid),
+      eq(internetAccounts.characterId, characterId),
+      eq(internetAccounts.status, "ativa"),
+    )).limit(1).all();
+  if (!conta) return false;
+  const [pers] = tx.select({
+    membershipId: characters.membershipId,
+    status: characters.status,
+  }).from(characters)
+    .where(and(eq(characters.id, conta.characterId), eq(characters.campaignId, cid)))
+    .limit(1).all();
+  if (!pers || pers.status === "arquivado") return false;
+  const [mu] = tx.select({ role: memberships.role }).from(memberships)
+    .where(and(
+      eq(memberships.campaignId, cid),
+      eq(memberships.userId, userId),
+      eq(memberships.status, "ativo"),
+    )).limit(1).all();
+  if (!mu || (mu.role !== "mestre" && mu.role !== "jogador")) return false;
+  const [dono] = tx.select({ userId: memberships.userId, status: memberships.status })
+    .from(memberships)
+    .where(and(
+      eq(memberships.id, pers.membershipId),
+      eq(memberships.campaignId, cid),
+    )).limit(1).all();
+  return !!dono && dono.status === "ativo" && dono.userId === userId;
 }
 
 function serializar(acordo: Acordo, agora = new Date()) {
@@ -381,6 +424,12 @@ internetPatrociniosRouter.post("/patrocinios", limitePatrocinios, async (req, re
   const liquidacaoRequestId = `patrocinios:${id}`;
   try {
     db.transaction((tx) => {
+      // TOCTOU (TG #401): titularidade relida dentro da tx — uma
+      // transferência entre a checagem externa e o commit não
+      // passa despercebida.
+      if (!titularDePersonagemNaTx(tx, cid, b.characterId, req.usuario!.id)) {
+        throw new Error("titular");
+      }
       tx.insert(internetPatrocinios).values({
         id, campaignId: cid,
         proponenteCharacterId: b.characterId,
@@ -406,7 +455,9 @@ internetPatrociniosRouter.post("/patrocinios", limitePatrocinios, async (req, re
       });
     });
   } catch (e) {
-    if (String(e).includes("UNIQUE")) {
+    const msg = String(e);
+    if (msg.includes("titular")) { erroHttp(res, 404, "Personagem não elegível"); return; }
+    if (msg.includes("UNIQUE")) {
       // corrida de requestId — relê e devolve o vencedor
       if (b.requestId) {
         const [vencedor] = await db.select().from(internetPatrocinios)
@@ -528,6 +579,16 @@ internetPatrociniosRouter.post("/patrocinios/:id/aceitar", limitePatrocinios, as
   try {
     let liquidou = false;
     db.transaction((tx) => {
+      // TOCTOU (TG #401): titularidade do beneficiário e prazo de
+      // aceite relidos dentro da tx, imediatamente antes do CAS —
+      // transferência de conta ou contenção de escrita além do
+      // expiresAt não aceitam proposta vencida/de ex-titular.
+      if (!titularDePersonagemNaTx(tx, cid, acordo.beneficiarioCharacterId, req.usuario!.id)) {
+        throw new Error("titular");
+      }
+      if (acordo.expiresAt && acordo.expiresAt.getTime() <= Date.now()) {
+        throw new Error("expirado");
+      }
       // CAS proposto→aceito: corridas perdem aqui.
       const cas = tx.update(internetPatrocinios).set({
         estado: "aceito", beneficiarioAccountId: contaDestino.id,
@@ -550,6 +611,8 @@ internetPatrociniosRouter.post("/patrocinios/:id/aceitar", limitePatrocinios, as
   } catch (e) {
     const msg = String(e);
     if (msg.includes("estado_divergente")) { erroHttp(res, 409, "Acordo já respondido"); return; }
+    if (msg.includes("titular")) { erroHttp(res, 404, "Acordo não encontrado"); return; }
+    if (msg.includes("expirado")) { erroHttp(res, 409, "Acordo expirado"); return; }
     if (msg.includes("conta_sumiu") || msg.includes("conta_fora_campanha")) { erroHttp(res, 404, "Conta não encontrada"); return; }
     if (msg.includes("moedas_divergentes")) { erroHttp(res, 400, "Moedas diferentes"); return; }
     if (msg.includes("UNIQUE")) { erroHttp(res, 409, "Liquidação já registrada"); return; }
@@ -573,6 +636,13 @@ internetPatrociniosRouter.post("/patrocinios/:id/cancelar", limitePatrocinios, a
   const agora = new Date();
   try {
     db.transaction((tx) => {
+      // TOCTOU (TG #401): parte recomputada dentro da tx — se a
+      // titularidade das duas partes mudou entre a checagem externa
+      // e o commit, o ex-parte não cancela.
+      const aindaParte =
+        titularDePersonagemNaTx(tx, cid, acordo.pagadorCharacterId, req.usuario!.id)
+        || titularDePersonagemNaTx(tx, cid, acordo.beneficiarioCharacterId, req.usuario!.id);
+      if (!aindaParte) throw new Error("parte");
       const cas = tx.update(internetPatrocinios).set({
         estado: "cancelado", canceladoEm: agora, canceladoPor: req.usuario!.id, updatedAt: agora,
       }).where(and(
@@ -586,6 +656,7 @@ internetPatrociniosRouter.post("/patrocinios/:id/cancelar", limitePatrocinios, a
     res.json({ ok: true });
   } catch (e) {
     if (String(e).includes("estado_divergente")) { erroHttp(res, 409, "Acordo já encerrado"); return; }
+    if (String(e).includes("parte")) { erroHttp(res, 404, "Acordo não encontrado"); return; }
     throw e;
   }
 });
