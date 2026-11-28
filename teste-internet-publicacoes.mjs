@@ -1112,7 +1112,12 @@ try {
       db.close();
     }
     const propX9 = await API("POST", "/patrocinios", j1.cookie, { characterId: charJ2, beneficiarioCharacterId: charJ11x, pagadorAccountId: accPagador, amountCents: 100, condicao: { tipo: "imediato" }, requestId: "prop-n17-0001" });
-    t("N17 beneficiário arquivado → 400", propX9.status === 400, `status=${propX9.status} ${JSON.stringify(propX9.json).slice(0, 100)}`);
+    t("N17 beneficiário arquivado → 404", propX9.status === 404, `status=${propX9.status}`);
+    // Dono #401: arquivado indistinguível de inexistente — mesma
+    // resposta, mesmo corpo.
+    const propInex = await API("POST", "/patrocinios", j1.cookie, { characterId: charJ2, beneficiarioCharacterId: crypto.randomUUID(), pagadorAccountId: accPagador, amountCents: 100, condicao: { tipo: "imediato" }, requestId: "prop-n17-0002" });
+    t("N17b arquivado ≡ inexistente (status+corpo)", propInex.status === propX9.status && JSON.stringify(propInex.json) === JSON.stringify(propX9.json),
+      `${propX9.status}/${JSON.stringify(propX9.json)} vs ${propInex.status}/${JSON.stringify(propInex.json)}`);
   }
   // ================= RESTAURAÇÃO × PERFIS (TG P1) ==========  sec("O. Restore substituir — perfis preservados, avatar saneado");
   {
